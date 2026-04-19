@@ -68,7 +68,12 @@ app.use('/api/rankings', rankingRoutes);
 
 // Socket.IO
 setupSocketHandlers(io);
-
+// Auto-seed en producción
+if (process.env.RUN_SEED === 'true') {
+  import('./seed').then(({ default: runSeed }) => {
+    console.log('🌱 Ejecutando seed automático...');
+  }).catch(console.error);
+}s
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`🎱 Servidor corriendo en http://localhost:${PORT}`);
