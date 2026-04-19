@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  juez_sede
+  publico
+}
+
+enum MatchStatus {
+  pendiente
+  asignado
+  en_juego
+  finalizado
+  wo
+}
+
+enum TableStatus {
+  libre
+  ocupada
+  fuera_de_servicio
+}
+
+enum PhaseType {
+  clasificatorio
+  segunda
+  primera
+  master
+}
+
+enum CategoryName {
+  master
+  primera
+  segunda
+  tercera
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  role      Role     @default(publico)
+  venueId   Int?
+  venue     Venue?   @relation(fields: [venueId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Venue {
+  id        Int      @id @default(autoincrement())
+  name      String
+  address   String?
+  city      String?
+  users     User[]
+  tables    Table[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Table {
+  id        Int         @id @default(autoincrement())
+  number    Int
+  venueId   Int
+  venue     Venue       @relation(fields: [venueId], references: [id])
+  status    TableStatus @default(libre)
+  matches   Match[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([venueId, number])
+}
+
+model Category {
+  id      Int          @id @default(autoincrement())
+  name    CategoryName @unique
+  players Player[]
+}
+
+model Player {
+  id         Int            @id @default(autoincrement())
+  firstName  String
+  lastName   String
+  dni        String?        @unique
+  categoryId Int
+  category   Category       @relation(fields: [categoryId], references: [id])
+  active     Boolean        @default(true)
+  matchesA   Match[]        @relation("PlayerA")
+  matchesB   Match[]        @relation("PlayerB")
+  rankings   RankingEntry[]
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+model Tournament {
+  id          Int       @id @default(autoincrement())
+  name        String
+  year        Int
+  description String?
+  active      Boolean   @default(true)
+  circuits    Circuit[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Circuit {
+  id           Int            @id @default(autoincrement())
+  name         String
+  tournamentId Int
+  tournament   Tournament     @relation(fields: [tournamentId], references: [id])
+  order        Int
+  startDate    DateTime?
+  endDate      DateTime?
+  active       Boolean        @default(true)
+  phases       Phase[]
+  rankings     RankingEntry[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Phase {
+  id        Int       @id @default(autoincrement())
+  name      String
+  type      PhaseType
+  circuitId Int
+  circuit   Circuit   @relation(fields: [circuitId], references: [id])
+  order     Int
+  matches   Match[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model RuleSet {
+  id           Int     @id @default(autoincrement())
+  name         String
+  bestOf       Int     @default(5)
+  setsToWin    Int     @default(3)
+  pointsPerSet Int     @default(50)
+  woSetsWinner Int     @default(3)
+  woSetsLoser  Int     @default(0)
+  woPtsWinner  Int     @default(150)
+  woPtsLoser   Int     @default(0)
+  matches      Match[]
+}
+
+model Match {
+  id          Int         @id @default(autoincrement())
+  phaseId     Int
+  phase       Phase       @relation(fields: [phaseId], references: [id])
+  playerAId   Int
+  playerA     Player      @relation("PlayerA", fields: [playerAId], references: [id])
+  playerBId   Int
+  playerB     Player      @relation("PlayerB", fields: [playerBId], references: [id])
+  tableId     Int?
+  table       Table?      @relation(fields: [tableId], references: [id])
+  ruleSetId   Int?
+  ruleSet     RuleSet?    @relation(fields: [ruleSetId], references: [id])
+  status      MatchStatus @default(pendiente)
+  round       Int         @default(1)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  result      MatchResult?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model MatchResult {
+  id         Int     @id @default(autoincrement())
+  matchId    Int     @unique
+  match      Match   @relation(fields: [matchId], references: [id])
+  setsA      Int     @default(0)
+  setsB      Int     @default(0)
+  pointsA    Int     @default(0)
+  pointsB    Int     @default(0)
+  winnerId   Int?
+  isWO       Boolean @default(false)
+  woPlayerId Int?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model RankingEntry {
+  id             Int     @id @default(autoincrement())
+  playerId       Int
+  player         Player  @relation(fields: [playerId], references: [id])
+  circuitId      Int
+  circuit        Circuit @relation(fields: [circuitId], references: [id])
+  points         Int     @default(0)
+  matchesPlayed  Int     @default(0)
+  matchesWon     Int     @default(0)
+  setsWon        Int     @default(0)
+  setsLost       Int     @default(0)
+  pointsFor      Int     @default(0)
+  pointsAgainst  Int     @default(0)
+  position       Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([playerId, circuitId])
+}
