@@ -64,16 +64,5 @@ router.get('/me', async (req: Request, res: Response) => {
     res.status(401).json({ error: 'Token inválido' });
   }
 });
-router.post('/seed', async (_req, res) => {
-  if (process.env.NODE_ENV !== 'production') {
-    return res.status(403).json({ error: 'Solo en producción' });
-  }
-  try {
-    const { main } = await import('../seed');
-    await main();
-    res.json({ ok: true, message: 'Seed ejecutado' });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
+
 export default router;
