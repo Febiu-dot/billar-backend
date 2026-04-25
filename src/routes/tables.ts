@@ -15,9 +15,11 @@ router.get('/', async (req, res: Response) => {
       matches: {
         where: { status: { in: ['asignado', 'en_juego'] } },
         include: {
-          playerA: true,
-          playerB: true,
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
           phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          ruleSet: true,
         },
         take: 1,
       },
