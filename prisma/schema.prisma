@@ -149,56 +149,68 @@ model RuleSet {
 }
 
 model Match {
-  id          Int         @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   phaseId     Int
-  phase       Phase       @relation(fields: [phaseId], references: [id])
+  phase       Phase        @relation(fields: [phaseId], references: [id])
   playerAId   Int
-  playerA     Player      @relation("PlayerA", fields: [playerAId], references: [id])
+  playerA     Player       @relation("PlayerA", fields: [playerAId], references: [id])
   playerBId   Int
-  playerB     Player      @relation("PlayerB", fields: [playerBId], references: [id])
+  playerB     Player       @relation("PlayerB", fields: [playerBId], references: [id])
   tableId     Int?
-  table       Table?      @relation(fields: [tableId], references: [id])
+  table       Table?       @relation(fields: [tableId], references: [id])
   ruleSetId   Int?
-  ruleSet     RuleSet?    @relation(fields: [ruleSetId], references: [id])
-  status      MatchStatus @default(pendiente)
-  round       Int         @default(1)
+  ruleSet     RuleSet?     @relation(fields: [ruleSetId], references: [id])
+  status      MatchStatus  @default(pendiente)
+  round       Int          @default(1)
   scheduledAt DateTime?
   startedAt   DateTime?
   finishedAt  DateTime?
   result      MatchResult?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  sets        SetResult[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
 model MatchResult {
-  id         Int     @id @default(autoincrement())
-  matchId    Int     @unique
-  match      Match   @relation(fields: [matchId], references: [id])
-  setsA      Int     @default(0)
-  setsB      Int     @default(0)
-  pointsA    Int     @default(0)
-  pointsB    Int     @default(0)
+  id         Int      @id @default(autoincrement())
+  matchId    Int      @unique
+  match      Match    @relation(fields: [matchId], references: [id])
+  setsA      Int      @default(0)
+  setsB      Int      @default(0)
+  pointsA    Int      @default(0)
+  pointsB    Int      @default(0)
   winnerId   Int?
-  isWO       Boolean @default(false)
+  isWO       Boolean  @default(false)
   woPlayerId Int?
   notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
 
+model SetResult {
+  id        Int      @id @default(autoincrement())
+  matchId   Int
+  match     Match    @relation(fields: [matchId], references: [id])
+  setNumber Int
+  pointsA   Int
+  pointsB   Int
+  winnerId  Int?
+  createdAt DateTime @default(now())
+}
+
 model RankingEntry {
-  id             Int     @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   playerId       Int
-  player         Player  @relation(fields: [playerId], references: [id])
+  player         Player   @relation(fields: [playerId], references: [id])
   circuitId      Int
-  circuit        Circuit @relation(fields: [circuitId], references: [id])
-  points         Int     @default(0)
-  matchesPlayed  Int     @default(0)
-  matchesWon     Int     @default(0)
-  setsWon        Int     @default(0)
-  setsLost       Int     @default(0)
-  pointsFor      Int     @default(0)
-  pointsAgainst  Int     @default(0)
+  circuit        Circuit  @relation(fields: [circuitId], references: [id])
+  points         Int      @default(0)
+  matchesPlayed  Int      @default(0)
+  matchesWon     Int      @default(0)
+  setsWon        Int      @default(0)
+  setsLost       Int      @default(0)
+  pointsFor      Int      @default(0)
+  pointsAgainst  Int      @default(0)
   position       Int?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
