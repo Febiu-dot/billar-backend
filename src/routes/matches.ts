@@ -110,7 +110,62 @@ router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async 
   res.json(match);
 });
 
-// Load result
+// Save individual set (without closing match)
+router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
+  const matchId = Number(req.params.id);
+  const { setNumber, pointsA, pointsB } = req.body;
+
+  const existingMatch = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: { ruleSet: true, sets: true },
+  });
+  if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' });
+
+  const winnerId = pointsA > pointsB ? existingMatch.playerAId : existingMatch.playerBId;
+
+  // Upsert set
+  await prisma.setResult.upsert({
+    where: { id: (existingMatch.sets.find(s => s.setNumber === setNumber)?.id ?? 0) },
+    create: { matchId, setNumber, pointsA, pointsB, winnerId },
+    update: { pointsA, pointsB, winnerId },
+  });
+
+  // Calcular totales parciales
+  const allSets = await prisma.setResult.findMany({
+    where: { matchId },
+    orderBy: { setNumber: 'asc' },
+  });
+
+  const setsA = allSets.filter(s => s.pointsA > s.pointsB).length;
+  const setsB = allSets.filter(s => s.pointsB > s.pointsA).length;
+  const totalPtsA = allSets.reduce((acc, s) => acc + s.pointsA, 0);
+  const totalPtsB = allSets.reduce((acc, s) => acc + s.pointsB, 0);
+
+  // Actualizar resultado parcial
+  await prisma.matchResult.upsert({
+    where: { matchId },
+    create: { matchId, setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB, isWO: false },
+    update: { setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB },
+  });
+
+  const updatedMatch = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: {
+      playerA: { include: { category: true } },
+      playerB: { include: { category: true } },
+      table: { include: { venue: true } },
+      phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true,
+      ruleSet: true,
+      sets: { orderBy: { setNumber: 'asc' } },
+    },
+  });
+
+  emitMatchUpdate(io, updatedMatch);
+  res.json(updatedMatch);
+});
+
+// Load result (close match)
 router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
   const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
@@ -157,7 +212,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
   });
 
-  // Guardar sets individuales
   if (!isWO && sets && Array.isArray(sets) && sets.length > 0) {
     await prisma.setResult.deleteMany({ where: { matchId } });
     await prisma.setResult.createMany({
