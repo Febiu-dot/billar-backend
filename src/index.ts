@@ -10,6 +10,7 @@ import playerRoutes from './routes/players';
 import tournamentRoutes from './routes/tournaments';
 import matchRoutes from './routes/matches';
 import rankingRoutes from './routes/rankings';
+import categoryRoutes from './routes/categories';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/api/players', playerRoutes);
 app.use('/api/tournaments', tournamentRoutes);
 app.use('/api/matches', matchRoutes);
 app.use('/api/rankings', rankingRoutes);
+app.use('/api/categories', categoryRoutes);
 
 setupSocketHandlers(io);
 
