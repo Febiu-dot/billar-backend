@@ -39,4 +39,13 @@ router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, 
   res.json(venue);
 });
 
+router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    await prisma.venue.delete({ where: { id: Number(req.params.id) } });
+    res.json({ ok: true });
+  } catch {
+    res.status(400).json({ error: 'No se puede eliminar la sede. Puede tener mesas o usuarios asignados.' });
+  }
+});
+
 export default router;
