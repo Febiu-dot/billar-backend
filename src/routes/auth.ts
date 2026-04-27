@@ -64,5 +64,29 @@ router.get('/me', async (req: Request, res: Response) => {
     res.status(401).json({ error: 'Token inválido' });
   }
 });
+router.post('/create-venue-users', async (req: Request, res: Response) => {
+  const venues = [
+    { username: 'cabrera', venueId: 8 },
+    { username: 'capolavoro', venueId: 4 },
+    { username: 'centenario', venueId: 5 },
+    { username: 'feriafranca', venueId: 6 },
+    { username: 'modelcenter', venueId: 10 },
+    { username: 'nuevomalvin', venueId: 7 },
+    { username: 'sportingunion', venueId: 11 },
+    { username: 'yatay', venueId: 9 },
+  ];
 
+  const password = 'juez123';
+  const hashed = await bcrypt.hash(password, 10);
+
+  for (const v of venues) {
+    await prisma.user.upsert({
+      where: { username: v.username },
+      update: { password: hashed, venueId: v.venueId, role: 'juez_sede' },
+      create: { username: v.username, password: hashed, role: 'juez_sede', venueId: v.venueId },
+    });
+  }
+
+  res.json({ ok: true, message: '8 usuarios creados con juez123' });
+});
 export default router;
