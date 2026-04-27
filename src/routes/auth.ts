@@ -39,3 +39,25 @@ router.post('/login', async (req: Request, res: Response) => {
 
 router.get('/me', async (req: Request, res: Response) => {
   const header = req.headers.authorization;
+  if (!header) return res.status(401).json({ error: 'Sin token' });
+  try {
+    const token = header.split(' ')[1];
+    const payload = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      include: { venue: true },
+    });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      venueId: user.venueId,
+      venueName: user.venue?.name,
+    });
+  } catch {
+    res.status(401).json({ error: 'Token inválido' });
+  }
+});
+
+export default router;
