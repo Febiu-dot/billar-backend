@@ -39,19 +39,19 @@ router.get('/:id', async (req, res: Response) => {
 });
 
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId } = req.body;
+  const { firstName, lastName, dni, categoryId, club } = req.body;
   const player = await prisma.player.create({
-    data: { firstName, lastName, dni, categoryId },
+    data: { firstName, lastName, dni, categoryId, club },
     include: { category: true },
   });
   res.status(201).json(player);
 });
 
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId, active } = req.body;
+  const { firstName, lastName, dni, categoryId, active, club } = req.body;
   const player = await prisma.player.update({
     where: { id: Number(req.params.id) },
-    data: { firstName, lastName, dni, categoryId, active },
+    data: { firstName, lastName, dni, categoryId, active, club },
     include: { category: true },
   });
   res.json(player);
