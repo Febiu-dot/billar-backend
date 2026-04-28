@@ -90,6 +90,7 @@ model Player {
   categoryId Int
   category   Category       @relation(fields: [categoryId], references: [id])
   active     Boolean        @default(true)
+  club       String?
   matchesA   Match[]        @relation("PlayerA")
   matchesB   Match[]        @relation("PlayerB")
   rankings   RankingEntry[]
