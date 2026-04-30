@@ -9,7 +9,14 @@ router.get('/', async (_req, res: Response) => {
   const tournaments = await prisma.tournament.findMany({
     include: {
       circuits: {
-        include: { phases: { include: { _count: { select: { matches: true } } } } },
+        include: {
+          phases: { include: { _count: { select: { matches: true } } } },
+          players: {
+            include: {
+              player: { include: { category: true } }
+            }
+          }
+        },
         orderBy: { order: 'asc' },
       },
     },
@@ -39,12 +46,18 @@ router.get('/:id', async (req, res: Response) => {
             },
             orderBy: { order: 'asc' },
           },
+          players: {
+            include: {
+              player: { include: { category: true } }
+            },
+            orderBy: { createdAt: 'asc' }
+          },
         },
         orderBy: { order: 'asc' },
       },
     },
   });
-  if (!tournament) return res.status(404).json({ error: 'Torneo no encontrado' });
+  if (!tournament) return res.status(404).json({ error: 'Torneo no encontrado' }) as any;
   res.json(tournament);
 });
 
@@ -64,82 +77,4 @@ router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, 
     where: { id: Number(req.params.id) },
     data: { name, year, description, active },
   });
-  res.json(tournament);
-});
-
-// DELETE tournament
-router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    await prisma.tournament.delete({ where: { id: Number(req.params.id) } });
-    res.json({ ok: true });
-  } catch {
-    res.status(400).json({ error: 'No se puede eliminar el torneo. Puede tener circuitos asociados.' });
-  }
-});
-
-// POST create circuit
-router.post('/:id/circuits', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, order, startDate, endDate } = req.body;
-  const circuit = await prisma.circuit.create({
-    data: {
-      name,
-      order,
-      tournamentId: Number(req.params.id),
-      startDate: startDate ? new Date(startDate) : undefined,
-      endDate: endDate ? new Date(endDate) : undefined,
-    },
-  });
-  res.status(201).json(circuit);
-});
-
-// PUT update circuit
-router.put('/circuits/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, order, startDate, endDate, active } = req.body;
-  const circuit = await prisma.circuit.update({
-    where: { id: Number(req.params.circuitId) },
-    data: {
-      name,
-      order,
-      active,
-      startDate: startDate ? new Date(startDate) : undefined,
-      endDate: endDate ? new Date(endDate) : undefined,
-    },
-  });
-  res.json(circuit);
-});
-
-// DELETE circuit
-router.delete('/circuits/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    await prisma.circuit.delete({ where: { id: Number(req.params.circuitId) } });
-    res.json({ ok: true });
-  } catch {
-    res.status(400).json({ error: 'No se puede eliminar el circuito. Puede tener fases asociadas.' });
-  }
-});
-
-// POST create phase
-router.post('/circuits/:circuitId/phases', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, type, order } = req.body;
-  const phase = await prisma.phase.create({
-    data: {
-      name,
-      type,
-      order,
-      circuitId: Number(req.params.circuitId),
-    },
-  });
-  res.status(201).json(phase);
-});
-
-// DELETE phase
-router.delete('/phases/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    await prisma.phase.delete({ where: { id: Number(req.params.phaseId) } });
-    res.json({ ok: true });
-  } catch {
-    res.status(400).json({ error: 'No se puede eliminar la fase. Puede tener partidos asociados.' });
-  }
-});
-
-export default router;
+  res.json(tou
