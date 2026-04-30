@@ -57,7 +57,7 @@ router.get('/:id', async (req, res: Response) => {
       },
     },
   });
-  if (!tournament) return res.status(404).json({ error: 'Torneo no encontrado' }) as any;
+  if (!tournament) { res.status(404).json({ error: 'Torneo no encontrado' }); return; }
   res.json(tournament);
 });
 
