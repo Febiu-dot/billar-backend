@@ -83,19 +83,20 @@ model Category {
 }
 
 model Player {
-  id         Int            @id @default(autoincrement())
+  id         Int             @id @default(autoincrement())
   firstName  String
   lastName   String
-  dni        String?        @unique
+  dni        String?         @unique
   categoryId Int
-  category   Category       @relation(fields: [categoryId], references: [id])
-  active     Boolean        @default(true)
+  category   Category        @relation(fields: [categoryId], references: [id])
   club       String?
-  matchesA   Match[]        @relation("PlayerA")
-  matchesB   Match[]        @relation("PlayerB")
+  active     Boolean         @default(true)
+  matchesA   Match[]         @relation("PlayerA")
+  matchesB   Match[]         @relation("PlayerB")
   rankings   RankingEntry[]
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  circuits   CircuitPlayer[]
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 }
 
 model Tournament {
@@ -110,18 +111,30 @@ model Tournament {
 }
 
 model Circuit {
-  id           Int            @id @default(autoincrement())
+  id           Int             @id @default(autoincrement())
   name         String
   tournamentId Int
-  tournament   Tournament     @relation(fields: [tournamentId], references: [id])
+  tournament   Tournament      @relation(fields: [tournamentId], references: [id])
   order        Int
   startDate    DateTime?
   endDate      DateTime?
-  active       Boolean        @default(true)
+  active       Boolean         @default(true)
   phases       Phase[]
   rankings     RankingEntry[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  players      CircuitPlayer[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model CircuitPlayer {
+  id        Int      @id @default(autoincrement())
+  circuitId Int
+  circuit   Circuit  @relation(fields: [circuitId], references: [id])
+  playerId  Int
+  player    Player   @relation(fields: [playerId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([circuitId, playerId])
 }
 
 model Phase {
@@ -141,10 +154,10 @@ model RuleSet {
   name         String
   bestOf       Int     @default(5)
   setsToWin    Int     @default(3)
-  pointsPerSet Int     @default(50)
+  pointsPerSet Int     @default(60)
   woSetsWinner Int     @default(3)
   woSetsLoser  Int     @default(0)
-  woPtsWinner  Int     @default(150)
+  woPtsWinner  Int     @default(180)
   woPtsLoser   Int     @default(0)
   matches      Match[]
 }
