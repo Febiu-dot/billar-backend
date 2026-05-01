@@ -4,6 +4,95 @@ import { PrismaClient } from '@prisma/client';
 const router = Router();
 const prisma = new PrismaClient();
 
+const LIBRE_DNI = 'FEBIU000';
+
+// -------------------------------------------------------
+// HELPERS
+// -------------------------------------------------------
+
+async function getJugadoresOrdenadosPorRanking(circuit: any, circuitId: number) {
+  let rankings = await prisma.rankingEntry.findMany({
+    where: { circuitId },
+    orderBy: { position: 'asc' }
+  });
+
+  if (rankings.length === 0) {
+    const prevCircuit = await prisma.circuit.findFirst({
+      where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
+    });
+    if (prevCircuit) {
+      rankings = await prisma.rankingEntry.findMany({
+        where: { circuitId: prevCircuit.id },
+        orderBy: { position: 'asc' }
+      });
+    }
+  }
+
+  const getRankPos = (playerId: number): number => {
+    const entry = rankings.find((r: any) => r.playerId === playerId);
+    return entry?.position ?? 9999;
+  };
+
+  const inscriptos = circuit.players.map((cp: any) => cp.player);
+  const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
+
+  const master  = ordenados.filter((p: any) => p.category.name === 'master');
+  const primera = ordenados.filter((p: any) => p.category.name === 'primera');
+  const segunda = ordenados.filter((p: any) => p.category.name === 'segunda');
+  const tercera = ordenados.filter((p: any) => p.category.name === 'tercera' && p.dni !== LIBRE_DNI);
+
+  return { master, primera, segunda, tercera, getRankPos };
+}
+
+// Arma series en espejo para N jugadores + bye si es necesario
+// Serie i (0-indexed): jugadores[i], jugadores[N-1-i], jugadores[N/2-1-i], jugadores[N/2+i]
+function armarSeriesEspejo(jugadores: any[], libreId: number): any[][] {
+  const N = jugadores.length;
+  const numSeriesCompletas = Math.floor(N / 4);
+  const resto = N % 4;
+  const series: any[][] = [];
+
+  // Si el total no es múltiplo de 4, necesitamos un bye
+  // Total con bye = numSeriesCompletas * 4 + 4 = (numSeriesCompletas + 1) * 4
+  // Por lo que agregamos el LIBRE para completar
+  let jugadoresConBye = [...jugadores];
+  if (resto !== 0) {
+    // Agregar byes hasta completar múltiplo de 4
+    const byesNecesarios = 4 - resto;
+    for (let b = 0; b < byesNecesarios; b++) {
+      jugadoresConBye.push({ id: libreId, firstName: 'LIBRE', lastName: '', dni: LIBRE_DNI });
+    }
+  }
+
+  const total = jugadoresConBye.length;
+  const numSeries = total / 4;
+  const mitad = total / 2;
+
+  for (let i = 0; i < numSeries; i++) {
+    const serie = [
+      jugadoresConBye[i],
+      jugadoresConBye[total - 1 - i],
+      jugadoresConBye[mitad - 1 - i],
+      jugadoresConBye[mitad + i],
+    ];
+    series.push(serie);
+  }
+
+  return series;
+}
+
+function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | null, round: number, slotA?: string, slotB?: string) {
+  return {
+    phaseId,
+    playerAId,
+    playerBId,
+    slotA: slotA ?? null,
+    slotB: slotB ?? null,
+    round,
+    status: 'pendiente'
+  };
+}
+
 // GET /api/circuits
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -40,24 +129,18 @@ router.get('/:id', async (req: Request, res: Response) => {
         }
       }
     });
-    if (!circuit) {
-      res.status(404).json({ error: 'Circuito no encontrado' });
-      return;
-    }
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
     res.json(circuit);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST /api/circuits/:id/players — inscribir jugador
+// POST /api/circuits/:id/players
 router.post('/:id/players', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
   const { playerId } = req.body;
-  if (!playerId) {
-    res.status(400).json({ error: 'playerId es requerido' });
-    return;
-  }
+  if (!playerId) { res.status(400).json({ error: 'playerId es requerido' }); return; }
   try {
     const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
     if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
@@ -99,7 +182,7 @@ router.post('/:id/seed-ranking', async (req: Request, res: Response) => {
     const players = await prisma.player.findMany({ orderBy: { id: 'asc' } });
     let cargados = 0;
     for (const p of players) {
-      if (p.dni && p.dni.startsWith('FEBIU')) {
+      if (p.dni && p.dni.startsWith('FEBIU') && p.dni !== LIBRE_DNI) {
         const pos = parseInt(p.dni.replace('FEBIU', ''));
         await prisma.rankingEntry.upsert({
           where: { playerId_circuitId: { playerId: p.id, circuitId } },
@@ -115,127 +198,7 @@ router.post('/:id/seed-ranking', async (req: Request, res: Response) => {
   }
 });
 
-// -------------------------------------------------------
-// HELPER: obtener jugadores ordenados por ranking
-// -------------------------------------------------------
-async function getJugadoresOrdenados(circuit: any, circuitId: number) {
-  let rankings = await prisma.rankingEntry.findMany({
-    where: { circuitId },
-    orderBy: { position: 'asc' }
-  });
-
-  if (rankings.length === 0) {
-    const prevCircuit = await prisma.circuit.findFirst({
-      where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
-    });
-    if (prevCircuit) {
-      rankings = await prisma.rankingEntry.findMany({
-        where: { circuitId: prevCircuit.id },
-        orderBy: { position: 'asc' }
-      });
-    }
-  }
-
-  const getRankPos = (playerId: number): number => {
-    const entry = rankings.find((r: any) => r.playerId === playerId);
-    return entry?.position ?? 9999;
-  };
-
-  const inscriptos = circuit.players.map((cp: any) => cp.player);
-  const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
-
-  const master  = ordenados.filter((p: any) => p.category.name === 'master');
-  const primera = ordenados.filter((p: any) => p.category.name === 'primera');
-  const segunda = ordenados.filter((p: any) => p.category.name === 'segunda');
-  const tercera = ordenados.filter((p: any) => p.category.name === 'tercera');
-
-  return { master, primera, segunda, tercera };
-}
-
-// -------------------------------------------------------
-// HELPER: armar series en espejo
-// N jugadores, series de 4:
-// Serie i (0-indexed): jugadores[i], jugadores[N-1-i], jugadores[N/2-1-i], jugadores[N/2+i]
-// -------------------------------------------------------
-function armarSeriesEspejo<T>(jugadores: T[], tamSerie: number): T[][] {
-  const N = jugadores.length;
-  const numSeries = Math.floor(N / tamSerie);
-  const mitad = Math.floor(N / 2);
-  const series: T[][] = [];
-
-  for (let i = 0; i < numSeries; i++) {
-    const serie: T[] = [
-      jugadores[i],
-      jugadores[N - 1 - i],
-      jugadores[mitad - 1 - i],
-      jugadores[mitad + i],
-    ].filter(Boolean) as T[];
-    series.push(serie);
-  }
-
-  // Si sobran jugadores (N no divisible por 4), armar serie final de 3
-  const restantes = N - numSeries * tamSerie;
-  if (restantes >= 2) {
-    series.push(jugadores.slice(numSeries * tamSerie) as T[]);
-  }
-
-  return series;
-}
-
-// -------------------------------------------------------
-// HELPER: doble eliminación 5 partidos
-// P1: A vs B, P2: C vs D
-// P3: ganW1 vs ganW2 (clasifica 1°)
-// P4: perW1 vs perW2
-// P5: perP3 vs ganP4 (clasifica 2°)
-// -------------------------------------------------------
-function generarDobleEliminacion5(
-  jugadores: { id: number; firstName: string; lastName: string }[],
-  phaseId: number,
-  roundBase: number
-): any[] {
-  const partidos: any[] = [];
-  if (jugadores.length === 4) {
-    const [A, B, C, D] = jugadores;
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));
-    partidos.push(mkMatch(phaseId, C.id, D.id, roundBase + 1));
-    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 2)); // placeholder ganadores
-    partidos.push(mkMatch(phaseId, B.id, D.id, roundBase + 3)); // placeholder perdedores
-    partidos.push(mkMatch(phaseId, B.id, C.id, roundBase + 4)); // placeholder repechaje
-  } else if (jugadores.length === 3) {
-    const [A, B, C] = jugadores;
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));
-    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 1));
-    partidos.push(mkMatch(phaseId, B.id, C.id, roundBase + 2));
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase + 3));
-    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 4));
-  }
-  return partidos;
-}
-
-// -------------------------------------------------------
-// HELPER: eliminación directa espejo
-// -------------------------------------------------------
-function generarEliminacionEspejo(
-  jugadores: { id: number }[],
-  phaseId: number,
-  round: number
-): any[] {
-  const partidos: any[] = [];
-  const n = jugadores.length;
-  for (let i = 0; i < Math.floor(n / 2); i++) {
-    partidos.push(mkMatch(phaseId, jugadores[i].id, jugadores[n - 1 - i].id, round));
-  }
-  return partidos;
-}
-
-function mkMatch(phaseId: number, playerAId: number, playerBId: number, round: number) {
-  return { phaseId, playerAId, playerBId, round, status: 'pendiente' };
-}
-
-// -------------------------------------------------------
-// GET /api/circuits/:id/preview — vista previa sin guardar
-// -------------------------------------------------------
+// GET /api/circuits/:id/preview
 router.get('/:id/preview', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
   try {
@@ -249,37 +212,49 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
     if (circuit.players.length === 0) { res.status(400).json({ error: 'Sin jugadores inscriptos' }); return; }
 
-    const { master, primera, segunda, tercera } = await getJugadoresOrdenados(circuit, circuitId);
+    const librePlayer = await prisma.player.findFirst({ where: { dni: LIBRE_DNI } });
+    const libreId = librePlayer?.id ?? 0;
 
-    const pn = (p: any) => `${p.lastName}, ${p.firstName}`;
+    const { master, primera, segunda, tercera } = await getJugadoresOrdenadosPorRanking(circuit, circuitId);
+    const pn = (p: any) => `${p.lastName}${p.lastName ? ', ' : ''}${p.firstName}`;
 
-    // Series clasificatorio
-    const seriesClasif = armarSeriesEspejo(tercera, 4).map((serie, i) => ({
+    const series = armarSeriesEspejo(tercera, libreId);
+
+    const seriesPreview = series.map((serie, i) => ({
       serie: i + 1,
-      jugadores: serie.map((p: any) => ({ id: p.id, nombre: pn(p) }))
+      jugadores: serie.map((p: any) => ({
+        id: p.id,
+        nombre: p.dni === LIBRE_DNI ? 'LIBRE' : pn(p),
+        esLibre: p.dni === LIBRE_DNI
+      }))
     }));
 
-    // Series segunda (32 segunda + 16 mejores de tercera como placeholder clasificados)
-    const clasificadosPlaceholder = tercera.slice(0, 16);
-    const todosSegunda = [...segunda, ...clasificadosPlaceholder];
-    const seriesSegunda = armarSeriesEspejo(todosSegunda, 4).map((serie, i) => ({
-      serie: i + 1,
-      jugadores: serie.map((p: any) => ({ id: p.id, nombre: pn(p), esClasificado: clasificadosPlaceholder.some((c: any) => c.id === p.id) }))
+    // Preview cruces de reducción (34 → 16)
+    const numSeries = series.length; // 17
+    const primerosSlots = Array.from({ length: numSeries }, (_, i) => `1° Serie ${i + 1}`);
+    const segundosSlots = Array.from({ length: numSeries }, (_, i) => `2° Serie ${i + 1}`);
+    // Mejor primero vs peor segundo
+    const crucesReduccion = Array.from({ length: numSeries }, (_, i) => ({
+      cruce: i + 1,
+      slotA: primerosSlots[i],
+      slotB: segundosSlots[numSeries - 1 - i]
     }));
 
     res.json({
       inscriptos: { master: master.length, primera: primera.length, segunda: segunda.length, tercera: tercera.length },
-      clasificatorio: { totalJugadores: tercera.length, totalSeries: seriesClasif.length, series: seriesClasif },
-      segunda: { totalJugadores: todosSegunda.length, totalSeries: seriesSegunda.length, series: seriesSegunda },
+      clasificatorio: {
+        totalJugadores: tercera.length,
+        totalSeries: series.length,
+        series: seriesPreview,
+        crucesReduccion
+      }
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// -------------------------------------------------------
-// POST /api/circuits/:id/generate — generar partidos
-// -------------------------------------------------------
+// POST /api/circuits/:id/generate
 router.post('/:id/generate', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
   try {
@@ -300,7 +275,10 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
 
-    const { master, primera, segunda, tercera } = await getJugadoresOrdenados(circuit, circuitId);
+    const librePlayer = await prisma.player.findFirst({ where: { dni: LIBRE_DNI } });
+    const libreId = librePlayer?.id ?? 0;
+
+    const { master, primera, segunda, tercera } = await getJugadoresOrdenadosPorRanking(circuit, circuitId);
 
     const phaseClasif  = circuit.phases.find(p => p.type === 'clasificatorio');
     const phaseSegunda = circuit.phases.find(p => p.type === 'segunda');
@@ -308,45 +286,233 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     const faseMaster   = circuit.phases.find(p => p.type === 'master');
 
     const matchesCreados: any[] = [];
+    const matchesWO: any[] = []; // partidos contra LIBRE que se resuelven automáticamente
 
+    // -------------------------------------------------------
     // FASE CLASIFICATORIO
-    if (phaseClasif && tercera.length > 0) {
-      const series = armarSeriesEspejo(tercera, 4);
-      let roundBase = 1;
-      for (const serie of series) {
-        matchesCreados.push(...generarDobleEliminacion5(serie, phaseClasif.id, roundBase));
-        roundBase += 10;
+    // -------------------------------------------------------
+    if (phaseClasif) {
+      const series = armarSeriesEspejo(tercera, libreId);
+      const numSeries = series.length;
+
+      for (let i = 0; i < numSeries; i++) {
+        const serie = series[i];
+        const [A, B, C, D] = serie;
+        const roundBase = i * 10 + 1;
+        const serieId = `clasif-serie-${i + 1}`;
+
+        // P1: A vs B (espejo: mejor vs peor)
+        const p1 = {
+          ...mkMatch(phaseClasif.id, A.id, B.id, roundBase),
+          serieId
+        };
+
+        // P2: C vs D (mitad superior vs mitad inferior)
+        const p2 = {
+          ...mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1),
+          serieId
+        };
+
+        matchesCreados.push(p1, p2);
+
+        // Si alguno es LIBRE, marcar para WO automático
+        if (A.dni === LIBRE_DNI || B.dni === LIBRE_DNI) {
+          matchesWO.push({ index: matchesCreados.length - 2, libreEsA: A.dni === LIBRE_DNI });
+        }
+        if (C.dni === LIBRE_DNI || D.dni === LIBRE_DNI) {
+          matchesWO.push({ index: matchesCreados.length - 1, libreEsA: C.dni === LIBRE_DNI });
+        }
+      }
+
+      // Cruces de reducción 34→16 con slots
+      // Se generan con slots porque los jugadores no se conocen aún
+      for (let i = 0; i < numSeries; i++) {
+        const roundCruce = numSeries * 10 + i + 1;
+        matchesCreados.push({
+          ...mkMatch(
+            phaseClasif.id,
+            null,
+            null,
+            roundCruce,
+            `1° Serie ${i + 1}`,
+            `2° Serie ${numSeries - i}`
+          ),
+          serieId: `clasif-reduccion-${i + 1}`
+        });
+      }
+
+      // Repechaje entre ganadores 16 y 17 (si hay más de 16 cruces)
+      if (numSeries > 16) {
+        matchesCreados.push({
+          ...mkMatch(
+            phaseClasif.id,
+            null,
+            null,
+            numSeries * 10 + numSeries + 1,
+            `Ganador Cruce ${numSeries - 1}`,
+            `Ganador Cruce ${numSeries}`
+          ),
+          serieId: 'clasif-repechaje'
+        });
       }
     }
 
-    // FASE SEGUNDA — 32 segunda + 16 clasificados de tercera (placeholder)
+    // -------------------------------------------------------
+    // FASE SEGUNDA — slots para clasificados del clasificatorio
+    // -------------------------------------------------------
     if (phaseSegunda && segunda.length > 0) {
-      const clasificados = tercera.slice(0, 16);
-      const todos = [...segunda, ...clasificados];
-      const series = armarSeriesEspejo(todos, 4);
-      let roundBase = 1;
-      for (const serie of series) {
-        matchesCreados.push(...generarDobleEliminacion5(serie, phaseSegunda.id, roundBase));
-        roundBase += 10;
+      // 32 de segunda + 16 clasificados del clasificatorio
+      // Espejo: mejor de segunda vs clasificado peor rankeado
+      const numSegunda = segunda.length; // hasta 32
+      const numClasif = 16;
+      const total = numSegunda + numClasif;
+      const numSeries = Math.floor(total / 4);
+
+      for (let i = 0; i < numSeries; i++) {
+        const roundBase = i * 10 + 1;
+        const serieId = `segunda-serie-${i + 1}`;
+        const mitad = numSeries * 2;
+
+        // Armar serie: posiciones del espejo
+        // jugadores[i], jugadores[total-1-i], jugadores[mitad-1-i], jugadores[mitad+i]
+        const getJugador = (pos: number) => {
+          if (pos < numSegunda) {
+            return { id: segunda[pos].id, slot: null };
+          } else {
+            const clasificadoPos = pos - numSegunda + 1;
+            return { id: null, slot: `Clasificado Clasif. #${clasificadoPos}` };
+          }
+        };
+
+        const posiciones = [i, total - 1 - i, mitad - 1 - i, mitad + i];
+        const jugSerie = posiciones.map(pos => getJugador(pos));
+
+        // P1 y P2
+        const p1 = jugSerie[0];
+        const p2j = jugSerie[1];
+        const p3j = jugSerie[2];
+        const p4j = jugSerie[3];
+
+        matchesCreados.push({
+          ...mkMatch(phaseSegunda.id, p1.id, p2j.id, roundBase, p1.slot ?? undefined, p2j.slot ?? undefined),
+          serieId
+        });
+        matchesCreados.push({
+          ...mkMatch(phaseSegunda.id, p3j.id, p4j.id, roundBase + 1, p3j.slot ?? undefined, p4j.slot ?? undefined),
+          serieId
+        });
       }
     }
 
-    // FASE PRIMERA — 24 primera + 24 clasificados de segunda (placeholder)
+    // -------------------------------------------------------
+    // FASE PRIMERA — slots para clasificados de segunda
+    // -------------------------------------------------------
     if (fasePrimera && primera.length > 0) {
-      const clasificados = segunda.slice(0, 24);
-      const todos = [...primera, ...clasificados];
-      matchesCreados.push(...generarEliminacionEspejo(todos, fasePrimera.id, 1));
+      const numPrimera = primera.length; // hasta 24
+      const numClasif = 24;
+      const total = numPrimera + numClasif;
+
+      for (let i = 0; i < Math.floor(total / 2); i++) {
+        const jA = i < numPrimera
+          ? { id: primera[i].id, slot: null }
+          : { id: null, slot: `Clasificado Segunda #${i - numPrimera + 1}` };
+        const jB_pos = total - 1 - i;
+        const jB = jB_pos < numPrimera
+          ? { id: primera[jB_pos].id, slot: null }
+          : { id: null, slot: `Clasificado Segunda #${jB_pos - numPrimera + 1}` };
+
+        matchesCreados.push({
+          ...mkMatch(fasePrimera.id, jA.id, jB.id, i + 1, jA.slot ?? undefined, jB.slot ?? undefined),
+          serieId: `primera-cruce-${i + 1}`
+        });
+      }
     }
 
-    // FASE MASTER — 8 master + 24 clasificados de primera (placeholder)
+    // -------------------------------------------------------
+    // FASE MASTER — cuadro de 32 con slots
+    // -------------------------------------------------------
     if (faseMaster && master.length > 0) {
-      const clasificados = primera.slice(0, 24);
-      const todos = [...master, ...clasificados];
-      matchesCreados.push(...generarEliminacionEspejo(todos, faseMaster.id, 1));
+      const numMaster = master.length; // 8
+      const numClasif = 24;
+      const total = numMaster + numClasif;
+
+      for (let i = 0; i < Math.floor(total / 2); i++) {
+        const jA = i < numMaster
+          ? { id: master[i].id, slot: null }
+          : { id: null, slot: `Clasificado Primera #${i - numMaster + 1}` };
+        const jB_pos = total - 1 - i;
+        const jB = jB_pos < numMaster
+          ? { id: master[jB_pos].id, slot: null }
+          : { id: null, slot: `Clasificado Primera #${jB_pos - numMaster + 1}` };
+
+        matchesCreados.push({
+          ...mkMatch(faseMaster.id, jA.id, jB.id, i + 1, jA.slot ?? undefined, jB.slot ?? undefined),
+          serieId: `master-cruce-${i + 1}`
+        });
+      }
+
+      // Rondas siguientes del cuadro master (slots vacíos)
+      let jugadoresRonda = Math.floor(total / 2);
+      let ronda = 2;
+      while (jugadoresRonda > 1) {
+        const ganadores = Math.floor(jugadoresRonda / 2);
+        for (let i = 0; i < ganadores; i++) {
+          matchesCreados.push({
+            ...mkMatch(faseMaster.id, null, null, ronda * 100 + i + 1,
+              `Ganador R${ronda - 1} Cruce ${i * 2 + 1}`,
+              `Ganador R${ronda - 1} Cruce ${i * 2 + 2}`
+            ),
+            serieId: `master-r${ronda}-cruce-${i + 1}`
+          });
+        }
+        jugadoresRonda = ganadores;
+        ronda++;
+      }
     }
 
+    // Insertar todos los partidos
     if (matchesCreados.length > 0) {
       await prisma.match.createMany({ data: matchesCreados });
+    }
+
+    // Resolver WOs automáticos (partidos contra LIBRE)
+    if (matchesWO.length > 0 && phaseClasif) {
+      const partidos = await prisma.match.findMany({
+        where: { phaseId: phaseClasif.id },
+        orderBy: { id: 'asc' }
+      });
+
+      for (const wo of matchesWO) {
+        // Buscar el partido con LIBRE
+        const partidoConLibre = partidos.find(p =>
+          p.playerAId === libreId || p.playerBId === libreId
+        );
+        if (!partidoConLibre) continue;
+
+        const winnerId = partidoConLibre.playerAId === libreId
+          ? partidoConLibre.playerBId
+          : partidoConLibre.playerAId;
+
+        if (!winnerId) continue;
+
+        const isA = partidoConLibre.playerAId === libreId;
+        await prisma.match.update({
+          where: { id: partidoConLibre.id },
+          data: { status: 'wo', finishedAt: new Date() }
+        });
+        await prisma.matchResult.create({
+          data: {
+            matchId: partidoConLibre.id,
+            setsA: isA ? 0 : 3,
+            setsB: isA ? 3 : 0,
+            pointsA: isA ? 0 : 180,
+            pointsB: isA ? 180 : 0,
+            winnerId,
+            isWO: true,
+            woPlayerId: libreId
+          }
+        });
+      }
     }
 
     res.json({
@@ -360,6 +526,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       },
       jugadores: { master: master.length, primera: primera.length, segunda: segunda.length, tercera: tercera.length }
     });
+
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
