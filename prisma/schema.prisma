@@ -163,26 +163,29 @@ model RuleSet {
 }
 
 model Match {
-  id          Int          @id @default(autoincrement())
-  phaseId     Int
-  phase       Phase        @relation(fields: [phaseId], references: [id])
-  playerAId   Int
-  playerA     Player       @relation("PlayerA", fields: [playerAId], references: [id])
-  playerBId   Int
-  playerB     Player       @relation("PlayerB", fields: [playerBId], references: [id])
-  tableId     Int?
-  table       Table?       @relation(fields: [tableId], references: [id])
-  ruleSetId   Int?
-  ruleSet     RuleSet?     @relation(fields: [ruleSetId], references: [id])
-  status      MatchStatus  @default(pendiente)
-  round       Int          @default(1)
-  scheduledAt DateTime?
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  result      MatchResult?
-  sets        SetResult[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           Int          @id @default(autoincrement())
+  phaseId      Int
+  phase        Phase        @relation(fields: [phaseId], references: [id])
+  playerAId    Int?
+  playerA      Player?      @relation("PlayerA", fields: [playerAId], references: [id])
+  playerBId    Int?
+  playerB      Player?      @relation("PlayerB", fields: [playerBId], references: [id])
+  slotA        String?
+  slotB        String?
+  tableId      Int?
+  table        Table?       @relation(fields: [tableId], references: [id])
+  ruleSetId    Int?
+  ruleSet      RuleSet?     @relation(fields: [ruleSetId], references: [id])
+  status       MatchStatus  @default(pendiente)
+  round        Int          @default(1)
+  serieId      String?
+  scheduledAt  DateTime?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  result       MatchResult?
+  sets         SetResult[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 model MatchResult {
