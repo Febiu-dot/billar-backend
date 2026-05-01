@@ -7,182 +7,189 @@ async function main() {
   console.log('🌱 Iniciando seed...');
 
   // Categorías
-  const catMaster = await prisma.category.upsert({ where: { name: 'master' }, update: {}, create: { name: 'master' } });
-  const catPrimera = await prisma.category.upsert({ where: { name: 'primera' }, update: {}, create: { name: 'primera' } });
-  const catSegunda = await prisma.category.upsert({ where: { name: 'segunda' }, update: {}, create: { name: 'segunda' } });
-  const catTercera = await prisma.category.upsert({ where: { name: 'tercera' }, update: {}, create: { name: 'tercera' } });
+  const catMaster   = await prisma.category.upsert({ where: { name: 'master' },   update: {}, create: { name: 'master' } });
+  const catPrimera  = await prisma.category.upsert({ where: { name: 'primera' },  update: {}, create: { name: 'primera' } });
+  const catSegunda  = await prisma.category.upsert({ where: { name: 'segunda' },  update: {}, create: { name: 'segunda' } });
+  const catTercera  = await prisma.category.upsert({ where: { name: 'tercera' },  update: {}, create: { name: 'tercera' } });
   console.log('✅ Categorías creadas');
-
-  // Sedes
-  const sede1 = await prisma.venue.upsert({
-    where: { id: 1 }, update: {},
-    create: { name: 'Billar Club Montevideo', address: 'Av. 18 de Julio 1234', city: 'Montevideo' },
-  });
-  const sede2 = await prisma.venue.upsert({
-    where: { id: 2 }, update: {},
-    create: { name: 'Salón La Bolada', address: 'Bv. Artigas 567', city: 'Montevideo' },
-  });
-  console.log('✅ Sedes creadas');
-
-  // Mesas sede 1
-  for (let i = 1; i <= 5; i++) {
-    await prisma.table.upsert({
-      where: { venueId_number: { venueId: sede1.id, number: i } },
-      update: {},
-      create: { number: i, venueId: sede1.id, status: i <= 2 ? 'ocupada' : 'libre' },
-    });
-  }
-  // Mesas sede 2
-  for (let i = 1; i <= 4; i++) {
-    await prisma.table.upsert({
-      where: { venueId_number: { venueId: sede2.id, number: i } },
-      update: {},
-      create: { number: i, venueId: sede2.id, status: 'libre' },
-    });
-  }
-  console.log('✅ Mesas creadas');
 
   // Usuarios
   const pass = await bcrypt.hash('admin123', 10);
   const passJuez = await bcrypt.hash('juez123', 10);
-
-  await prisma.user.upsert({ where: { username: 'admin' }, update: {}, create: { username: 'admin', password: pass, role: 'admin' } });
-  await prisma.user.upsert({ where: { username: 'juez1' }, update: {}, create: { username: 'juez1', password: passJuez, role: 'juez_sede', venueId: sede1.id } });
-  await prisma.user.upsert({ where: { username: 'juez2' }, update: {}, create: { username: 'juez2', password: passJuez, role: 'juez_sede', venueId: sede2.id } });
-  await prisma.user.upsert({ where: { username: 'publico' }, update: {}, create: { username: 'publico', password: await bcrypt.hash('publico123', 10), role: 'publico' } });
+  await prisma.user.upsert({ where: { username: 'admin' },   update: {}, create: { username: 'admin',   password: pass,                                    role: 'admin' } });
+  await prisma.user.upsert({ where: { username: 'juez1' },   update: {}, create: { username: 'juez1',   password: passJuez,                                role: 'juez_sede' } });
+  await prisma.user.upsert({ where: { username: 'publico' }, update: {}, create: { username: 'publico', password: await bcrypt.hash('publico123', 10),      role: 'publico' } });
   console.log('✅ Usuarios creados');
 
-  // Jugadores
+  // Jugadores reales — ranking 2026-2027
   const jugadoresData = [
-    { firstName: 'Carlos', lastName: 'Rodríguez', categoryId: catMaster.id },
-    { firstName: 'Martín', lastName: 'González', categoryId: catMaster.id },
-    { firstName: 'Diego', lastName: 'Fernández', categoryId: catMaster.id },
-    { firstName: 'Andrés', lastName: 'López', categoryId: catMaster.id },
-    { firstName: 'Pablo', lastName: 'Martínez', categoryId: catPrimera.id },
-    { firstName: 'Sebastián', lastName: 'García', categoryId: catPrimera.id },
-    { firstName: 'Federico', lastName: 'Pérez', categoryId: catPrimera.id },
-    { firstName: 'Nicolás', lastName: 'Sánchez', categoryId: catPrimera.id },
-    { firstName: 'Mateo', lastName: 'Ramírez', categoryId: catSegunda.id },
-    { firstName: 'Lucas', lastName: 'Torres', categoryId: catSegunda.id },
-    { firstName: 'Ignacio', lastName: 'Flores', categoryId: catSegunda.id },
-    { firstName: 'Rodrigo', lastName: 'Díaz', categoryId: catSegunda.id },
-    { firstName: 'Juan', lastName: 'Herrera', categoryId: catTercera.id },
-    { firstName: 'Tomás', lastName: 'Morales', categoryId: catTercera.id },
-    { firstName: 'Emilio', lastName: 'Vargas', categoryId: catTercera.id },
-    { firstName: 'Agustín', lastName: 'Castro', categoryId: catTercera.id },
+    // MASTER (1-8)
+    { firstName: 'Matias',      lastName: 'Fonsalia',     club: 'Capolavoro',     categoryId: catMaster.id },
+    { firstName: 'Maximiliano', lastName: 'Poggi',        club: 'Feria Franca',   categoryId: catMaster.id },
+    { firstName: 'Dario',       lastName: 'Maiorana',     club: 'Yatay',          categoryId: catMaster.id },
+    { firstName: 'Andres',      lastName: 'Lajuni',       club: 'Cabrera',        categoryId: catMaster.id },
+    { firstName: 'Nestor',      lastName: 'Gonzalez',     club: 'Model Center',   categoryId: catMaster.id },
+    { firstName: 'Damian',      lastName: 'Serron',       club: 'Feria Franca',   categoryId: catMaster.id },
+    { firstName: 'Roque',       lastName: 'Santangelo',   club: 'Nuevo Malvin',   categoryId: catMaster.id },
+    { firstName: 'Maximiliano', lastName: 'Durand',       club: 'Yatay',          categoryId: catMaster.id },
+    // PRIMERA (9-43)
+    { firstName: 'Emilio',      lastName: 'Broggini',     club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Adrian',      lastName: 'Marrero',      club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Luis',        lastName: 'Rivera',       club: 'Sporting Union', categoryId: catPrimera.id },
+    { firstName: 'Alvaro',      lastName: 'Gomez',        club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Darwin',      lastName: 'Pumar',        club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Leonardo',    lastName: 'Paternosto',   club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Jorge',       lastName: 'Claro',        club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Rodrigo',     lastName: 'Ferdinand',    club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Pablo',       lastName: 'Quesada',      club: 'Casa del Billar',categoryId: catPrimera.id },
+    { firstName: 'Sergio',      lastName: 'Rossi',        club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Miguel',      lastName: 'Garcia',       club: 'Yatay',          categoryId: catPrimera.id },
+    { firstName: 'Daniel',      lastName: 'Pratto',       club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Eduardo',     lastName: 'Sasias',       club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Nelson',      lastName: 'Blanco',       club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Miguel',      lastName: 'Morales',      club: 'Model Center',   categoryId: catPrimera.id },
+    { firstName: 'Willy',       lastName: 'Macedo',       club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Marcelo',     lastName: 'Gabrielle',    club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Richard',     lastName: 'Osores',       club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Gustavo',     lastName: 'Etchart',      club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Pedro',       lastName: 'Camelo',       club: 'Yatay',          categoryId: catPrimera.id },
+    { firstName: 'Wilfredo',    lastName: 'Paz',          club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Gustavo',     lastName: 'Castillo',     club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Diego',       lastName: 'Gimenez',      club: 'Centenario',     categoryId: catPrimera.id },
+    { firstName: 'Walter',      lastName: 'Amado',        club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Mario',       lastName: 'Sansebastian', club: 'Yatay',          categoryId: catPrimera.id },
+    { firstName: 'Carlos',      lastName: 'Garcia',       club: 'Centenario',     categoryId: catPrimera.id },
+    { firstName: 'Fernando',    lastName: 'Michelena',    club: 'Feria Franca',   categoryId: catPrimera.id },
+    { firstName: 'Agustin',     lastName: 'Sosa',         club: 'Capolavoro',     categoryId: catPrimera.id },
+    { firstName: 'Antonio',     lastName: 'Labat',        club: 'Yatay',          categoryId: catPrimera.id },
+    { firstName: 'Richard',     lastName: 'Rondan',       club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Jose',        lastName: 'Coppola',      club: 'Yatay',          categoryId: catPrimera.id },
+    { firstName: 'Daniel',      lastName: 'Lapunov',      club: 'Nuevo Malvin',   categoryId: catPrimera.id },
+    { firstName: 'Dario',       lastName: 'Clavijo',      club: 'Cabrera',        categoryId: catPrimera.id },
+    { firstName: 'Carlos',      lastName: 'Sosa',         club: 'Centenario',     categoryId: catPrimera.id },
+    { firstName: 'Santiago',    lastName: 'Rondan',       club: 'Cabrera',        categoryId: catPrimera.id },
+    // SEGUNDA (44-83)
+    { firstName: 'Jorge',       lastName: 'Camarotte',    club: 'Yatay',          categoryId: catSegunda.id },
+    { firstName: 'Dardo',       lastName: 'Blanco',       club: 'Capolavoro',     categoryId: catSegunda.id },
+    { firstName: 'William',     lastName: 'Gonzalez',     club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Alvaro',      lastName: 'Uran',         club: 'Feria Franca',   categoryId: catSegunda.id },
+    { firstName: 'Marcelo',     lastName: 'Alvez',        club: 'Yatay',          categoryId: catSegunda.id },
+    { firstName: 'Ari',         lastName: 'Camargo',      club: 'Capolavoro',     categoryId: catSegunda.id },
+    { firstName: 'Marcelo',     lastName: 'Rodriguez',    club: 'Capolavoro',     categoryId: catSegunda.id },
+    { firstName: 'Juan',        lastName: 'Muniz',        club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Hector',      lastName: 'Camarotte',    club: 'Yatay',          categoryId: catSegunda.id },
+    { firstName: 'Alejandro',   lastName: 'Spinetti',     club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Gerardo',     lastName: 'Sarraute',     club: 'Piedra Honda',   categoryId: catSegunda.id },
+    { firstName: 'Edgardo',     lastName: 'Betervide',    club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Jesus',       lastName: 'Nebot',        club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Norberto',    lastName: 'Rosas',        club: 'Nuevo Malvin',   categoryId: catSegunda.id },
+    { firstName: 'Carlos',      lastName: 'Santos',       club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Jesus',       lastName: 'Gonzalez',     club: 'Centenario',     categoryId: catSegunda.id },
+    { firstName: 'Sergio',      lastName: 'Migues',       club: 'Centenario',     categoryId: catSegunda.id },
+    { firstName: 'Facundo',     lastName: 'Rodriguez',    club: 'Capolavoro',     categoryId: catSegunda.id },
+    { firstName: 'Esteban',     lastName: 'Bishmishian',  club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Gabriel',     lastName: 'Panaras',      club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Julio',       lastName: 'Mañe',         club: 'Capolavoro',     categoryId: catSegunda.id },
+    { firstName: 'Fabian',      lastName: 'Marsico',      club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Julio',       lastName: 'Sosa',         club: 'Centenario',     categoryId: catSegunda.id },
+    { firstName: 'Roberto',     lastName: 'Gandini',      club: 'Nuevo Malvin',   categoryId: catSegunda.id },
+    { firstName: 'Ramiro',      lastName: 'Galvan',       club: 'Centenario',     categoryId: catSegunda.id },
+    { firstName: 'Leonardo',    lastName: 'Suarez',       club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Enrique',     lastName: 'Santana',      club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Sergio',      lastName: 'Quesada',      club: 'Casa del Billar',categoryId: catSegunda.id },
+    { firstName: 'Miguel',      lastName: 'Freitas',      club: 'Centenario',     categoryId: catSegunda.id },
+    { firstName: 'Aldo',        lastName: 'Berneche',     club: 'Sporting Union', categoryId: catSegunda.id },
+    { firstName: 'Ricardo',     lastName: 'Magnano',      club: 'Sporting Union', categoryId: catSegunda.id },
+    { firstName: 'Julio',       lastName: 'Trias',        club: 'Feria Franca',   categoryId: catSegunda.id },
+    { firstName: 'Gustavo',     lastName: 'Mayo',         club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Walter',      lastName: 'Saldaña',      club: 'Yatay',          categoryId: catSegunda.id },
+    { firstName: 'Pablo',       lastName: 'Baraldo',      club: 'Model Center',   categoryId: catSegunda.id },
+    { firstName: 'Gerardo',     lastName: 'Correa',       club: 'Feria Franca',   categoryId: catSegunda.id },
+    { firstName: 'Diego',       lastName: 'Beux',         club: 'Feria Franca',   categoryId: catSegunda.id },
+    { firstName: 'Robert',      lastName: 'Gonzalez',     club: 'Cabrera',        categoryId: catSegunda.id },
+    { firstName: 'Juan',        lastName: 'Ovelar',       club: 'Nuevo Malvin',   categoryId: catSegunda.id },
+    { firstName: 'Edgardo',     lastName: 'Denis',        club: 'Yatay',          categoryId: catSegunda.id },
+    // TERCERA (84-131)
+    { firstName: 'Marcelo',     lastName: 'Gonzalez',     club: 'Yatay',          categoryId: catTercera.id },
+    { firstName: 'Richard',     lastName: 'Garcia',       club: 'Yatay',          categoryId: catTercera.id },
+    { firstName: 'Miguel',      lastName: 'Fonseca',      club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Daniel',      lastName: 'Lapaz',        club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Antonio',     lastName: 'Rabellino',    club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Victor',      lastName: 'Baliña',       club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Sebastian',   lastName: 'Quesada',      club: 'Casa del Billar',categoryId: catTercera.id },
+    { firstName: 'Juan',        lastName: 'Carlos',       club: 'Casa del Billar',categoryId: catTercera.id },
+    { firstName: 'Victor',      lastName: 'Vidart',       club: 'Casa del Billar',categoryId: catTercera.id },
+    { firstName: 'Bruno',       lastName: 'Gonzalez',     club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Edgardo',     lastName: 'Umpierr',      club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Alvaro',      lastName: 'Maldonado',    club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Axel',        lastName: 'Chiberriaga',  club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Richard',     lastName: 'Croza',        club: 'Nuevo Malvin',   categoryId: catTercera.id },
+    { firstName: 'Fernando',    lastName: 'Rodriguez',    club: 'Model Center',   categoryId: catTercera.id },
+    { firstName: 'Marcelo',     lastName: 'Camarotte',    club: 'Yatay',          categoryId: catTercera.id },
+    { firstName: 'Alvaro',      lastName: 'Aquino',       club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Gustavo',     lastName: 'Fraquia',      club: 'Feria Franca',   categoryId: catTercera.id },
+    { firstName: 'Esteban',     lastName: 'Zanelli',      club: 'Piedra Honda',   categoryId: catTercera.id },
+    { firstName: 'Washington',  lastName: 'Carreras',     club: 'Sporting Union', categoryId: catTercera.id },
+    { firstName: 'Alejandro',   lastName: 'Figueredo',    club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Gregorio',    lastName: 'De la Fuente', club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Martin',      lastName: 'Gonzalez',     club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Bruno',       lastName: 'Zavattiero',   club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Fernando',    lastName: 'Veneroso',     club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Gustavo',     lastName: 'Bicker',       club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Julio',       lastName: 'Torre',        club: 'Sporting Union', categoryId: catTercera.id },
+    { firstName: 'Victor',      lastName: 'Batalla',      club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Leonel',      lastName: 'Barboza',      club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Julio',       lastName: 'Martinez',     club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Uruguay',     lastName: 'Sosa',         club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Jorge',       lastName: 'Ferreira',     club: 'Centenario',     categoryId: catTercera.id },
+    { firstName: 'Raul',        lastName: 'Ponce',        club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Jose',        lastName: 'Luis Marquez', club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Jose',        lastName: 'Calcagno',     club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Enrique',     lastName: 'Da Silva',     club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Daniel',      lastName: 'Navia',        club: 'Model Center',   categoryId: catTercera.id },
+    { firstName: 'Marcelo',     lastName: 'Leguizamon',   club: 'Model Center',   categoryId: catTercera.id },
+    { firstName: 'Manuel',      lastName: 'Pereira',      club: 'Model Center',   categoryId: catTercera.id },
+    { firstName: 'Carlos',      lastName: 'Davila',       club: 'Piedra Honda',   categoryId: catTercera.id },
+    { firstName: 'Osvaldo',     lastName: 'Machado',      club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Libert',      lastName: 'Larrosa',      club: 'Feria Franca',   categoryId: catTercera.id },
+    { firstName: 'Gustavo',     lastName: 'Vidich',       club: 'Cabrera',        categoryId: catTercera.id },
+    { firstName: 'Karen',       lastName: 'Teliz',        club: 'Capolavoro',     categoryId: catTercera.id },
+    { firstName: 'Ramiro',      lastName: 'Correa',       club: 'Casa del Billar',categoryId: catTercera.id },
+    { firstName: 'Alberto',     lastName: 'Del Campo',    club: 'Model Center',   categoryId: catTercera.id },
+    { firstName: 'Irineo',      lastName: 'Piñeyro',      club: 'Feria Franca',   categoryId: catTercera.id },
+    { firstName: 'Carlos',      lastName: 'Vales',        club: 'Centenario',     categoryId: catTercera.id },
   ];
 
-  const jugadores = [];
-  for (const j of jugadoresData) {
+  const jugadores: any[] = [];
+  for (let i = 0; i < jugadoresData.length; i++) {
+    const j = jugadoresData[i];
     const p = await prisma.player.upsert({
-      where: { dni: `DNI${j.firstName}${j.lastName}`.replace(/\s/g, '') },
-      update: {},
-      create: { ...j, dni: `DNI${j.firstName}${j.lastName}`.replace(/\s/g, '') },
+      where: { dni: `FEBIU${String(i + 1).padStart(3, '0')}` },
+      update: { firstName: j.firstName, lastName: j.lastName, club: j.club, categoryId: j.categoryId },
+      create: { ...j, dni: `FEBIU${String(i + 1).padStart(3, '0')}` },
     });
     jugadores.push(p);
   }
-  console.log('✅ Jugadores creados');
+  console.log(`✅ ${jugadores.length} jugadores cargados`);
 
   // RuleSet
-  const ruleSet = await prisma.ruleSet.upsert({
+  await prisma.ruleSet.upsert({
     where: { id: 1 }, update: {},
-    create: { name: 'Estándar (al mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 50, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 150, woPtsLoser: 0 },
+    create: { name: 'Series (mejor de 3)', bestOf: 3, setsToWin: 2, pointsPerSet: 60, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 180, woPtsLoser: 0 },
   });
-
-  // Torneo
-  const torneo = await prisma.tournament.upsert({
-    where: { id: 1 }, update: {},
-    create: { name: 'Campeonato Nacional de Billar 2025', year: 2025, description: 'Torneo anual por circuitos', active: true },
-  });
-
-  // Circuito
-  const circuito = await prisma.circuit.upsert({
-    where: { id: 1 }, update: {},
-    create: { name: 'Circuito 1 - Apertura', tournamentId: torneo.id, order: 1, startDate: new Date('2025-03-01'), endDate: new Date('2025-03-31'), active: true },
-  });
-
-  // Fases
-  const faseClasif = await prisma.phase.upsert({
-    where: { id: 1 }, update: {},
-    create: { name: 'Clasificatorio', type: 'clasificatorio', circuitId: circuito.id, order: 1 },
-  });
-  const fasePrimera = await prisma.phase.upsert({
+  await prisma.ruleSet.upsert({
     where: { id: 2 }, update: {},
-    create: { name: 'Primera Fase', type: 'primera', circuitId: circuito.id, order: 2 },
+    create: { name: 'Cruces (mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 60, woSetsWinner: 5, woSetsLoser: 0, woPtsWinner: 300, woPtsLoser: 0 },
   });
-  console.log('✅ Torneo, circuito y fases creados');
+  console.log('✅ RuleSets creados');
 
-  // Obtener mesas
-  const tables = await prisma.table.findMany({ orderBy: [{ venueId: 'asc' }, { number: 'asc' }] });
-  const mesa1 = tables[0];
-  const mesa2 = tables[1];
-  const mesa5 = tables[4];
-
-  // Partidos - mezcla de estados
-  const matchesData = [
-    // Finalizados
-    { playerAId: jugadores[0].id, playerBId: jugadores[1].id, phaseId: faseClasif.id, status: 'finalizado' as const, tableId: mesa5.id, round: 1 },
-    { playerAId: jugadores[2].id, playerBId: jugadores[3].id, phaseId: faseClasif.id, status: 'finalizado' as const, tableId: mesa5.id, round: 1 },
-    { playerAId: jugadores[4].id, playerBId: jugadores[5].id, phaseId: faseClasif.id, status: 'finalizado' as const, tableId: mesa5.id, round: 1 },
-    // En juego
-    { playerAId: jugadores[6].id, playerBId: jugadores[7].id, phaseId: faseClasif.id, status: 'en_juego' as const, tableId: mesa1.id, round: 1 },
-    { playerAId: jugadores[8].id, playerBId: jugadores[9].id, phaseId: faseClasif.id, status: 'en_juego' as const, tableId: mesa2.id, round: 1 },
-    // Asignados
-    { playerAId: jugadores[10].id, playerBId: jugadores[11].id, phaseId: faseClasif.id, status: 'asignado' as const, tableId: mesa5.id, round: 1 },
-    // Pendientes
-    { playerAId: jugadores[12].id, playerBId: jugadores[13].id, phaseId: faseClasif.id, status: 'pendiente' as const, tableId: null, round: 1 },
-    { playerAId: jugadores[14].id, playerBId: jugadores[15].id, phaseId: faseClasif.id, status: 'pendiente' as const, tableId: null, round: 1 },
-    { playerAId: jugadores[0].id, playerBId: jugadores[4].id, phaseId: fasePrimera.id, status: 'pendiente' as const, tableId: null, round: 1 },
-    { playerAId: jugadores[1].id, playerBId: jugadores[5].id, phaseId: fasePrimera.id, status: 'pendiente' as const, tableId: null, round: 1 },
-  ];
-
-  const createdMatches = [];
-  for (const m of matchesData) {
-    const created = await prisma.match.create({
-      data: {
-        ...m,
-        ruleSetId: ruleSet.id,
-        startedAt: m.status === 'en_juego' || m.status === 'finalizado' ? new Date() : null,
-        finishedAt: m.status === 'finalizado' ? new Date() : null,
-      },
-    });
-    createdMatches.push(created);
-  }
-
-  // Resultados para partidos finalizados
-  await prisma.matchResult.create({ data: { matchId: createdMatches[0].id, setsA: 3, setsB: 1, pointsA: 150, pointsB: 80, winnerId: jugadores[0].id } });
-  await prisma.matchResult.create({ data: { matchId: createdMatches[1].id, setsA: 2, setsB: 3, pointsA: 100, pointsB: 150, winnerId: jugadores[3].id } });
-  await prisma.matchResult.create({ data: { matchId: createdMatches[2].id, setsA: 3, setsB: 0, pointsA: 150, pointsB: 60, winnerId: jugadores[4].id, isWO: true, woPlayerId: jugadores[5].id } });
-
-  // Resultados parciales para partidos en juego
-  await prisma.matchResult.create({ data: { matchId: createdMatches[3].id, setsA: 1, setsB: 2, pointsA: 45, pointsB: 90 } });
-  await prisma.matchResult.create({ data: { matchId: createdMatches[4].id, setsA: 2, setsB: 1, pointsA: 100, pointsB: 50 } });
-
-  // Rankings de ejemplo
-  const rankingData = [
-    { playerId: jugadores[0].id, circuitId: circuito.id, points: 30, matchesPlayed: 2, matchesWon: 2, setsWon: 6, setsLost: 2, pointsFor: 290, pointsAgainst: 170 },
-    { playerId: jugadores[3].id, circuitId: circuito.id, points: 30, matchesPlayed: 2, matchesWon: 1, setsWon: 4, setsLost: 4, pointsFor: 240, pointsAgainst: 200 },
-    { playerId: jugadores[4].id, circuitId: circuito.id, points: 30, matchesPlayed: 1, matchesWon: 1, setsWon: 3, setsLost: 0, pointsFor: 150, pointsAgainst: 60 },
-  ];
-
-  for (const r of rankingData) {
-    await prisma.rankingEntry.upsert({
-      where: { playerId_circuitId: { playerId: r.playerId, circuitId: r.circuitId } },
-      update: r,
-      create: r,
-    });
-  }
-
-  console.log('✅ Partidos y resultados creados');
-  console.log('✅ Rankings creados');
   console.log('');
-  console.log('🎱 Seed completado exitosamente!');
+  console.log('🎱 Seed completado!');
   console.log('');
-  console.log('👤 Usuarios de prueba:');
-  console.log('   admin   / admin123  → Panel administrador');
-  console.log('   juez1   / juez123   → Juez Sede 1 (Billar Club Montevideo)');
-  console.log('   juez2   / juez123   → Juez Sede 2 (Salón La Bolada)');
-  console.log('   publico / publico123 → Vista pública');
+  console.log('👤 Usuarios:');
+  console.log('   admin   / admin123');
+  console.log('   juez1   / juez123');
+  console.log('   publico / publico123');
 }
 
 main()
