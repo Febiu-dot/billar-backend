@@ -6,9 +6,12 @@ const prisma = new PrismaClient();
 
 const LIBRE_DNI = 'FEBIU000';
 
-// -------------------------------------------------------
-// HELPER: obtener jugadores inscriptos ordenados por ranking
-// -------------------------------------------------------
+// Cortes fijos del reglamento
+const CORTE_MASTER   = 8;   // puestos 1-8
+const CORTE_PRIMERA  = 32;  // puestos 9-32
+const CORTE_SEGUNDA  = 64;  // puestos 33-64
+// clasificatorio: puestos 65+
+
 async function getJugadoresOrdenados(circuit: any, circuitId: number) {
   let rankings = await prisma.rankingEntry.findMany({
     where: { circuitId },
@@ -38,19 +41,28 @@ async function getJugadoresOrdenados(circuit: any, circuitId: number) {
 
   const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
 
-  return { ordenados, getRankPos, rankings };
+  // Dividir por cortes fijos del ranking
+  const master   = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) <= CORTE_MASTER);
+  const primera  = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_MASTER && getRankPos(ordenados[i].id) <= CORTE_PRIMERA);
+  const segunda  = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_PRIMERA && getRankPos(ordenados[i].id) <= CORTE_SEGUNDA);
+  const clasif   = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_SEGUNDA);
+
+  return { master, primera, segunda, clasif, getRankPos, rankings };
 }
 
-// -------------------------------------------------------
-// HELPER: armar series en espejo
-// Serie i: jugadores[i], jugadores[N-1-i], jugadores[N/2-1-i], jugadores[N/2+i]
-// -------------------------------------------------------
+function completarConLibre(jugadores: any[], librePlayer: any): any[] {
+  const resto = jugadores.length % 4;
+  if (resto === 0) return jugadores;
+  const result = [...jugadores];
+  for (let i = 0; i < 4 - resto; i++) result.push(librePlayer);
+  return result;
+}
+
 function armarSeriesEspejo(jugadores: any[]): any[][] {
   const N = jugadores.length;
   const numSeries = N / 4;
   const mitad = N / 2;
   const series: any[][] = [];
-
   for (let i = 0; i < numSeries; i++) {
     series.push([
       jugadores[i],
@@ -60,20 +72,6 @@ function armarSeriesEspejo(jugadores: any[]): any[][] {
     ]);
   }
   return series;
-}
-
-// -------------------------------------------------------
-// HELPER: completar a múltiplo de 4 con LIBRE
-// -------------------------------------------------------
-function completarConLibre(jugadores: any[], librePlayer: any): any[] {
-  const resto = jugadores.length % 4;
-  if (resto === 0) return jugadores;
-  const byesNecesarios = 4 - resto;
-  const result = [...jugadores];
-  for (let i = 0; i < byesNecesarios; i++) {
-    result.push(librePlayer);
-  }
-  return result;
 }
 
 function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | null, round: number, slotA?: string, slotB?: string, serieId?: string) {
@@ -192,26 +190,14 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     if (circuit.players.length === 0) { res.status(400).json({ error: 'Sin jugadores inscriptos' }); return; }
 
     const librePlayer = await prisma.player.findFirst({ where: { dni: LIBRE_DNI } });
-    const { ordenados } = await getJugadoresOrdenados(circuit, circuitId);
+    const { master, primera, segunda, clasif } = await getJugadoresOrdenados(circuit, circuitId);
 
-    const N = ordenados.length; // jugadores reales inscriptos
-
-    // Clasificar por posición en ranking (65+ juegan clasificatorio, etc.)
-    // Con N jugadores reales, los puestos son 1..N
-    // Clasificatorio: puestos ceil(N/2)+1 .. N (segunda mitad)
-    const mitad = Math.ceil(N / 2);
-    const jugClasif  = ordenados.slice(mitad);      // puestos mitad+1 .. N
-    const jugSegunda = ordenados.slice(mitad / 2, mitad); // puestos mitad/4+1 .. mitad
-    const jugPrimera = ordenados.slice(4, mitad / 2); // aproximado
-    const jugMaster  = ordenados.slice(0, 4);          // los mejores
-
-    // Completar clasificatorio con libre si es necesario
-    const jugClasifConLibre = librePlayer ? completarConLibre(jugClasif, librePlayer) : jugClasif;
-    const numSeries = jugClasifConLibre.length / 4;
+    const jugConLibre = completarConLibre(clasif, librePlayer ?? { id: 0, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' });
+    const numSeries = jugConLibre.length / 4;
 
     const pn = (p: any) => p.dni === LIBRE_DNI ? 'LIBRE' : `${p.lastName}${p.lastName ? ', ' : ''}${p.firstName}`;
 
-    const series = armarSeriesEspejo(jugClasifConLibre).map((serie, i) => ({
+    const series = armarSeriesEspejo(jugConLibre).map((serie, i) => ({
       serie: i + 1,
       jugadores: serie.map((p: any) => ({
         id: p.id,
@@ -220,8 +206,8 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
       }))
     }));
 
-    const numClasificados = numSeries * 2; // primero y segundo de cada serie
-    const crucesReduccion = [];
+    const numClasificados = numSeries * 2;
+    const crucesReduccion: any[] = [];
     if (numClasificados > 16) {
       for (let i = 0; i < numSeries; i++) {
         crucesReduccion.push({
@@ -230,7 +216,6 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
           slotB: `2° Serie ${numSeries - i}`
         });
       }
-      // repechaje si numSeries > 16
       if (numSeries > 16) {
         crucesReduccion.push({
           cruce: numSeries + 1,
@@ -241,9 +226,15 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     }
 
     res.json({
-      inscriptos: { total: N, clasificatorio: jugClasif.length, segunda: jugSegunda.length, primera: jugPrimera.length, master: jugMaster.length },
+      inscriptos: {
+        total: master.length + primera.length + segunda.length + clasif.length,
+        master: master.length,
+        primera: primera.length,
+        segunda: segunda.length,
+        clasificatorio: clasif.length
+      },
       clasificatorio: {
-        totalJugadores: jugClasifConLibre.length,
+        totalJugadores: jugConLibre.length,
         totalSeries: numSeries,
         series,
         crucesReduccion
@@ -269,7 +260,6 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     if (circuit.players.length === 0) { res.status(400).json({ error: 'El circuito no tiene jugadores inscriptos' }); return; }
     if (circuit.phases.length === 0) { res.status(400).json({ error: 'El circuito no tiene fases creadas' }); return; }
 
-    // Borrar partidos existentes
     const phaseIds = circuit.phases.map(p => p.id);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
@@ -277,23 +267,9 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
 
     const librePlayer = await prisma.player.findFirst({ where: { dni: LIBRE_DNI } });
     const libreId = librePlayer?.id ?? 0;
+    const libreObj = librePlayer ?? { id: libreId, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' };
 
-    const { ordenados } = await getJugadoresOrdenados(circuit, circuitId);
-    const N = ordenados.length;
-
-    // Dividir por posición en ranking
-    // Clasificatorio: segunda mitad (puestos N/2+1 .. N)
-    // Segunda fase: puestos N/4+1 .. N/2
-    // Tercera fase: puestos 9 .. N/4
-    // Master: puestos 1 .. 8
-    const corte1 = Math.ceil(N / 2);      // límite clasificatorio
-    const corte2 = Math.ceil(N / 4);      // límite segunda
-    const corte3 = 8;                      // master siempre son 8
-
-    const jugClasif  = ordenados.slice(corte1);
-    const jugSegunda = ordenados.slice(corte2, corte1);
-    const jugPrimera = ordenados.slice(corte3, corte2);
-    const jugMaster  = ordenados.slice(0, corte3);
+    const { master, primera, segunda, clasif } = await getJugadoresOrdenados(circuit, circuitId);
 
     const phaseClasif  = circuit.phases.find(p => p.type === 'clasificatorio');
     const phaseSegunda = circuit.phases.find(p => p.type === 'segunda');
@@ -301,49 +277,35 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     const faseMaster   = circuit.phases.find(p => p.type === 'master');
 
     const matchesCreados: any[] = [];
-    const woMatches: { playerAId: number; playerBId: number; phaseId: number }[] = [];
 
     // -------------------------------------------------------
-    // FASE CLASIFICATORIO
+    // FASE CLASIFICATORIO — puestos 65+
     // -------------------------------------------------------
-    if (phaseClasif) {
-      const jugConLibre = completarConLibre(jugClasif, librePlayer ?? { id: libreId, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' });
+    if (phaseClasif && clasif.length > 0) {
+      const jugConLibre = completarConLibre(clasif, libreObj);
       const series = armarSeriesEspejo(jugConLibre);
       const numSeries = series.length;
 
       for (let i = 0; i < numSeries; i++) {
-        const serie = series[i];
-        const [A, B, C, D] = serie;
+        const [A, B, C, D] = series[i];
         const roundBase = i * 10 + 1;
         const serieId = `clasif-serie-${i + 1}`;
-
-        // P1: A vs B
         matchesCreados.push(mkMatch(phaseClasif.id, A.id, B.id, roundBase, undefined, undefined, serieId));
-        // P2: C vs D
         matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId));
-
-        // Marcar WOs automáticos
-        if (A.dni === LIBRE_DNI || B.dni === LIBRE_DNI) {
-          woMatches.push({ playerAId: A.id, playerBId: B.id, phaseId: phaseClasif.id });
-        }
-        if (C.dni === LIBRE_DNI || D.dni === LIBRE_DNI) {
-          woMatches.push({ playerAId: C.id, playerBId: D.id, phaseId: phaseClasif.id });
-        }
       }
 
-      // Cruces de reducción con slots
+      // Cruces de reducción
       const numClasificados = numSeries * 2;
       if (numClasificados > 16) {
         for (let i = 0; i < numSeries; i++) {
-          const roundCruce = numSeries * 10 + i + 1;
           matchesCreados.push(mkMatch(
-            phaseClasif.id, null, null, roundCruce,
+            phaseClasif.id, null, null,
+            numSeries * 10 + i + 1,
             `1° Serie ${i + 1}`,
             `2° Serie ${numSeries - i}`,
             `clasif-reduccion-${i + 1}`
           ));
         }
-        // Repechaje si numSeries > 16
         if (numSeries > 16) {
           matchesCreados.push(mkMatch(
             phaseClasif.id, null, null,
@@ -357,93 +319,69 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     }
 
     // -------------------------------------------------------
-    // FASE SEGUNDA — puestos corte2..corte1 + 16 clasificados
+    // FASE SEGUNDA — puestos 33-64 + 16 clasificados
     // -------------------------------------------------------
-    if (phaseSegunda && jugSegunda.length > 0) {
-      const numSegunda = jugSegunda.length;
-      const numClasif = 16;
-      const total = numSegunda + numClasif;
-      const jugConSlots = [
-        ...jugSegunda,
-        ...Array.from({ length: numClasif }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }))
-      ];
+    if (phaseSegunda && segunda.length > 0) {
+      const slots16 = Array.from({ length: 16 }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
+      let jugConSlots = [...segunda, ...slots16] as any[];
+      while (jugConSlots.length % 4 !== 0) jugConSlots.push({ id: null, slot: 'LIBRE' });
 
-      // Completar a múltiplo de 4
-      while (jugConSlots.length % 4 !== 0) {
-        jugConSlots.push({ id: null, slot: 'LIBRE' });
-      }
-
-      const numSeries = jugConSlots.length / 4;
-      const mitad = jugConSlots.length / 2;
+      const N2 = jugConSlots.length;
+      const mitad = N2 / 2;
+      const numSeries = N2 / 4;
 
       for (let i = 0; i < numSeries; i++) {
         const roundBase = i * 10 + 1;
         const serieId = `segunda-serie-${i + 1}`;
-        const N2 = jugConSlots.length;
-
         const posiciones = [i, N2 - 1 - i, mitad - 1 - i, mitad + i];
-        const jugSerie = posiciones.map(pos => jugConSlots[pos]);
+        const [j0, j1, j2, j3] = posiciones.map(pos => jugConSlots[pos]);
 
-        const getPA = (j: any) => ({ id: j.id ?? null, slot: j.slot ?? null });
-
-        const [j0, j1, j2, j3] = jugSerie.map(getPA);
-
-        matchesCreados.push(mkMatch(phaseSegunda.id, j0.id, j1.id, roundBase, j0.slot ?? undefined, j1.slot ?? undefined, serieId));
-        matchesCreados.push(mkMatch(phaseSegunda.id, j2.id, j3.id, roundBase + 1, j2.slot ?? undefined, j3.slot ?? undefined, serieId));
+        matchesCreados.push(mkMatch(phaseSegunda.id, j0.id ?? null, j1.id ?? null, roundBase, j0.slot ?? undefined, j1.slot ?? undefined, serieId));
+        matchesCreados.push(mkMatch(phaseSegunda.id, j2.id ?? null, j3.id ?? null, roundBase + 1, j2.slot ?? undefined, j3.slot ?? undefined, serieId));
       }
     }
 
     // -------------------------------------------------------
-    // FASE PRIMERA — puestos corte3..corte2 + 24 clasificados
+    // FASE PRIMERA — puestos 9-32 + 24 clasificados
     // -------------------------------------------------------
-    if (fasePrimera && jugPrimera.length > 0) {
-      const numPrimera = jugPrimera.length;
-      const numClasif = 24;
-      const jugConSlots = [
-        ...jugPrimera,
-        ...Array.from({ length: numClasif }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }))
-      ];
+    if (fasePrimera && primera.length > 0) {
+      const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }));
+      const jugConSlots = [...primera, ...slots24] as any[];
       const total = jugConSlots.length;
 
       for (let i = 0; i < Math.floor(total / 2); i++) {
         const jA = jugConSlots[i];
         const jB = jugConSlots[total - 1 - i];
         matchesCreados.push(mkMatch(
-          fasePrimera.id,
-          jA.id ?? null, jB.id ?? null,
+          fasePrimera.id, jA.id ?? null, jB.id ?? null,
           i + 1,
-          (jA as any).slot ?? undefined,
-          (jB as any).slot ?? undefined,
+          jA.slot ?? undefined, jB.slot ?? undefined,
           `primera-cruce-${i + 1}`
         ));
       }
     }
 
     // -------------------------------------------------------
-    // FASE MASTER — puestos 1..8 + 24 clasificados
+    // FASE MASTER — puestos 1-8 + 24 clasificados
     // -------------------------------------------------------
-    if (faseMaster && jugMaster.length > 0) {
-      const jugConSlots = [
-        ...jugMaster,
-        ...Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }))
-      ];
+    if (faseMaster && master.length > 0) {
+      const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
+      const jugConSlots = [...master, ...slots24] as any[];
       const total = jugConSlots.length;
 
-      // Ronda 1: 16 cruces
+      // Ronda 1
       for (let i = 0; i < Math.floor(total / 2); i++) {
         const jA = jugConSlots[i];
         const jB = jugConSlots[total - 1 - i];
         matchesCreados.push(mkMatch(
-          faseMaster.id,
-          jA.id ?? null, jB.id ?? null,
+          faseMaster.id, jA.id ?? null, jB.id ?? null,
           i + 1,
-          (jA as any).slot ?? undefined,
-          (jB as any).slot ?? undefined,
+          jA.slot ?? undefined, jB.slot ?? undefined,
           `master-r1-cruce-${i + 1}`
         ));
       }
 
-      // Rondas siguientes con slots
+      // Rondas siguientes
       let jugadoresRonda = Math.floor(total / 2);
       let ronda = 2;
       while (jugadoresRonda > 1) {
@@ -462,33 +400,26 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       }
     }
 
-    // Insertar partidos
     if (matchesCreados.length > 0) {
       await prisma.match.createMany({ data: matchesCreados });
     }
 
-    // Resolver WOs automáticos (partidos contra LIBRE)
-    if (woMatches.length > 0 && phaseClasif) {
+    // WOs automáticos contra LIBRE
+    if (phaseClasif) {
       const partidos = await prisma.match.findMany({
         where: { phaseId: phaseClasif.id, OR: [{ playerAId: libreId }, { playerBId: libreId }] }
       });
-
       for (const partido of partidos) {
         const winnerId = partido.playerAId === libreId ? partido.playerBId : partido.playerAId;
         if (!winnerId) continue;
         const isA = partido.playerAId === libreId;
-
         await prisma.match.update({ where: { id: partido.id }, data: { status: 'wo', finishedAt: new Date() } });
         await prisma.matchResult.create({
           data: {
             matchId: partido.id,
-            setsA: isA ? 0 : 3,
-            setsB: isA ? 3 : 0,
-            pointsA: isA ? 0 : 180,
-            pointsB: isA ? 180 : 0,
-            winnerId,
-            isWO: true,
-            woPlayerId: libreId
+            setsA: isA ? 0 : 3, setsB: isA ? 3 : 0,
+            pointsA: isA ? 0 : 180, pointsB: isA ? 180 : 0,
+            winnerId, isWO: true, woPlayerId: libreId
           }
         });
       }
@@ -503,13 +434,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         primera: matchesCreados.filter(m => m.phaseId === fasePrimera?.id).length,
         master: matchesCreados.filter(m => m.phaseId === faseMaster?.id).length,
       },
-      jugadores: {
-        total: N,
-        clasificatorio: jugClasif.length,
-        segunda: jugSegunda.length,
-        primera: jugPrimera.length,
-        master: jugMaster.length
-      }
+      jugadores: { master: master.length, primera: primera.length, segunda: segunda.length, clasificatorio: clasif.length }
     });
 
   } catch (error: any) {
