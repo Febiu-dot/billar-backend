@@ -71,9 +71,7 @@ router.post('/:id/players', async (req: Request, res: Response) => {
     }
     const circuitPlayer = await prisma.circuitPlayer.create({
       data: { circuitId, playerId: parseInt(playerId) },
-      include: {
-        player: { include: { category: true } }
-      }
+      include: { player: { include: { category: true } } }
     });
     res.status(201).json(circuitPlayer);
   } catch (error: any) {
@@ -106,6 +104,46 @@ router.delete('/:id/players/:playerId', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/circuits/:id/seed-ranking — cargar ranking inicial
+router.post('/:id/seed-ranking', async (req: Request, res: Response) => {
+  const circuitId = parseInt(req.params.id);
+  try {
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
+    if (!circuit) {
+      res.status(404).json({ error: 'Circuito no encontrado' });
+      return;
+    }
+    const players = await prisma.player.findMany({ orderBy: { id: 'asc' } });
+    let cargados = 0;
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
+      if (p.dni && p.dni.startsWith('FEBIU')) {
+        const pos = parseInt(p.dni.replace('FEBIU', ''));
+        await prisma.rankingEntry.upsert({
+          where: { playerId_circuitId: { playerId: p.id, circuitId } },
+          update: { position: pos },
+          create: {
+            playerId: p.id,
+            circuitId,
+            position: pos,
+            points: 0,
+            matchesPlayed: 0,
+            matchesWon: 0,
+            setsWon: 0,
+            setsLost: 0,
+            pointsFor: 0,
+            pointsAgainst: 0,
+          },
+        });
+        cargados++;
+      }
+    }
+    res.json({ message: 'Ranking inicial cargado', total: cargados });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/circuits/:id/generate — generar partidos automáticamente
 router.post('/:id/generate', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
@@ -127,93 +165,125 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       res.status(404).json({ error: 'Circuito no encontrado' });
       return;
     }
-
     if (circuit.players.length === 0) {
       res.status(400).json({ error: 'El circuito no tiene jugadores inscriptos' });
       return;
     }
-
     if (circuit.phases.length === 0) {
       res.status(400).json({ error: 'El circuito no tiene fases creadas' });
       return;
     }
 
-    // Borrar partidos existentes de todas las fases del circuito
+    // Borrar partidos existentes
     const phaseIds = circuit.phases.map(p => p.id);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
 
-    // Ranking del circuito anterior para ordenar jugadores
-    const prevCircuit = await prisma.circuit.findFirst({
-      where: {
-        tournamentId: circuit.tournamentId,
-        order: circuit.order - 1
-      },
-      include: {
-        rankings: {
-          include: { player: true },
-          orderBy: { position: 'asc' }
-        }
-      }
+    // Obtener ranking del circuito actual (primer circuito) o anterior
+    const rankingEntries = await prisma.rankingEntry.findMany({
+      where: { circuitId },
+      include: { player: { include: { category: true } } },
+      orderBy: { position: 'asc' }
     });
 
+    // Si no hay ranking en este circuito, buscar el anterior
+    let rankings = rankingEntries;
+    if (rankings.length === 0) {
+      const prevCircuit = await prisma.circuit.findFirst({
+        where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
+      });
+      if (prevCircuit) {
+        rankings = await prisma.rankingEntry.findMany({
+          where: { circuitId: prevCircuit.id },
+          include: { player: { include: { category: true } } },
+          orderBy: { position: 'asc' }
+        });
+      }
+    }
+
+    // Obtener todos los jugadores inscriptos
     const inscriptos = circuit.players.map(cp => cp.player);
 
-    const getRankPosition = (playerId: number): number => {
-      if (!prevCircuit) return 9999;
-      const entry = prevCircuit.rankings.find(r => r.playerId === playerId);
+    // Función para obtener posición en el ranking
+    const getRankPos = (playerId: number): number => {
+      const entry = rankings.find(r => r.playerId === playerId);
       return entry?.position ?? 9999;
     };
 
-    const sortByRank = (players: typeof inscriptos) =>
-      [...players].sort((a, b) => getRankPosition(a.id) - getRankPosition(b.id));
+    // Ordenar inscriptos por posición en el ranking
+    const inscriptosOrdenados = [...inscriptos].sort((a, b) => getRankPos(a.id) - getRankPos(b.id));
 
-    const master  = sortByRank(inscriptos.filter(p => p.category.name === 'master'));
-    const primera = sortByRank(inscriptos.filter(p => p.category.name === 'primera'));
-    const segunda = sortByRank(inscriptos.filter(p => p.category.name === 'segunda'));
-    const tercera = sortByRank(inscriptos.filter(p => p.category.name === 'tercera'));
+    // Clasificar por categoría (fija durante el año)
+    const master  = inscriptosOrdenados.filter(p => p.category.name === 'master');
+    const primera = inscriptosOrdenados.filter(p => p.category.name === 'primera');
+    const segunda = inscriptosOrdenados.filter(p => p.category.name === 'segunda');
+    const tercera = inscriptosOrdenados.filter(p => p.category.name === 'tercera');
 
-    const getPhase = (tipo: string) => circuit.phases.find(p => p.type === tipo);
-    const phaseClasif  = getPhase('clasificatorio');
-    const phaseSegunda = getPhase('segunda');
-    const fasePrimera  = getPhase('primera');
-    const faseMaster   = getPhase('master');
+    // Obtener fases por tipo
+    const phaseClasif  = circuit.phases.find(p => p.type === 'clasificatorio');
+    const phaseSegunda = circuit.phases.find(p => p.type === 'segunda');
+    const fasePrimera  = circuit.phases.find(p => p.type === 'primera');
+    const faseMaster   = circuit.phases.find(p => p.type === 'master');
 
     const matchesCreados: any[] = [];
 
-    // FASE CLASIFICATORIO
-    if (phaseClasif) {
-      const jugadoresClasif = tercera;
-      const series = armarSeries(jugadoresClasif, 4);
-      let round = 1;
+    // -------------------------------------------------------
+    // FASE CLASIFICATORIO — solo tercera, series de 4 (o 3)
+    // doble eliminación a 5 partidos
+    // -------------------------------------------------------
+    if (phaseClasif && tercera.length > 0) {
+      const series = armarSeries(tercera, 4);
+      let roundBase = 1;
       for (const serie of series) {
-        const partidos = generarDobleEliminacion(serie, phaseClasif.id, round);
+        const partidos = generarDobleEliminacion5(serie, phaseClasif.id, roundBase);
         matchesCreados.push(...partidos);
-        round += 10;
+        roundBase += 10;
       }
     }
 
-    // FASE SEGUNDA
-    if (phaseSegunda) {
-      const series = armarSeriesEspejo(segunda, [], 4);
-      let round = 1;
+    // -------------------------------------------------------
+    // FASE SEGUNDA — 32 de segunda + 16 clasificados (espejo)
+    // series de 4, doble eliminación a 5 partidos
+    // Los 32 de segunda van primero (mejor ranked), los 16 clasificados al final
+    // Espejo: 1° segunda vs 16° clasificado, etc.
+    // -------------------------------------------------------
+    if (phaseSegunda && segunda.length > 0) {
+      // Los clasificados del clasificatorio serán los primeros 16 del ranking
+      // de la fase clasificatoria — por ahora usamos placeholders con los de tercera
+      // mejor rankeados como clasificados (los primeros 16 de tercera)
+      const clasificadosClasif = tercera.slice(0, 16);
+      const series = armarSeriesEspejo(segunda, clasificadosClasif, 4);
+      let roundBase = 1;
       for (const serie of series) {
-        const partidos = generarDobleEliminacion(serie, phaseSegunda.id, round);
+        const partidos = generarDobleEliminacion5(serie, phaseSegunda.id, roundBase);
         matchesCreados.push(...partidos);
-        round += 10;
+        roundBase += 10;
       }
     }
 
-    // FASE PRIMERA — eliminación directa espejo
-    if (fasePrimera) {
-      const partidos = generarEliminacionDirectaEspejo(primera, fasePrimera.id, 1);
+    // -------------------------------------------------------
+    // FASE PRIMERA — 24 de primera + 24 clasificados de segunda
+    // eliminación directa espejo al mejor de 5
+    // Los 24 de primera van primero, los 24 clasificados al final
+    // -------------------------------------------------------
+    if (fasePrimera && primera.length > 0) {
+      const clasificadosSegunda = segunda.slice(0, 24);
+      const todos = [...primera, ...clasificadosSegunda];
+      const partidos = generarEliminacionEspejo(todos, fasePrimera.id, 1);
       matchesCreados.push(...partidos);
     }
 
-    // FASE MASTER — eliminación directa espejo
-    if (faseMaster) {
-      const partidos = generarEliminacionDirectaEspejo(master, faseMaster.id, 1);
+    // -------------------------------------------------------
+    // FASE MASTER — 8 master + clasificados de primera = 32
+    // cuadro completo eliminación directa espejo al mejor de 5
+    // 1° master vs 32°, 2° master vs 31°, etc.
+    // -------------------------------------------------------
+    if (faseMaster && master.length > 0) {
+      const clasificadosPrimera = primera.slice(0, 24);
+      const todos = [...master, ...clasificadosPrimera];
+      // espejo: 1 vs N, 2 vs N-1
+      const partidos = generarEliminacionEspejo(todos, faseMaster.id, 1);
       matchesCreados.push(...partidos);
     }
 
@@ -229,6 +299,12 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         segunda: matchesCreados.filter(m => m.phaseId === phaseSegunda?.id).length,
         primera: matchesCreados.filter(m => m.phaseId === fasePrimera?.id).length,
         master: matchesCreados.filter(m => m.phaseId === faseMaster?.id).length,
+      },
+      jugadores: {
+        master: master.length,
+        primera: primera.length,
+        segunda: segunda.length,
+        tercera: tercera.length,
       }
     });
 
@@ -241,6 +317,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
 // HELPERS
 // -------------------------------------------------------
 
+// Divide jugadores en series de tamaño n (última puede ser n-1)
 function armarSeries<T>(jugadores: T[], tam: number): T[][] {
   const series: T[][] = [];
   let i = 0;
@@ -251,6 +328,9 @@ function armarSeries<T>(jugadores: T[], tam: number): T[][] {
   return series;
 }
 
+// Arma series espejo: mejores de mejores con peores de clasificados
+// mejores: ordenados por ranking (mejor primero)
+// clasificados: ordenados por ranking (mejor primero), van al final
 function armarSeriesEspejo<T extends { id: number }>(
   mejores: T[],
   clasificados: T[],
@@ -258,9 +338,12 @@ function armarSeriesEspejo<T extends { id: number }>(
 ): T[][] {
   const todos = [...mejores, ...clasificados];
   const n = todos.length;
+  const numSeries = Math.floor(n / tam);
   const series: T[][] = [];
-  const mitad = Math.floor(n / tam / 2);
-  for (let i = 0; i < mitad; i++) {
+
+  for (let i = 0; i < numSeries; i++) {
+    // espejo: i-ésimo mejor con (n-1-i)-ésimo
+    const mitad = Math.floor(numSeries / 2);
     const serie: T[] = [
       todos[i],
       todos[n - 1 - i],
@@ -272,29 +355,40 @@ function armarSeriesEspejo<T extends { id: number }>(
   return series;
 }
 
-function generarDobleEliminacion(
+// Doble eliminación a 5 partidos exactos para serie de 3 o 4 jugadores
+// Partido 1: A vs B
+// Partido 2: C vs D
+// Partido 3: ganador P1 vs ganador P2 → clasifica 1°
+// Partido 4: perdedor P1 vs perdedor P2
+// Partido 5: perdedor P3 vs ganador P4 → clasifica 2°
+function generarDobleEliminacion5(
   jugadores: { id: number }[],
   phaseId: number,
   roundBase: number
 ): any[] {
   const partidos: any[] = [];
+
   if (jugadores.length === 4) {
     const [A, B, C, D] = jugadores;
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));
-    partidos.push(mkMatch(phaseId, C.id, D.id, roundBase));
-    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 1));
-    partidos.push(mkMatch(phaseId, B.id, D.id, roundBase + 2));
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase + 3));
+    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));      // P1
+    partidos.push(mkMatch(phaseId, C.id, D.id, roundBase + 1));  // P2
+    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 2));  // P3 ganadores (placeholders)
+    partidos.push(mkMatch(phaseId, B.id, D.id, roundBase + 3));  // P4 perdedores
+    partidos.push(mkMatch(phaseId, B.id, C.id, roundBase + 4));  // P5 repechaje
   } else if (jugadores.length === 3) {
     const [A, B, C] = jugadores;
-    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));
-    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 1));
-    partidos.push(mkMatch(phaseId, B.id, C.id, roundBase + 2));
+    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase));      // P1
+    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 1));  // P2 (C entra directo a segunda ronda)
+    partidos.push(mkMatch(phaseId, B.id, C.id, roundBase + 2));  // P3 perdedor P1 vs C
+    partidos.push(mkMatch(phaseId, A.id, B.id, roundBase + 3));  // P4 final
+    partidos.push(mkMatch(phaseId, A.id, C.id, roundBase + 4));  // P5 repechaje
   }
+
   return partidos;
 }
 
-function generarEliminacionDirectaEspejo(
+// Eliminación directa espejo: 1 vs N, 2 vs N-1, ...
+function generarEliminacionEspejo(
   jugadores: { id: number }[],
   phaseId: number,
   round: number
@@ -310,91 +404,5 @@ function generarEliminacionDirectaEspejo(
 function mkMatch(phaseId: number, playerAId: number, playerBId: number, round: number) {
   return { phaseId, playerAId, playerBId, round, status: 'pendiente' };
 }
-// POST /api/circuits/:id/seed-ranking — cargar ranking inicial
-router.post('/:id/seed-ranking', async (req: Request, res: Response) => {
-  const circuitId = parseInt(req.params.id);
 
-  const RANKING_INICIAL = [
-    { pos: 1,   dni: 'FEBIU001' }, { pos: 2,   dni: 'FEBIU002' }, { pos: 3,   dni: 'FEBIU003' },
-    { pos: 4,   dni: 'FEBIU004' }, { pos: 5,   dni: 'FEBIU005' }, { pos: 6,   dni: 'FEBIU006' },
-    { pos: 7,   dni: 'FEBIU007' }, { pos: 8,   dni: 'FEBIU008' }, { pos: 9,   dni: 'FEBIU009' },
-    { pos: 10,  dni: 'FEBIU010' }, { pos: 11,  dni: 'FEBIU011' }, { pos: 12,  dni: 'FEBIU012' },
-    { pos: 13,  dni: 'FEBIU013' }, { pos: 14,  dni: 'FEBIU014' }, { pos: 15,  dni: 'FEBIU015' },
-    { pos: 16,  dni: 'FEBIU016' }, { pos: 17,  dni: 'FEBIU017' }, { pos: 18,  dni: 'FEBIU018' },
-    { pos: 19,  dni: 'FEBIU019' }, { pos: 20,  dni: 'FEBIU020' }, { pos: 21,  dni: 'FEBIU021' },
-    { pos: 22,  dni: 'FEBIU022' }, { pos: 23,  dni: 'FEBIU023' }, { pos: 24,  dni: 'FEBIU024' },
-    { pos: 25,  dni: 'FEBIU025' }, { pos: 26,  dni: 'FEBIU026' }, { pos: 27,  dni: 'FEBIU027' },
-    { pos: 28,  dni: 'FEBIU028' }, { pos: 29,  dni: 'FEBIU029' }, { pos: 30,  dni: 'FEBIU030' },
-    { pos: 31,  dni: 'FEBIU031' }, { pos: 32,  dni: 'FEBIU032' }, { pos: 33,  dni: 'FEBIU033' },
-    { pos: 34,  dni: 'FEBIU034' }, { pos: 35,  dni: 'FEBIU035' }, { pos: 36,  dni: 'FEBIU036' },
-    { pos: 37,  dni: 'FEBIU037' }, { pos: 38,  dni: 'FEBIU038' }, { pos: 39,  dni: 'FEBIU039' },
-    { pos: 40,  dni: 'FEBIU040' }, { pos: 41,  dni: 'FEBIU041' }, { pos: 42,  dni: 'FEBIU042' },
-    { pos: 43,  dni: 'FEBIU043' }, { pos: 44,  dni: 'FEBIU044' }, { pos: 45,  dni: 'FEBIU045' },
-    { pos: 46,  dni: 'FEBIU046' }, { pos: 47,  dni: 'FEBIU047' }, { pos: 48,  dni: 'FEBIU048' },
-    { pos: 49,  dni: 'FEBIU049' }, { pos: 50,  dni: 'FEBIU050' }, { pos: 51,  dni: 'FEBIU051' },
-    { pos: 52,  dni: 'FEBIU052' }, { pos: 53,  dni: 'FEBIU053' }, { pos: 54,  dni: 'FEBIU054' },
-    { pos: 55,  dni: 'FEBIU055' }, { pos: 56,  dni: 'FEBIU056' }, { pos: 57,  dni: 'FEBIU057' },
-    { pos: 58,  dni: 'FEBIU058' }, { pos: 59,  dni: 'FEBIU059' }, { pos: 60,  dni: 'FEBIU060' },
-    { pos: 61,  dni: 'FEBIU061' }, { pos: 62,  dni: 'FEBIU062' }, { pos: 63,  dni: 'FEBIU063' },
-    { pos: 64,  dni: 'FEBIU064' }, { pos: 65,  dni: 'FEBIU065' }, { pos: 66,  dni: 'FEBIU066' },
-    { pos: 67,  dni: 'FEBIU067' }, { pos: 68,  dni: 'FEBIU068' }, { pos: 69,  dni: 'FEBIU069' },
-    { pos: 70,  dni: 'FEBIU070' }, { pos: 71,  dni: 'FEBIU071' }, { pos: 72,  dni: 'FEBIU072' },
-    { pos: 73,  dni: 'FEBIU073' }, { pos: 74,  dni: 'FEBIU074' }, { pos: 75,  dni: 'FEBIU075' },
-    { pos: 76,  dni: 'FEBIU076' }, { pos: 77,  dni: 'FEBIU077' }, { pos: 78,  dni: 'FEBIU078' },
-    { pos: 79,  dni: 'FEBIU079' }, { pos: 80,  dni: 'FEBIU080' }, { pos: 81,  dni: 'FEBIU081' },
-    { pos: 82,  dni: 'FEBIU082' }, { pos: 83,  dni: 'FEBIU083' }, { pos: 84,  dni: 'FEBIU084' },
-    { pos: 85,  dni: 'FEBIU085' }, { pos: 86,  dni: 'FEBIU086' }, { pos: 87,  dni: 'FEBIU087' },
-    { pos: 88,  dni: 'FEBIU088' }, { pos: 89,  dni: 'FEBIU089' }, { pos: 90,  dni: 'FEBIU090' },
-    { pos: 91,  dni: 'FEBIU091' }, { pos: 92,  dni: 'FEBIU092' }, { pos: 93,  dni: 'FEBIU093' },
-    { pos: 94,  dni: 'FEBIU094' }, { pos: 95,  dni: 'FEBIU095' }, { pos: 96,  dni: 'FEBIU096' },
-    { pos: 97,  dni: 'FEBIU097' }, { pos: 98,  dni: 'FEBIU098' }, { pos: 99,  dni: 'FEBIU099' },
-    { pos: 100, dni: 'FEBIU100' }, { pos: 101, dni: 'FEBIU101' }, { pos: 102, dni: 'FEBIU102' },
-    { pos: 103, dni: 'FEBIU103' }, { pos: 104, dni: 'FEBIU104' }, { pos: 105, dni: 'FEBIU105' },
-    { pos: 106, dni: 'FEBIU106' }, { pos: 107, dni: 'FEBIU107' }, { pos: 108, dni: 'FEBIU108' },
-    { pos: 109, dni: 'FEBIU109' }, { pos: 110, dni: 'FEBIU110' }, { pos: 111, dni: 'FEBIU111' },
-    { pos: 112, dni: 'FEBIU112' }, { pos: 113, dni: 'FEBIU113' }, { pos: 114, dni: 'FEBIU114' },
-    { pos: 115, dni: 'FEBIU115' }, { pos: 116, dni: 'FEBIU116' }, { pos: 117, dni: 'FEBIU117' },
-    { pos: 118, dni: 'FEBIU118' }, { pos: 119, dni: 'FEBIU119' }, { pos: 120, dni: 'FEBIU120' },
-    { pos: 121, dni: 'FEBIU121' }, { pos: 122, dni: 'FEBIU122' }, { pos: 123, dni: 'FEBIU123' },
-    { pos: 124, dni: 'FEBIU124' }, { pos: 125, dni: 'FEBIU125' }, { pos: 126, dni: 'FEBIU126' },
-    { pos: 127, dni: 'FEBIU127' }, { pos: 128, dni: 'FEBIU128' }, { pos: 129, dni: 'FEBIU129' },
-    { pos: 130, dni: 'FEBIU130' }, { pos: 131, dni: 'FEBIU131' },
-  ];
-
-  try {
-    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
-    if (!circuit) {
-      res.status(404).json({ error: 'Circuito no encontrado' });
-      return;
-    }
-
-    let cargados = 0;
-    for (const r of RANKING_INICIAL) {
-      const player = await prisma.player.findFirst({ where: { dni: r.dni } });
-      if (player) {
-        await prisma.rankingEntry.upsert({
-          where: { playerId_circuitId: { playerId: player.id, circuitId } },
-          update: { position: r.pos },
-          create: {
-            playerId: player.id,
-            circuitId,
-            position: r.pos,
-            points: 0,
-            matchesPlayed: 0,
-            matchesWon: 0,
-            setsWon: 0,
-            setsLost: 0,
-            pointsFor: 0,
-            pointsAgainst: 0,
-          },
-        });
-        cargados++;
-      }
-    }
-
-    res.json({ message: 'Ranking inicial cargado', total: cargados });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
 export default router;
