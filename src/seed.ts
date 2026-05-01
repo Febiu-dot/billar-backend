@@ -190,6 +190,18 @@ async function main() {
     where: { id: 1 }, update: {},
     create: { name: 'Series (mejor de 3)', bestOf: 3, setsToWin: 2, pointsPerSet: 60, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 180, woPtsLoser: 0 },
   });
+  // Jugador LIBRE (bye)
+  await prisma.player.upsert({
+    where: { dni: 'FEBIU000' },
+    update: {},
+    create: {
+      firstName: 'LIBRE',
+      lastName: '',
+      dni: 'FEBIU000',
+      categoryId: catTercera.id,
+      active: false,
+    },
+  });
   await prisma.ruleSet.upsert({
     where: { id: 2 }, update: {},
     create: { name: 'Cruces (mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 60, woSetsWinner: 5, woSetsLoser: 0, woPtsWinner: 300, woPtsLoser: 0 },
