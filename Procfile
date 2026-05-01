@@ -1,1 +1,1 @@
-web: npm run build && npx prisma migrate deploy && npx ts-node src/seed.ts && node dist/index.js
+web: npm run build && npx prisma migrate deploy && node dist/seed.js && node dist/index.js
