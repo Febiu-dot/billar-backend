@@ -235,6 +235,7 @@ async function main() {
   console.log('🎱 Seed completado!');
   console.log('   admin / admin123');
   console.log('   juez1 / juez123');
+  
   console.log('   publico / publico123');
 }
 
