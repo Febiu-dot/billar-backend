@@ -137,14 +137,41 @@ const RANKING_INICIAL = [
   { pos: 131, firstName: 'Carlos',      lastName: 'Vales',        club: 'Centenario',      cat: 'tercera'  },
 ];
 
+async function cargarRankingInicial(circuitId: number) {
+  for (let i = 0; i < RANKING_INICIAL.length; i++) {
+    const r = RANKING_INICIAL[i];
+    const player = await prisma.player.findFirst({
+      where: { dni: `FEBIU${String(i + 1).padStart(3, '0')}` }
+    });
+    if (player) {
+      await prisma.rankingEntry.upsert({
+        where: { playerId_circuitId: { playerId: player.id, circuitId } },
+        update: { position: r.pos },
+        create: {
+          playerId: player.id,
+          circuitId,
+          position: r.pos,
+          points: 0,
+          matchesPlayed: 0,
+          matchesWon: 0,
+          setsWon: 0,
+          setsLost: 0,
+          pointsFor: 0,
+          pointsAgainst: 0,
+        },
+      });
+    }
+  }
+}
+
 async function main() {
   console.log('🌱 Iniciando seed...');
 
+  // Categorías — siempre upsert
   const catMaster   = await prisma.category.upsert({ where: { name: 'master' },   update: {}, create: { name: 'master' } });
   const catPrimera  = await prisma.category.upsert({ where: { name: 'primera' },  update: {}, create: { name: 'primera' } });
   const catSegunda  = await prisma.category.upsert({ where: { name: 'segunda' },  update: {}, create: { name: 'segunda' } });
   const catTercera  = await prisma.category.upsert({ where: { name: 'tercera' },  update: {}, create: { name: 'tercera' } });
-  console.log('✅ Categorías');
 
   const catMap: Record<string, number> = {
     master:  catMaster.id,
@@ -153,24 +180,12 @@ async function main() {
     tercera: catTercera.id,
   };
 
-  const pass = await bcrypt.hash('admin123', 10);
-  await prisma.user.upsert({ where: { username: 'admin' },   update: {}, create: { username: 'admin',   password: pass, role: 'admin' } });
-  await prisma.user.upsert({ where: { username: 'juez1' },   update: {}, create: { username: 'juez1',   password: await bcrypt.hash('juez123', 10), role: 'juez_sede' } });
+  // Usuarios — siempre upsert
+  await prisma.user.upsert({ where: { username: 'admin' },   update: {}, create: { username: 'admin',   password: await bcrypt.hash('admin123', 10),   role: 'admin' } });
+  await prisma.user.upsert({ where: { username: 'juez1' },   update: {}, create: { username: 'juez1',   password: await bcrypt.hash('juez123', 10),    role: 'juez_sede' } });
   await prisma.user.upsert({ where: { username: 'publico' }, update: {}, create: { username: 'publico', password: await bcrypt.hash('publico123', 10), role: 'publico' } });
-  console.log('✅ Usuarios');
 
-  // Jugadores
-  for (let i = 0; i < RANKING_INICIAL.length; i++) {
-    const r = RANKING_INICIAL[i];
-    await prisma.player.upsert({
-      where: { dni: `FEBIU${String(i + 1).padStart(3, '0')}` },
-      update: { firstName: r.firstName, lastName: r.lastName, club: r.club, categoryId: catMap[r.cat] },
-      create: { firstName: r.firstName, lastName: r.lastName, club: r.club, categoryId: catMap[r.cat], dni: `FEBIU${String(i + 1).padStart(3, '0')}` },
-    });
-  }
-  console.log(`✅ ${RANKING_INICIAL.length} jugadores`);
-
-  // RuleSets
+  // RuleSets — siempre upsert
   await prisma.ruleSet.upsert({
     where: { id: 1 }, update: {},
     create: { name: 'Series (mejor de 3)', bestOf: 3, setsToWin: 2, pointsPerSet: 60, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 180, woPtsLoser: 0 },
@@ -179,39 +194,41 @@ async function main() {
     where: { id: 2 }, update: {},
     create: { name: 'Cruces (mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 60, woSetsWinner: 5, woSetsLoser: 0, woPtsWinner: 300, woPtsLoser: 0 },
   });
-  console.log('✅ RuleSets');
 
-  // Ranking inicial — asociar al primer circuito disponible
-  const primerCircuito = await prisma.circuit.findFirst({ orderBy: { id: 'asc' } });
-  if (primerCircuito) {
-    console.log(`🏆 Cargando ranking inicial en circuito ${primerCircuito.name}...`);
+  // Jugadores — solo si no hay ninguno
+  const playerCount = await prisma.player.count();
+  if (playerCount === 0) {
+    console.log('👤 Cargando jugadores...');
     for (let i = 0; i < RANKING_INICIAL.length; i++) {
       const r = RANKING_INICIAL[i];
-      const player = await prisma.player.findFirst({
-        where: { dni: `FEBIU${String(i + 1).padStart(3, '0')}` }
+      await prisma.player.create({
+        data: {
+          firstName: r.firstName,
+          lastName: r.lastName,
+          club: r.club,
+          categoryId: catMap[r.cat],
+          dni: `FEBIU${String(i + 1).padStart(3, '0')}`,
+        },
       });
-      if (player) {
-        await prisma.rankingEntry.upsert({
-          where: { playerId_circuitId: { playerId: player.id, circuitId: primerCircuito.id } },
-          update: { position: r.pos },
-          create: {
-            playerId: player.id,
-            circuitId: primerCircuito.id,
-            position: r.pos,
-            points: 0,
-            matchesPlayed: 0,
-            matchesWon: 0,
-            setsWon: 0,
-            setsLost: 0,
-            pointsFor: 0,
-            pointsAgainst: 0,
-          },
-        });
-      }
     }
-    console.log(`✅ Ranking inicial cargado — ${RANKING_INICIAL.length} entradas`);
+    console.log(`✅ ${RANKING_INICIAL.length} jugadores cargados`);
   } else {
-    console.log('⚠️  No hay circuitos — ranking inicial no cargado. Creá el circuito desde el frontend y reiniciá.');
+    console.log(`⏭️  Jugadores omitidos — ya hay ${playerCount} en la base de datos`);
+  }
+
+  // Ranking inicial — solo si no hay ninguno
+  const rankingCount = await prisma.rankingEntry.count();
+  if (rankingCount === 0) {
+    const primerCircuito = await prisma.circuit.findFirst({ orderBy: { id: 'asc' } });
+    if (primerCircuito) {
+      console.log(`🏆 Cargando ranking inicial en circuito ${primerCircuito.name}...`);
+      await cargarRankingInicial(primerCircuito.id);
+      console.log(`✅ Ranking inicial cargado — ${RANKING_INICIAL.length} entradas`);
+    } else {
+      console.log('⚠️  Sin circuitos — ranking no cargado. Creá el circuito desde el frontend.');
+    }
+  } else {
+    console.log(`⏭️  Ranking omitido — ya hay ${rankingCount} entradas`);
   }
 
   console.log('');
