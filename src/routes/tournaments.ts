@@ -8,6 +8,7 @@ const router = Router();
 router.get('/', async (_req, res: Response) => {
   const tournaments = await prisma.tournament.findMany({
     include: {
+      departamento: true,
       circuits: {
         include: {
           phases: { include: { _count: { select: { matches: true } } } },
@@ -30,6 +31,7 @@ router.get('/:id', async (req, res: Response) => {
   const tournament = await prisma.tournament.findUnique({
     where: { id: Number(req.params.id) },
     include: {
+      departamento: true,
       circuits: {
         include: {
           phases: {
@@ -66,19 +68,21 @@ router.get('/:id', async (req, res: Response) => {
 
 // POST create tournament
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, year, description, active } = req.body;
+  const { name, year, description, active, departamentoId } = req.body;
   const tournament = await prisma.tournament.create({
-    data: { name, year, description, active: active ?? true },
+    data: { name, year, description, active: active ?? true, departamentoId: departamentoId ? Number(departamentoId) : undefined },
+    include: { departamento: true }
   });
   res.status(201).json(tournament);
 });
 
 // PUT update tournament
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, year, description, active } = req.body;
+  const { name, year, description, active, departamentoId } = req.body;
   const tournament = await prisma.tournament.update({
     where: { id: Number(req.params.id) },
-    data: { name, year, description, active },
+    data: { name, year, description, active, departamentoId: departamentoId ? Number(departamentoId) : null },
+    include: { departamento: true }
   });
   res.json(tournament);
 });
