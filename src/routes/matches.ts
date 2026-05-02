@@ -6,12 +6,6 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 
 const router = Router();
 
-// -------------------------------------------------------
-// HELPER: generar siguiente partido de la serie
-// roundBase = round del P1 de la serie (múltiplo de 10 + 1)
-// P1 = roundBase, P2 = roundBase+1, P3 = roundBase+2
-// P4 = roundBase+3, P5 = roundBase+4
-// -------------------------------------------------------
 async function generarSiguientePartidoSerie(matchId: number) {
   try {
     const match = await prisma.match.findUnique({
@@ -22,21 +16,13 @@ async function generarSiguientePartidoSerie(matchId: number) {
 
     const phaseId = match.phaseId;
     const round = match.round;
-
-    // Determinar roundBase y posición del partido en la serie
-    // P1=roundBase, P2=roundBase+1, P3=roundBase+2, P4=roundBase+3, P5=roundBase+4
     const roundBase = Math.floor(round / 10) * 10 + 1;
-    const posEnSerie = round - roundBase; // 0=P1, 1=P2, 2=P3, 3=P4, 4=P5
+    const posEnSerie = round - roundBase;
 
-    // Solo actuar sobre P1, P2, P3 y P4
     if (posEnSerie > 3) return;
 
-    // Obtener todos los partidos de esta serie
     const partidos = await prisma.match.findMany({
-      where: {
-        phaseId,
-        round: { gte: roundBase, lte: roundBase + 4 }
-      },
+      where: { phaseId, round: { gte: roundBase, lte: roundBase + 4 } },
       include: { result: true },
       orderBy: { round: 'asc' }
     });
@@ -46,62 +32,64 @@ async function generarSiguientePartidoSerie(matchId: number) {
     const p3 = partidos.find(p => p.round === roundBase + 2);
     const p4 = partidos.find(p => p.round === roundBase + 3);
 
-    // Cuando terminan P1 y P2 → crear P3 y P4
     if (posEnSerie <= 1) {
       const p1Done = p1?.result?.winnerId;
       const p2Done = p2?.result?.winnerId;
 
       if (p1Done && p2Done && !p3) {
-        // P3: ganador P1 vs ganador P2
         await prisma.match.create({
           data: {
             phaseId,
             playerAId: p1.result!.winnerId!,
             playerBId: p2.result!.winnerId!,
             round: roundBase + 2,
-            status: 'pendiente'
+            status: 'pendiente',
+            serieId: match.serieId,
+            tableId: match.tableId,
           }
         });
 
-        // P4: perdedor P1 vs perdedor P2
         const p1LoserId = p1.playerAId === p1.result!.winnerId ? p1.playerBId : p1.playerAId;
         const p2LoserId = p2.playerAId === p2.result!.winnerId ? p2.playerBId : p2.playerAId;
 
-        // Si alguno es bye (mismo jugador ganó y perdió = no aplica), crear P4 solo con jugadores reales
-        await prisma.match.create({
-          data: {
-            phaseId,
-            playerAId: p1LoserId,
-            playerBId: p2LoserId,
-            round: roundBase + 3,
-            status: 'pendiente'
-          }
-        });
-
-        console.log(`✅ Serie roundBase=${roundBase}: P3 y P4 generados`);
+        if (p1LoserId && p2LoserId) {
+          await prisma.match.create({
+            data: {
+              phaseId,
+              playerAId: p1LoserId,
+              playerBId: p2LoserId,
+              round: roundBase + 3,
+              status: 'pendiente',
+              serieId: match.serieId,
+              tableId: match.tableId,
+            }
+          });
+        }
+        console.log(`✅ Serie ${match.serieId}: P3 y P4 generados`);
       }
     }
 
-    // Cuando terminan P3 y P4 → crear P5
     if (posEnSerie >= 2 && posEnSerie <= 3) {
       const p3Done = p3?.result?.winnerId;
       const p4Done = p4?.result?.winnerId;
 
       if (p3Done && p4Done && !partidos.find(p => p.round === roundBase + 4)) {
-        // P5: perdedor P3 vs ganador P4
         const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
 
-        await prisma.match.create({
-          data: {
-            phaseId,
-            playerAId: p3LoserId,
-            playerBId: p4!.result!.winnerId!,
-            round: roundBase + 4,
-            status: 'pendiente'
-          }
-        });
-
-        console.log(`✅ Serie roundBase=${roundBase}: P5 generado`);
+        if (p3LoserId && p4!.result!.winnerId) {
+          await prisma.match.create({
+            data: {
+              phaseId,
+              playerAId: p3LoserId,
+              playerBId: p4!.result!.winnerId!,
+              round: roundBase + 4,
+              status: 'pendiente',
+              serieId: match.serieId,
+              tableId: p4!.tableId,
+            }
+          });
+        }
+        console.log(`✅ Serie ${match.serieId}: P5 generado`);
       }
     }
   } catch (error) {
@@ -109,7 +97,7 @@ async function generarSiguientePartidoSerie(matchId: number) {
   }
 }
 
-// GET all matches with filters
+// GET all matches
 router.get('/', async (req, res: Response) => {
   const { phaseId, status, tableId, venueId } = req.query;
 
@@ -167,7 +155,26 @@ router.get('/:id', async (req, res: Response) => {
   res.json(match);
 });
 
-// Assign match to table
+// PUT /:id — actualizar scheduledAt
+router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
+  const { scheduledAt } = req.body;
+  const match = await prisma.match.update({
+    where: { id: Number(req.params.id) },
+    data: { scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined },
+    include: {
+      playerA: { include: { category: true } },
+      playerB: { include: { category: true } },
+      table: { include: { venue: true } },
+      phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true,
+      sets: { orderBy: { setNumber: 'asc' } },
+    },
+  });
+  emitMatchUpdate(io, match);
+  res.json(match);
+});
+
+// PUT /:id/assign
 router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { tableId } = req.body;
   const matchId = Number(req.params.id);
@@ -195,7 +202,7 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
   res.json(match);
 });
 
-// Start match
+// PUT /:id/start
 router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const match = await prisma.match.update({
     where: { id: Number(req.params.id) },
@@ -213,7 +220,7 @@ router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async 
   res.json(match);
 });
 
-// Save individual set
+// PUT /:id/set
 router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
   const { setNumber, pointsA, pointsB } = req.body;
@@ -265,7 +272,7 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
   res.json(updatedMatch);
 });
 
-// Load result (close match) — genera siguiente partido de serie automáticamente
+// PUT /:id/result
 router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
   const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
@@ -349,8 +356,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   emitMatchUpdate(io, updatedMatch);
 
-  // Verificar si hay que generar siguiente partido de serie
-  // Solo para fases clasificatorio y segunda (doble eliminación)
   const phaseType = existingMatch.phase?.type;
   if (phaseType === 'clasificatorio' || phaseType === 'segunda') {
     await generarSiguientePartidoSerie(matchId);
@@ -359,7 +364,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   res.json({ match: updatedMatch, result });
 });
 
-// Auto-assign
+// POST /auto-assign
 router.post('/auto-assign', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { matchId, venueId } = req.body;
 
