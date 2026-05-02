@@ -5,13 +5,14 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 const router = Router();
 
 router.get('/', async (req, res: Response) => {
-  const { categoryId, active } = req.query;
+  const { categoryId, active, departamentoId } = req.query;
   const players = await prisma.player.findMany({
     where: {
       ...(categoryId ? { categoryId: Number(categoryId) } : {}),
       ...(active !== undefined ? { active: active === 'true' } : {}),
+      ...(departamentoId ? { departamentoId: Number(departamentoId) } : {}),
     },
-    include: { category: true },
+    include: { category: true, departamento: true },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
   });
   res.json(players);
@@ -22,6 +23,7 @@ router.get('/:id', async (req, res: Response) => {
     where: { id: Number(req.params.id) },
     include: {
       category: true,
+      departamento: true,
       matchesA: {
         include: { playerB: true, result: true, phase: true },
         orderBy: { createdAt: 'desc' },
@@ -34,25 +36,25 @@ router.get('/:id', async (req, res: Response) => {
       },
     },
   });
-  if (!player) return res.status(404).json({ error: 'Jugador no encontrado' });
+  if (!player) return res.status(404).json({ error: 'Jugador no encontrado' }) as any;
   res.json(player);
 });
 
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId, club } = req.body;
+  const { firstName, lastName, dni, categoryId, club, departamentoId } = req.body;
   const player = await prisma.player.create({
-    data: { firstName, lastName, dni, categoryId, club },
-    include: { category: true },
+    data: { firstName, lastName, dni, categoryId, club, departamentoId: departamentoId ? Number(departamentoId) : undefined },
+    include: { category: true, departamento: true },
   });
   res.status(201).json(player);
 });
 
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId, active, club } = req.body;
+  const { firstName, lastName, dni, categoryId, active, club, departamentoId } = req.body;
   const player = await prisma.player.update({
     where: { id: Number(req.params.id) },
-    data: { firstName, lastName, dni, categoryId, active, club },
-    include: { category: true },
+    data: { firstName, lastName, dni, categoryId, active, club, departamentoId: departamentoId ? Number(departamentoId) : null },
+    include: { category: true, departamento: true },
   });
   res.json(player);
 });
