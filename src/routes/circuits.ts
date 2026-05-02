@@ -42,10 +42,10 @@ async function getJugadoresOrdenados(circuit: any, circuitId: number) {
   const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
 
   // Dividir por cortes fijos del ranking
-  const master   = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) <= CORTE_MASTER);
-  const primera  = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_MASTER && getRankPos(ordenados[i].id) <= CORTE_PRIMERA);
-  const segunda  = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_PRIMERA && getRankPos(ordenados[i].id) <= CORTE_SEGUNDA);
-  const clasif   = ordenados.filter((_: any, i: number) => getRankPos(ordenados[i].id) > CORTE_SEGUNDA);
+  const master   = ordenados.filter((p: any) => getRankPos(p.id) <= CORTE_MASTER);
+  const primera  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_MASTER && getRankPos(p.id) <= CORTE_PRIMERA);
+  const segunda  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_PRIMERA && getRankPos(p.id) <= CORTE_SEGUNDA);
+  const clasif   = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_SEGUNDA);
 
   return { master, primera, segunda, clasif, getRankPos, rankings };
 }
