@@ -52,3 +52,6 @@ httpServer.listen(PORT, () => {
   console.log(`🎱 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`   Entorno: ${process.env.NODE_ENV ?? 'development'}`);
 });
+import departamentoRoutes from './routes/departamentos';
+// ...
+app.use('/api/departamentos', departamentoRoutes);
