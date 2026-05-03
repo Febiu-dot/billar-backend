@@ -299,7 +299,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId, RULESET_SERIES));
       }
 
-      // Cruces de reducción — al mejor de 5
+      // Cruces de reducción — al mejor de 3
       const numClasificados = numSeries * 2;
       if (numClasificados > 16) {
         for (let i = 0; i < numSeries; i++) {
@@ -309,7 +309,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             `1° Serie ${i + 1}`,
             `2° Serie ${numSeries - i}`,
             `clasif-reduccion-${i + 1}`,
-            RULESET_CRUCES
+            RULESET_SERIES
           ));
         }
         if (numSeries > 16) {
@@ -319,7 +319,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             `Ganador Cruce ${numSeries - 1}`,
             `Ganador Cruce ${numSeries}`,
             'clasif-repechaje',
-            RULESET_CRUCES
+            RULESET_SERIES
           ));
         }
       }
