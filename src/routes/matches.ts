@@ -6,6 +6,199 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 
 const router = Router();
 
+// -------------------------------------------------------
+// HELPER: calcular ranking de clasificados y rellenar cruces
+// Se ejecuta cuando termina el último P5 de las series del clasificatorio
+// -------------------------------------------------------
+async function rellenarCrucesReduccion(phaseId: number) {
+  try {
+    // Obtener todas las series del clasificatorio
+    const todasLasSeries = await prisma.match.findMany({
+      where: {
+        phaseId,
+        serieId: { startsWith: 'clasif-serie-' },
+      },
+      include: { result: true, sets: true },
+      orderBy: { round: 'asc' }
+    });
+
+    // Agrupar por serieId
+    const seriesMap: Record<string, any[]> = {};
+    for (const m of todasLasSeries) {
+      if (!m.serieId) continue;
+      if (!seriesMap[m.serieId]) seriesMap[m.serieId] = [];
+      seriesMap[m.serieId].push(m);
+    }
+
+    const numSeries = Object.keys(seriesMap).length;
+
+    // Verificar que todos los P5 tienen resultado
+    // P5 tiene round = roundBase + 4, donde roundBase = i*10 + 1
+    // Entonces P5 termina en 5 (round % 10 === 5)
+    for (const serieId of Object.keys(seriesMap)) {
+      const partidos = seriesMap[serieId];
+      const p5 = partidos.find(p => {
+        const roundBase = Math.floor(p.round / 10) * 10 + 1;
+        return p.round === roundBase + 4;
+      });
+      if (!p5 || !p5.result?.winnerId) {
+        console.log(`Serie ${serieId} aún no tiene P5 con resultado`);
+        return; // No todas las series terminaron
+      }
+    }
+
+    console.log('✅ Todas las series terminaron, calculando ranking de clasificados...');
+
+    // Calcular ranking de cada jugador en su serie
+    interface ClasificadoStats {
+      playerId: number;
+      posEnSerie: number; // 1=primero, 2=segundo
+      puntos: number;     // 8=primero, 6=segundo
+      setsGanados: number;
+      tantosAFavor: number;
+      tantosEnContra: number;
+    }
+
+    const clasificados: ClasificadoStats[] = [];
+
+    for (const serieId of Object.keys(seriesMap)) {
+      const partidos = seriesMap[serieId];
+
+      // Calcular stats de cada jugador en la serie
+      const jugadoresIds = new Set<number>();
+      for (const p of partidos) {
+        if (p.playerAId) jugadoresIds.add(p.playerAId);
+        if (p.playerBId) jugadoresIds.add(p.playerBId);
+      }
+
+      const statsJugador: Record<number, { wins: number; sets: number; ptsFor: number; ptsAgainst: number }> = {};
+      for (const id of jugadoresIds) {
+        statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
+      }
+
+      for (const partido of partidos) {
+        if (!partido.result) continue;
+        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
+        const pA = partido.playerAId;
+        const pB = partido.playerBId;
+
+        if (pA && statsJugador[pA]) {
+          statsJugador[pA].wins += winnerId === pA ? 1 : 0;
+          statsJugador[pA].sets += setsA;
+          statsJugador[pA].ptsFor += pointsA;
+          statsJugador[pA].ptsAgainst += pointsB;
+        }
+        if (pB && statsJugador[pB]) {
+          statsJugador[pB].wins += winnerId === pB ? 1 : 0;
+          statsJugador[pB].sets += setsB;
+          statsJugador[pB].ptsFor += pointsB;
+          statsJugador[pB].ptsAgainst += pointsA;
+        }
+      }
+
+      // Ordenar jugadores de la serie por wins desc
+      const jugadoresOrdenados = Array.from(jugadoresIds)
+        .filter(id => statsJugador[id])
+        .sort((a, b) => {
+          const sa = statsJugador[a];
+          const sb = statsJugador[b];
+          if (sb.wins !== sa.wins) return sb.wins - sa.wins;
+          if (sb.sets !== sa.sets) return sb.sets - sa.sets;
+          if (sb.ptsFor !== sa.ptsFor) return sb.ptsFor - sa.ptsFor;
+          return sa.ptsAgainst - sb.ptsAgainst;
+        });
+
+      // Primero y segundo de la serie entran al ranking de cruces
+      if (jugadoresOrdenados[0]) {
+        const s = statsJugador[jugadoresOrdenados[0]];
+        clasificados.push({
+          playerId: jugadoresOrdenados[0],
+          posEnSerie: 1,
+          puntos: 8,
+          setsGanados: s.sets,
+          tantosAFavor: s.ptsFor,
+          tantosEnContra: s.ptsAgainst,
+        });
+      }
+      if (jugadoresOrdenados[1]) {
+        const s = statsJugador[jugadoresOrdenados[1]];
+        clasificados.push({
+          playerId: jugadoresOrdenados[1],
+          posEnSerie: 2,
+          puntos: 6,
+          setsGanados: s.sets,
+          tantosAFavor: s.ptsFor,
+          tantosEnContra: s.ptsAgainst,
+        });
+      }
+    }
+
+    // Ordenar los 34 clasificados: primero por puntos, luego sets, tantos a favor, tantos en contra
+    clasificados.sort((a, b) => {
+      if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+      if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
+      if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor;
+      return a.tantosEnContra - b.tantosEnContra;
+    });
+
+    console.log(`Ranking calculado: ${clasificados.length} clasificados`);
+
+    // Obtener los cruces de reducción ordenados por round
+    const crucesReduccion = await prisma.match.findMany({
+      where: {
+        phaseId,
+        serieId: { startsWith: 'clasif-reduccion-' }
+      },
+      orderBy: { round: 'asc' }
+    });
+
+    // Armar cruces en espejo: #1 vs #34, #2 vs #33, etc.
+    const N = clasificados.length; // 34
+    for (let i = 0; i < crucesReduccion.length && i < Math.floor(N / 2); i++) {
+      const cruce = crucesReduccion[i];
+      const jugA = clasificados[i];
+      const jugB = clasificados[N - 1 - i];
+
+      if (jugA && jugB) {
+        await prisma.match.update({
+          where: { id: cruce.id },
+          data: {
+            playerAId: jugA.playerId,
+            playerBId: jugB.playerId,
+            slotA: null,
+            slotB: null,
+            status: cruce.tableId ? 'asignado' : 'pendiente',
+          }
+        });
+        console.log(`✅ Cruce ${i + 1}: #${i + 1} vs #${N - i}`);
+      }
+    }
+
+    // Actualizar repechaje con slots correctos
+    const repechaje = await prisma.match.findFirst({
+      where: { phaseId, serieId: 'clasif-repechaje' }
+    });
+    if (repechaje && crucesReduccion.length >= 2) {
+      const ultimoCruce = crucesReduccion[crucesReduccion.length - 1];
+      const penultimoCruce = crucesReduccion[crucesReduccion.length - 2];
+      await prisma.match.update({
+        where: { id: repechaje.id },
+        data: {
+          slotA: `Ganador Cruce ${penultimoCruce.round}`,
+          slotB: `Ganador Cruce ${ultimoCruce.round}`,
+        }
+      });
+    }
+
+    console.log('✅ Cruces de reducción rellenados con jugadores reales');
+  } catch (error) {
+    console.error('Error rellenando cruces de reducción:', error);
+  }
+}
+
+// -------------------------------------------------------
+// HELPER: generar siguiente partido de la serie
+// -------------------------------------------------------
 async function generarSiguientePartidoSerie(matchId: number) {
   try {
     const match = await prisma.match.findUnique({
@@ -32,7 +225,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
     const p3 = partidos.find(p => p.round === roundBase + 2);
     const p4 = partidos.find(p => p.round === roundBase + 3);
 
-    // Mesa y ruleSet se heredan siempre del P1 de la serie
     const tableId = p1?.tableId ?? null;
     const ruleSetId = p1?.ruleSetId ?? null;
 
@@ -41,7 +233,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
       const p2Done = p2?.result?.winnerId;
 
       if (p1Done && p2Done && !p3) {
-        // P3: ganador P1 vs ganador P2
         const newP3 = await prisma.match.create({
           data: {
             phaseId,
@@ -64,7 +255,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
           }
         });
 
-        // P4: perdedor P1 vs perdedor P2
         const p1LoserId = p1.playerAId === p1.result!.winnerId ? p1.playerBId : p1.playerAId;
         const p2LoserId = p2.playerAId === p2.result!.winnerId ? p2.playerBId : p2.playerAId;
 
@@ -130,6 +320,11 @@ async function generarSiguientePartidoSerie(matchId: number) {
           });
           emitMatchUpdate(io, newP5);
           console.log(`✅ Serie ${match.serieId}: P5 generado`);
+
+          // Verificar si este es el último P5 de todas las series del clasificatorio
+          if (match.phase?.type === 'clasificatorio' && match.serieId?.startsWith('clasif-serie-')) {
+            await rellenarCrucesReduccion(phaseId);
+          }
         }
       }
     }
@@ -387,7 +582,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   });
 
   // NO liberar la mesa si el partido pertenece a una serie
-  // La mesa se libera solo cuando termina el P5 (último partido de la serie)
   const esPartidoDeSerie = existingMatch.serieId &&
     !existingMatch.serieId.includes('reduccion') &&
     !existingMatch.serieId.includes('repechaje') &&
