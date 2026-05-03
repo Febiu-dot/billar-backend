@@ -5,12 +5,12 @@ const router = Router();
 const prisma = new PrismaClient();
 
 const LIBRE_DNI = 'FEBIU000';
+const RULESET_SERIES = 1;  // al mejor de 3
+const RULESET_CRUCES = 2;  // al mejor de 5
 
-// Cortes fijos del reglamento
-const CORTE_MASTER   = 8;   // puestos 1-8
-const CORTE_PRIMERA  = 32;  // puestos 9-32
-const CORTE_SEGUNDA  = 64;  // puestos 33-64
-// clasificatorio: puestos 65+
+const CORTE_MASTER   = 8;
+const CORTE_PRIMERA  = 32;
+const CORTE_SEGUNDA  = 64;
 
 async function getJugadoresOrdenados(circuit: any, circuitId: number) {
   let rankings = await prisma.rankingEntry.findMany({
@@ -41,7 +41,6 @@ async function getJugadoresOrdenados(circuit: any, circuitId: number) {
 
   const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
 
-  // Dividir por cortes fijos del ranking
   const master   = ordenados.filter((p: any) => getRankPos(p.id) <= CORTE_MASTER);
   const primera  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_MASTER && getRankPos(p.id) <= CORTE_PRIMERA);
   const segunda  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_PRIMERA && getRankPos(p.id) <= CORTE_SEGUNDA);
@@ -74,8 +73,14 @@ function armarSeriesEspejo(jugadores: any[]): any[][] {
   return series;
 }
 
-function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | null, round: number, slotA?: string, slotB?: string, serieId?: string) {
-  return { phaseId, playerAId, playerBId, slotA: slotA ?? null, slotB: slotB ?? null, round, status: 'pendiente', serieId: serieId ?? null };
+function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | null, round: number, slotA?: string, slotB?: string, serieId?: string, ruleSetId?: number) {
+  return {
+    phaseId, playerAId, playerBId,
+    slotA: slotA ?? null, slotB: slotB ?? null,
+    round, status: 'pendiente',
+    serieId: serieId ?? null,
+    ruleSetId: ruleSetId ?? null
+  };
 }
 
 // GET /api/circuits
@@ -279,7 +284,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     const matchesCreados: any[] = [];
 
     // -------------------------------------------------------
-    // FASE CLASIFICATORIO — puestos 65+
+    // FASE CLASIFICATORIO — series al mejor de 3
     // -------------------------------------------------------
     if (phaseClasif && clasif.length > 0) {
       const jugConLibre = completarConLibre(clasif, libreObj);
@@ -290,11 +295,11 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         const [A, B, C, D] = series[i];
         const roundBase = i * 10 + 1;
         const serieId = `clasif-serie-${i + 1}`;
-        matchesCreados.push(mkMatch(phaseClasif.id, A.id, B.id, roundBase, undefined, undefined, serieId));
-        matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId));
+        matchesCreados.push(mkMatch(phaseClasif.id, A.id, B.id, roundBase, undefined, undefined, serieId, RULESET_SERIES));
+        matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId, RULESET_SERIES));
       }
 
-      // Cruces de reducción
+      // Cruces de reducción — al mejor de 5
       const numClasificados = numSeries * 2;
       if (numClasificados > 16) {
         for (let i = 0; i < numSeries; i++) {
@@ -303,7 +308,8 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             numSeries * 10 + i + 1,
             `1° Serie ${i + 1}`,
             `2° Serie ${numSeries - i}`,
-            `clasif-reduccion-${i + 1}`
+            `clasif-reduccion-${i + 1}`,
+            RULESET_CRUCES
           ));
         }
         if (numSeries > 16) {
@@ -312,14 +318,15 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             numSeries * 10 + numSeries + 1,
             `Ganador Cruce ${numSeries - 1}`,
             `Ganador Cruce ${numSeries}`,
-            'clasif-repechaje'
+            'clasif-repechaje',
+            RULESET_CRUCES
           ));
         }
       }
     }
 
     // -------------------------------------------------------
-    // FASE SEGUNDA — puestos 33-64 + 16 clasificados
+    // FASE SEGUNDA — series al mejor de 3
     // -------------------------------------------------------
     if (phaseSegunda && segunda.length > 0) {
       const slots16 = Array.from({ length: 16 }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
@@ -336,13 +343,13 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         const posiciones = [i, N2 - 1 - i, mitad - 1 - i, mitad + i];
         const [j0, j1, j2, j3] = posiciones.map(pos => jugConSlots[pos]);
 
-        matchesCreados.push(mkMatch(phaseSegunda.id, j0.id ?? null, j1.id ?? null, roundBase, j0.slot ?? undefined, j1.slot ?? undefined, serieId));
-        matchesCreados.push(mkMatch(phaseSegunda.id, j2.id ?? null, j3.id ?? null, roundBase + 1, j2.slot ?? undefined, j3.slot ?? undefined, serieId));
+        matchesCreados.push(mkMatch(phaseSegunda.id, j0.id ?? null, j1.id ?? null, roundBase, j0.slot ?? undefined, j1.slot ?? undefined, serieId, RULESET_SERIES));
+        matchesCreados.push(mkMatch(phaseSegunda.id, j2.id ?? null, j3.id ?? null, roundBase + 1, j2.slot ?? undefined, j3.slot ?? undefined, serieId, RULESET_SERIES));
       }
     }
 
     // -------------------------------------------------------
-    // FASE PRIMERA — puestos 9-32 + 24 clasificados
+    // FASE PRIMERA — cruces al mejor de 5
     // -------------------------------------------------------
     if (fasePrimera && primera.length > 0) {
       const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }));
@@ -356,20 +363,20 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
           fasePrimera.id, jA.id ?? null, jB.id ?? null,
           i + 1,
           jA.slot ?? undefined, jB.slot ?? undefined,
-          `primera-cruce-${i + 1}`
+          `primera-cruce-${i + 1}`,
+          RULESET_CRUCES
         ));
       }
     }
 
     // -------------------------------------------------------
-    // FASE MASTER — puestos 1-8 + 24 clasificados
+    // FASE MASTER — cruces al mejor de 5
     // -------------------------------------------------------
     if (faseMaster && master.length > 0) {
       const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
       const jugConSlots = [...master, ...slots24] as any[];
       const total = jugConSlots.length;
 
-      // Ronda 1
       for (let i = 0; i < Math.floor(total / 2); i++) {
         const jA = jugConSlots[i];
         const jB = jugConSlots[total - 1 - i];
@@ -377,11 +384,11 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
           faseMaster.id, jA.id ?? null, jB.id ?? null,
           i + 1,
           jA.slot ?? undefined, jB.slot ?? undefined,
-          `master-r1-cruce-${i + 1}`
+          `master-r1-cruce-${i + 1}`,
+          RULESET_CRUCES
         ));
       }
 
-      // Rondas siguientes
       let jugadoresRonda = Math.floor(total / 2);
       let ronda = 2;
       while (jugadoresRonda > 1) {
@@ -392,7 +399,8 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             ronda * 100 + i + 1,
             `Ganador R${ronda - 1} Cruce ${i * 2 + 1}`,
             `Ganador R${ronda - 1} Cruce ${i * 2 + 2}`,
-            `master-r${ronda}-cruce-${i + 1}`
+            `master-r${ronda}-cruce-${i + 1}`,
+            RULESET_CRUCES
           ));
         }
         jugadoresRonda = ganadores;
@@ -417,8 +425,8 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         await prisma.matchResult.create({
           data: {
             matchId: partido.id,
-            setsA: isA ? 0 : 3, setsB: isA ? 3 : 0,
-            pointsA: isA ? 0 : 180, pointsB: isA ? 180 : 0,
+            setsA: isA ? 0 : 2, setsB: isA ? 2 : 0,
+            pointsA: isA ? 0 : 120, pointsB: isA ? 120 : 0,
             winnerId, isWO: true, woPlayerId: libreId
           }
         });
