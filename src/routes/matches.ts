@@ -24,7 +24,7 @@ async function generarSiguientePartidoSerie(matchId: number) {
     const partidos = await prisma.match.findMany({
       where: { phaseId, round: { gte: roundBase, lte: roundBase + 4 } },
       include: { result: true },
-      orderBy: { round: 'asc' }
+      orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
     });
 
     const p1 = partidos.find(p => p.round === roundBase);
