@@ -22,9 +22,9 @@ async function generarSiguientePartidoSerie(matchId: number) {
     if (posEnSerie > 3) return;
 
     const partidos = await prisma.match.findMany({
-      where: { phaseId, round: { gte: roundBase, lte: roundBase + 4 } },
+      where: { phaseId, serieId: match.serieId },
       include: { result: true },
-      orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
+      orderBy: { round: 'asc' },
     });
 
     const p1 = partidos.find(p => p.round === roundBase);
@@ -32,39 +32,68 @@ async function generarSiguientePartidoSerie(matchId: number) {
     const p3 = partidos.find(p => p.round === roundBase + 2);
     const p4 = partidos.find(p => p.round === roundBase + 3);
 
+    // Mesa y ruleSet se heredan siempre del P1 de la serie
+    const tableId = p1?.tableId ?? null;
+    const ruleSetId = p1?.ruleSetId ?? null;
+
     if (posEnSerie <= 1) {
       const p1Done = p1?.result?.winnerId;
       const p2Done = p2?.result?.winnerId;
 
       if (p1Done && p2Done && !p3) {
-        await prisma.match.create({
+        // P3: ganador P1 vs ganador P2
+        const newP3 = await prisma.match.create({
           data: {
             phaseId,
             playerAId: p1.result!.winnerId!,
             playerBId: p2.result!.winnerId!,
             round: roundBase + 2,
-            status: 'pendiente',
+            status: 'asignado',
             serieId: match.serieId,
-            tableId: match.tableId,
+            tableId,
+            ruleSetId,
+          },
+          include: {
+            playerA: { include: { category: true } },
+            playerB: { include: { category: true } },
+            table: { include: { venue: true } },
+            phase: { include: { circuit: { include: { tournament: true } } } },
+            result: true,
+            ruleSet: true,
+            sets: { orderBy: { setNumber: 'asc' } },
           }
         });
 
+        // P4: perdedor P1 vs perdedor P2
         const p1LoserId = p1.playerAId === p1.result!.winnerId ? p1.playerBId : p1.playerAId;
         const p2LoserId = p2.playerAId === p2.result!.winnerId ? p2.playerBId : p2.playerAId;
 
         if (p1LoserId && p2LoserId) {
-          await prisma.match.create({
+          const newP4 = await prisma.match.create({
             data: {
               phaseId,
               playerAId: p1LoserId,
               playerBId: p2LoserId,
               round: roundBase + 3,
-              status: 'pendiente',
+              status: 'asignado',
               serieId: match.serieId,
-              tableId: match.tableId,
+              tableId,
+              ruleSetId,
+            },
+            include: {
+              playerA: { include: { category: true } },
+              playerB: { include: { category: true } },
+              table: { include: { venue: true } },
+              phase: { include: { circuit: { include: { tournament: true } } } },
+              result: true,
+              ruleSet: true,
+              sets: { orderBy: { setNumber: 'asc' } },
             }
           });
+          emitMatchUpdate(io, newP4);
         }
+
+        emitMatchUpdate(io, newP3);
         console.log(`✅ Serie ${match.serieId}: P3 y P4 generados`);
       }
     }
@@ -72,24 +101,36 @@ async function generarSiguientePartidoSerie(matchId: number) {
     if (posEnSerie >= 2 && posEnSerie <= 3) {
       const p3Done = p3?.result?.winnerId;
       const p4Done = p4?.result?.winnerId;
+      const p5existe = partidos.find(p => p.round === roundBase + 4);
 
-      if (p3Done && p4Done && !partidos.find(p => p.round === roundBase + 4)) {
+      if (p3Done && p4Done && !p5existe) {
         const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
 
         if (p3LoserId && p4!.result!.winnerId) {
-          await prisma.match.create({
+          const newP5 = await prisma.match.create({
             data: {
               phaseId,
               playerAId: p3LoserId,
               playerBId: p4!.result!.winnerId!,
               round: roundBase + 4,
-              status: 'pendiente',
+              status: 'asignado',
               serieId: match.serieId,
-              tableId: p4!.tableId,
+              tableId,
+              ruleSetId,
+            },
+            include: {
+              playerA: { include: { category: true } },
+              playerB: { include: { category: true } },
+              table: { include: { venue: true } },
+              phase: { include: { circuit: { include: { tournament: true } } } },
+              result: true,
+              ruleSet: true,
+              sets: { orderBy: { setNumber: 'asc' } },
             }
           });
+          emitMatchUpdate(io, newP5);
+          console.log(`✅ Serie ${match.serieId}: P5 generado`);
         }
-        console.log(`✅ Serie ${match.serieId}: P5 generado`);
       }
     }
   } catch (error) {
@@ -117,7 +158,7 @@ router.get('/', async (req, res: Response) => {
       ruleSet: true,
       sets: { orderBy: { setNumber: 'asc' } },
     },
-    orderBy: [{ round: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
   });
   res.json(matches);
 });
@@ -308,7 +349,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
       }
     }
   } else {
-    const setsToWin = ruleSet?.setsToWin ?? 3;
+    const setsToWin = ruleSet?.setsToWin ?? 2;
     if (finalSetsA >= setsToWin) winnerId = existingMatch.playerAId;
     else if (finalSetsB >= setsToWin) winnerId = existingMatch.playerBId;
   }
@@ -345,13 +386,26 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     },
   });
 
-  if (updatedMatch.tableId) {
-    const freedTable = await prisma.table.update({
-      where: { id: updatedMatch.tableId },
-      data: { status: 'libre' },
-      include: { venue: true },
-    });
-    emitTableUpdate(io, freedTable);
+  // NO liberar la mesa si el partido pertenece a una serie
+  // La mesa se libera solo cuando termina el P5 (último partido de la serie)
+  const esPartidoDeSerie = existingMatch.serieId &&
+    !existingMatch.serieId.includes('reduccion') &&
+    !existingMatch.serieId.includes('repechaje') &&
+    (existingMatch.phase?.type === 'clasificatorio' || existingMatch.phase?.type === 'segunda');
+
+  const roundBase = Math.floor(existingMatch.round / 10) * 10 + 1;
+  const posEnSerie = existingMatch.round - roundBase;
+  const esUltimoPartidoSerie = posEnSerie === 4; // P5
+
+  if (!esPartidoDeSerie || esUltimoPartidoSerie) {
+    if (updatedMatch.tableId) {
+      const freedTable = await prisma.table.update({
+        where: { id: updatedMatch.tableId },
+        data: { status: 'libre' },
+        include: { venue: true },
+      });
+      emitTableUpdate(io, freedTable);
+    }
   }
 
   emitMatchUpdate(io, updatedMatch);
