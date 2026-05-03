@@ -5,8 +5,8 @@ const router = Router();
 const prisma = new PrismaClient();
 
 const LIBRE_DNI = 'FEBIU000';
-const RULESET_SERIES = 1;  // al mejor de 3
-const RULESET_CRUCES = 2;  // al mejor de 5
+const RULESET_SERIES = 1;
+const RULESET_CRUCES = 2;
 
 const CORTE_MASTER   = 8;
 const CORTE_PRIMERA  = 32;
@@ -199,6 +199,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
 
     const jugConLibre = completarConLibre(clasif, librePlayer ?? { id: 0, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' });
     const numSeries = jugConLibre.length / 4;
+    const numClasificados = numSeries * 2;
 
     const pn = (p: any) => p.dni === LIBRE_DNI ? 'LIBRE' : `${p.lastName}${p.lastName ? ', ' : ''}${p.firstName}`;
 
@@ -211,14 +212,13 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
       }))
     }));
 
-    const numClasificados = numSeries * 2;
     const crucesReduccion: any[] = [];
     if (numClasificados > 16) {
       for (let i = 0; i < numSeries; i++) {
         crucesReduccion.push({
           cruce: i + 1,
-          slotA: `1° Serie ${i + 1}`,
-          slotB: `2° Serie ${numSeries - i}`
+          slotA: `Clasificado #${i + 1}`,
+          slotB: `Clasificado #${numClasificados - i}`
         });
       }
       if (numSeries > 16) {
@@ -290,6 +290,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       const jugConLibre = completarConLibre(clasif, libreObj);
       const series = armarSeriesEspejo(jugConLibre);
       const numSeries = series.length;
+      const numClasificados = numSeries * 2;
 
       for (let i = 0; i < numSeries; i++) {
         const [A, B, C, D] = series[i];
@@ -299,19 +300,19 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId, RULESET_SERIES));
       }
 
-      // Cruces de reducción — al mejor de 3
-      const numClasificados = numSeries * 2;
+      // Cruces de reducción con slots genéricos por ranking
       if (numClasificados > 16) {
         for (let i = 0; i < numSeries; i++) {
           matchesCreados.push(mkMatch(
             phaseClasif.id, null, null,
             numSeries * 10 + i + 1,
-            `1° Serie ${i + 1}`,
-            `2° Serie ${numSeries - i}`,
+            `Clasificado #${i + 1}`,
+            `Clasificado #${numClasificados - i}`,
             `clasif-reduccion-${i + 1}`,
             RULESET_SERIES
           ));
         }
+        // Repechaje entre ganadores 16 y 17
         if (numSeries > 16) {
           matchesCreados.push(mkMatch(
             phaseClasif.id, null, null,
