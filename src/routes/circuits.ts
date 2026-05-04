@@ -83,6 +83,92 @@ function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | 
   };
 }
 
+// Genera el cuadro final con sistema espejo en cada ronda
+// Garantiza que #1 y #2 no se crucen antes de la final
+function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number): any[] {
+  const matches: any[] = [];
+  const N = jugadores.length; // 32
+
+  // DIECISEISAVOS — 16 partidos, espejo: #1 vs #32, #2 vs #31, etc.
+  for (let i = 0; i < N / 2; i++) {
+    const jA = jugadores[i];
+    const jB = jugadores[N - 1 - i];
+    matches.push(mkMatch(
+      phaseId,
+      jA.id ?? null, jB.id ?? null,
+      i + 1,
+      jA.slot ?? undefined, jB.slot ?? undefined,
+      `master-dieciseisavos-${i + 1}`,
+      ruleSetId
+    ));
+  }
+
+  // OCTAVOS — 8 partidos, espejo de ganadores de dieciseisavos
+  // P17: Gan.1 vs Gan.16, P18: Gan.2 vs Gan.15, etc.
+  const octavosBase = N / 2; // 16
+  for (let i = 0; i < N / 4; i++) {
+    const cruceA = i + 1;
+    const cruceB = N / 2 - i;
+    matches.push(mkMatch(
+      phaseId,
+      null, null,
+      octavosBase + i + 1,
+      `Gan. Dieciseisavos ${cruceA}`,
+      `Gan. Dieciseisavos ${cruceB}`,
+      `master-octavos-${i + 1}`,
+      ruleSetId
+    ));
+  }
+
+  // CUARTOS — 4 partidos, espejo de ganadores de octavos
+  // P25: Gan.17 vs Gan.24, P26: Gan.18 vs Gan.23, etc.
+  const cuartosBase = octavosBase + N / 4; // 24
+  for (let i = 0; i < N / 8; i++) {
+    const cruceA = octavosBase + i + 1;
+    const cruceB = cuartosBase - i;
+    matches.push(mkMatch(
+      phaseId,
+      null, null,
+      cuartosBase + i + 1,
+      `Gan. Octavos ${cruceA}`,
+      `Gan. Octavos ${cruceB}`,
+      `master-cuartos-${i + 1}`,
+      ruleSetId
+    ));
+  }
+
+  // SEMIFINAL — 2 partidos
+  const semifinalBase = cuartosBase + N / 8; // 28
+  matches.push(mkMatch(
+    phaseId, null, null,
+    semifinalBase + 1,
+    `Gan. Cuartos ${cuartosBase + 1}`,
+    `Gan. Cuartos ${cuartosBase + 4}`,
+    'master-semifinal-1',
+    ruleSetId
+  ));
+  matches.push(mkMatch(
+    phaseId, null, null,
+    semifinalBase + 2,
+    `Gan. Cuartos ${cuartosBase + 2}`,
+    `Gan. Cuartos ${cuartosBase + 3}`,
+    'master-semifinal-2',
+    ruleSetId
+  ));
+
+  // FINAL — 1 partido
+  matches.push(mkMatch(
+    phaseId, null, null,
+    semifinalBase + 3,
+    `Gan. Semifinal ${semifinalBase + 1}`,
+    `Gan. Semifinal ${semifinalBase + 2}`,
+    'master-final',
+    ruleSetId
+  ));
+
+  return matches;
+}
+
 // GET /api/circuits
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -300,7 +386,6 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId, RULESET_SERIES));
       }
 
-      // Cruces de reducción con slots genéricos por ranking
       if (numClasificados > 16) {
         for (let i = 0; i < numSeries; i++) {
           matchesCreados.push(mkMatch(
@@ -312,7 +397,6 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
             RULESET_SERIES
           ));
         }
-        // Repechaje entre ganadores 16 y 17
         if (numSeries > 16) {
           matchesCreados.push(mkMatch(
             phaseClasif.id, null, null,
@@ -371,42 +455,14 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     }
 
     // -------------------------------------------------------
-    // FASE MASTER — cruces al mejor de 5
+    // FASE MASTER — cuadro de 32 con sistema espejo en cada ronda
     // -------------------------------------------------------
     if (faseMaster && master.length > 0) {
       const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
       const jugConSlots = [...master, ...slots24] as any[];
-      const total = jugConSlots.length;
 
-      for (let i = 0; i < Math.floor(total / 2); i++) {
-        const jA = jugConSlots[i];
-        const jB = jugConSlots[total - 1 - i];
-        matchesCreados.push(mkMatch(
-          faseMaster.id, jA.id ?? null, jB.id ?? null,
-          i + 1,
-          jA.slot ?? undefined, jB.slot ?? undefined,
-          `master-r1-cruce-${i + 1}`,
-          RULESET_CRUCES
-        ));
-      }
-
-      let jugadoresRonda = Math.floor(total / 2);
-      let ronda = 2;
-      while (jugadoresRonda > 1) {
-        const ganadores = Math.floor(jugadoresRonda / 2);
-        for (let i = 0; i < ganadores; i++) {
-          matchesCreados.push(mkMatch(
-            faseMaster.id, null, null,
-            ronda * 100 + i + 1,
-            `Ganador R${ronda - 1} Cruce ${i * 2 + 1}`,
-            `Ganador R${ronda - 1} Cruce ${i * 2 + 2}`,
-            `master-r${ronda}-cruce-${i + 1}`,
-            RULESET_CRUCES
-          ));
-        }
-        jugadoresRonda = ganadores;
-        ronda++;
-      }
+      const cuadroMatches = generarCuadroFinal(faseMaster.id, jugConSlots, RULESET_CRUCES);
+      matchesCreados.push(...cuadroMatches);
     }
 
     if (matchesCreados.length > 0) {
