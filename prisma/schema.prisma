@@ -42,12 +42,12 @@ enum CategoryName {
 }
 
 model Departamento {
-  id         Int          @id @default(autoincrement())
-  nombre     String       @unique
-  players    Player[]
-  venues     Venue[]
+  id          Int          @id @default(autoincrement())
+  nombre      String       @unique
+  players     Player[]
+  venues      Venue[]
   tournaments Tournament[]
-  createdAt  DateTime     @default(now())
+  createdAt   DateTime     @default(now())
 }
 
 model User {
@@ -62,16 +62,16 @@ model User {
 }
 
 model Venue {
-  id               Int           @id @default(autoincrement())
-  name             String
-  address          String?
-  city             String?
-  departamentoId   Int?
-  departamento     Departamento? @relation(fields: [departamentoId], references: [id])
-  users            User[]
-  tables           Table[]
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id             Int           @id @default(autoincrement())
+  name           String
+  address        String?
+  city           String?
+  departamentoId Int?
+  departamento   Departamento? @relation(fields: [departamentoId], references: [id])
+  users          User[]
+  tables         Table[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 }
 
 model Table {
@@ -94,35 +94,35 @@ model Category {
 }
 
 model Player {
-  id               Int             @id @default(autoincrement())
-  firstName        String
-  lastName         String
-  dni              String?         @unique
-  categoryId       Int
-  category         Category        @relation(fields: [categoryId], references: [id])
-  club             String?
-  departamentoId   Int?
-  departamento     Departamento?   @relation(fields: [departamentoId], references: [id])
-  active           Boolean         @default(true)
-  matchesA         Match[]         @relation("PlayerA")
-  matchesB         Match[]         @relation("PlayerB")
-  rankings         RankingEntry[]
-  circuits         CircuitPlayer[]
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id             Int             @id @default(autoincrement())
+  firstName      String
+  lastName       String
+  dni            String?         @unique
+  categoryId     Int
+  category       Category        @relation(fields: [categoryId], references: [id])
+  club           String?
+  departamentoId Int?
+  departamento   Departamento?   @relation(fields: [departamentoId], references: [id])
+  active         Boolean         @default(true)
+  matchesA       Match[]         @relation("PlayerA")
+  matchesB       Match[]         @relation("PlayerB")
+  rankings       RankingEntry[]
+  circuits       CircuitPlayer[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model Tournament {
-  id               Int           @id @default(autoincrement())
-  name             String
-  year             Int
-  description      String?
-  active           Boolean       @default(true)
-  departamentoId   Int?
-  departamento     Departamento? @relation(fields: [departamentoId], references: [id])
-  circuits         Circuit[]
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id             Int           @id @default(autoincrement())
+  name           String
+  year           Int
+  description    String?
+  active         Boolean       @default(true)
+  departamentoId Int?
+  departamento   Departamento? @relation(fields: [departamentoId], references: [id])
+  circuits       Circuit[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 }
 
 model Circuit {
@@ -153,15 +153,26 @@ model CircuitPlayer {
 }
 
 model Phase {
-  id        Int       @id @default(autoincrement())
+  id        Int        @id @default(autoincrement())
   name      String
   type      PhaseType
   circuitId Int
-  circuit   Circuit   @relation(fields: [circuitId], references: [id])
+  circuit   Circuit    @relation(fields: [circuitId], references: [id])
   order     Int
   matches   Match[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  config    FaseConfig?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model FaseConfig {
+  id            Int      @id @default(autoincrement())
+  phaseId       Int      @unique
+  phase         Phase    @relation(fields: [phaseId], references: [id])
+  duracionSerie Int      @default(45)
+  configuracion Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model RuleSet {
@@ -231,21 +242,21 @@ model SetResult {
 }
 
 model RankingEntry {
-  id             Int      @id @default(autoincrement())
-  playerId       Int
-  player         Player   @relation(fields: [playerId], references: [id])
-  circuitId      Int
-  circuit        Circuit  @relation(fields: [circuitId], references: [id])
-  points         Int      @default(0)
-  matchesPlayed  Int      @default(0)
-  matchesWon     Int      @default(0)
-  setsWon        Int      @default(0)
-  setsLost       Int      @default(0)
-  pointsFor      Int      @default(0)
-  pointsAgainst  Int      @default(0)
-  position       Int?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  playerId      Int
+  player        Player   @relation(fields: [playerId], references: [id])
+  circuitId     Int
+  circuit       Circuit  @relation(fields: [circuitId], references: [id])
+  points        Int      @default(0)
+  matchesPlayed Int      @default(0)
+  matchesWon    Int      @default(0)
+  setsWon       Int      @default(0)
+  setsLost      Int      @default(0)
+  pointsFor     Int      @default(0)
+  pointsAgainst Int      @default(0)
+  position      Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([playerId, circuitId])
 }
