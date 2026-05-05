@@ -13,6 +13,7 @@ import categoryRoutes from './routes/categories';
 import circuitRoutes from './routes/circuits';
 import departamentoRoutes from './routes/departamentos';
 import userRoutes from './routes/users';
+import faseconfigRoutes from './routes/faseconfig';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
@@ -48,9 +49,8 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/circuits', circuitRoutes);
 app.use('/api/departamentos', departamentoRoutes);
 app.use('/api/users', userRoutes);
-import faseconfigRoutes from './routes/faseconfig';
-// ...
 app.use('/api/faseconfig', faseconfigRoutes);
+
 setupSocketHandlers(io);
 
 const PORT = process.env.PORT || 3001;
