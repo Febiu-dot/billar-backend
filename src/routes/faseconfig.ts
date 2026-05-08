@@ -17,10 +17,11 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     if (!phase) { res.status(404).json({ error: 'Fase no encontrada' }); return; }
     if (!phase.config) { res.status(400).json({ error: 'La fase no tiene configuración de disponibilidad' }); return; }
 
-    const esSeries = phase.type?.toLowerCase().includes('clasif') ||
-                     phase.type?.toLowerCase().includes('segunda') ||
-                     phase.type === 'clasificatorio' ||
-                     phase.type === 'segunda';
+    const esSeries =
+      phase.type?.toLowerCase().includes('clasif') ||
+      phase.type?.toLowerCase().includes('segunda') ||
+      phase.type === 'clasificatorio' ||
+      phase.type === 'segunda';
 
     const configuracion = phase.config.configuracion as any;
     const fechas: any[] = configuracion.fechas ?? [];
@@ -34,37 +35,6 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       res.status(400).json({ error: 'Se requiere horaInicio y crucesPerMesa para cruces' }); return;
     }
 
-    // Construir lista de slots intercalados entre sedes
-    interface Slot { fecha: string; tableId: number; venueId: number; }
-    const slotsIntercalados: Slot[] = [];
-
-    for (const cfecha of fechas.sort((a: any, b: any) => a.fecha.localeCompare(b.fecha))) {
-      const porSede: Record<number, Slot[]> = {};
-      for (const csede of cfecha.sedes) {
-        for (const cmesa of csede.mesas) {
-          const table = await prisma.table.findFirst({
-            where: { id: cmesa.mesaId, venueId: csede.venueId }
-          });
-          if (!table) continue;
-          if (!porSede[csede.venueId]) porSede[csede.venueId] = [];
-          porSede[csede.venueId].push({ fecha: cfecha.fecha, tableId: table.id, venueId: csede.venueId });
-        }
-      }
-
-      const sedes = Object.values(porSede);
-      if (sedes.length === 0) continue;
-      const maxMesas = Math.max(...sedes.map(s => s.length));
-      for (let i = 0; i < maxMesas; i++) {
-        for (const sede of sedes) {
-          if (sede[i]) slotsIntercalados.push(sede[i]);
-        }
-      }
-    }
-
-    if (slotsIntercalados.length === 0) {
-      res.status(400).json({ error: 'No hay mesas disponibles configuradas' }); return;
-    }
-
     // Reset previo: limpiar asignaciones anteriores de esta fase
     await prisma.match.updateMany({
       where: { phaseId },
@@ -75,12 +45,58 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     let asignados = 0;
 
     if (esSeries) {
-      // Obtener P1 y P2 de series (serieId contiene 'serie')
+      // Calcular gap en minutos entre P1 y P2
+      const [h1, m1] = horaP1.split(':').map(Number);
+      const [h2, m2] = horaP2.split(':').map(Number);
+      const gapMinutos = (h2 * 60 + m2) - (h1 * 60 + m1);
+
+      // Construir slots desde los horarios configurados por mesa
+      // Cada horario configurado = 1 slot disponible para 1 serie
+      interface SerieSlot { fecha: string; tableId: number; horaInicio: string; }
+      const serieSlots: SerieSlot[] = [];
+
+      for (const cfecha of fechas.sort((a: any, b: any) => a.fecha.localeCompare(b.fecha))) {
+        // Intercalar sedes para distribuir equitativamente
+        const porSede: Record<number, { tableId: number; hora: string; fecha: string }[]> = {};
+
+        for (const csede of cfecha.sedes) {
+          for (const cmesa of csede.mesas) {
+            const table = await prisma.table.findFirst({
+              where: { id: cmesa.mesaId, venueId: csede.venueId }
+            });
+            if (!table) continue;
+            const horarios: string[] = (cmesa.horarios ?? []).sort();
+            for (const hora of horarios) {
+              if (!porSede[csede.venueId]) porSede[csede.venueId] = [];
+              porSede[csede.venueId].push({ tableId: table.id, hora, fecha: cfecha.fecha });
+            }
+          }
+        }
+
+        // Intercalar slots de distintas sedes
+        const sedesSlots = Object.values(porSede);
+        const maxSlots = Math.max(...sedesSlots.map(s => s.length), 0);
+        for (let i = 0; i < maxSlots; i++) {
+          for (const sedeSlotList of sedesSlots) {
+            if (sedeSlotList[i]) {
+              serieSlots.push({
+                fecha: sedeSlotList[i].fecha,
+                tableId: sedeSlotList[i].tableId,
+                horaInicio: sedeSlotList[i].hora
+              });
+            }
+          }
+        }
+      }
+
+      if (serieSlots.length === 0) {
+        res.status(400).json({ error: 'No hay horarios configurados en las mesas. Configurá horarios por mesa antes de asignar.' });
+        return;
+      }
+
+      // Obtener series (solo partidos con serieId que contenga 'serie')
       const matches = await prisma.match.findMany({
-        where: {
-          phaseId,
-          serieId: { contains: 'serie' }
-        },
+        where: { phaseId, serieId: { contains: 'serie' } },
         orderBy: { round: 'asc' }
       });
 
@@ -100,23 +116,55 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         })
         .map(([_, ps]) => ps.sort((x, y) => x.round - y.round));
 
-      // Round-robin: una serie por slot rotando
+      // Asignar una serie por slot
       for (let i = 0; i < series.length; i++) {
-        const slot = slotsIntercalados[i % slotsIntercalados.length];
+        if (i >= serieSlots.length) break; // No hay más slots disponibles
+
+        const slot = serieSlots[i];
         const p1 = series[i][0];
         const p2 = series[i][1];
-
         if (!p1 || !p2) continue;
 
-        const fechaP1 = new Date(`${slot.fecha}T${horaP1}:00`);
-        const fechaP2 = new Date(`${slot.fecha}T${horaP2}:00`);
+        const fechaP1 = new Date(`${slot.fecha}T${slot.horaInicio}:00`);
+        const fechaP2 = new Date(fechaP1.getTime() + gapMinutos * 60 * 1000);
 
         updates.push({ id: p1.id, tableId: slot.tableId, scheduledAt: fechaP1, status: 'asignado' });
         updates.push({ id: p2.id, tableId: slot.tableId, scheduledAt: fechaP2, status: 'asignado' });
         asignados++;
       }
+
     } else {
-      // Cruces
+      // Cruces — construir slots intercalados entre sedes
+      interface Slot { fecha: string; tableId: number; venueId: number; }
+      const slotsIntercalados: Slot[] = [];
+
+      for (const cfecha of fechas.sort((a: any, b: any) => a.fecha.localeCompare(b.fecha))) {
+        const porSede: Record<number, Slot[]> = {};
+        for (const csede of cfecha.sedes) {
+          for (const cmesa of csede.mesas) {
+            const table = await prisma.table.findFirst({
+              where: { id: cmesa.mesaId, venueId: csede.venueId }
+            });
+            if (!table) continue;
+            if (!porSede[csede.venueId]) porSede[csede.venueId] = [];
+            porSede[csede.venueId].push({ fecha: cfecha.fecha, tableId: table.id, venueId: csede.venueId });
+          }
+        }
+
+        const sedes = Object.values(porSede);
+        if (sedes.length === 0) continue;
+        const maxMesas = Math.max(...sedes.map(s => s.length));
+        for (let i = 0; i < maxMesas; i++) {
+          for (const sede of sedes) {
+            if (sede[i]) slotsIntercalados.push(sede[i]);
+          }
+        }
+      }
+
+      if (slotsIntercalados.length === 0) {
+        res.status(400).json({ error: 'No hay mesas disponibles configuradas' }); return;
+      }
+
       const partidos = await prisma.match.findMany({
         where: { phaseId },
         orderBy: { round: 'asc' }
@@ -170,7 +218,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       });
     }
 
-    res.json({ message: 'Asignación completada', asignados, total: asignados });
+    res.json({ message: 'Asignación completada', asignados, total: series?.length ?? asignados });
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
