@@ -17,7 +17,11 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     if (!phase) { res.status(404).json({ error: 'Fase no encontrada' }); return; }
     if (!phase.config) { res.status(400).json({ error: 'La fase no tiene configuración de disponibilidad' }); return; }
 
-    const esSeries = phase.type === 'clasificatorio' || phase.type === 'segunda';
+    const esSeries = phase.type?.toLowerCase().includes('clasif') ||
+                     phase.type?.toLowerCase().includes('segunda') ||
+                     phase.type === 'clasificatorio' ||
+                     phase.type === 'segunda';
+
     const configuracion = phase.config.configuracion as any;
     const fechas: any[] = configuracion.fechas ?? [];
 
@@ -61,15 +65,20 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       res.status(400).json({ error: 'No hay mesas disponibles configuradas' }); return;
     }
 
+    // Reset previo: limpiar asignaciones anteriores de esta fase
+    await prisma.match.updateMany({
+      where: { phaseId },
+      data: { tableId: null, scheduledAt: null, status: 'pendiente' as any }
+    });
+
     const updates: { id: number; tableId: number; scheduledAt: Date; status: string }[] = [];
     let asignados = 0;
 
     if (esSeries) {
-      // Obtener solo P1 y P2 de series (serieId contiene 'serie')
+      // Obtener P1 y P2 de series (serieId contiene 'serie')
       const matches = await prisma.match.findMany({
         where: {
           phaseId,
-          tableId: null,
           serieId: { contains: 'serie' }
         },
         orderBy: { round: 'asc' }
@@ -109,7 +118,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     } else {
       // Cruces
       const partidos = await prisma.match.findMany({
-        where: { phaseId, tableId: null },
+        where: { phaseId },
         orderBy: { round: 'asc' }
       });
 
