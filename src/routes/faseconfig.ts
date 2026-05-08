@@ -30,12 +30,11 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       res.status(400).json({ error: 'Se requiere horaInicio y crucesPerMesa para cruces' }); return;
     }
 
-    // Construir lista de slots: { fecha, tableId, venueId }
+    // Construir lista de slots intercalados entre sedes
     interface Slot { fecha: string; tableId: number; venueId: number; }
     const slotsIntercalados: Slot[] = [];
 
     for (const cfecha of fechas.sort((a: any, b: any) => a.fecha.localeCompare(b.fecha))) {
-      // Agrupar mesas por sede
       const porSede: Record<number, Slot[]> = {};
       for (const csede of cfecha.sedes) {
         for (const cmesa of csede.mesas) {
@@ -48,7 +47,6 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         }
       }
 
-      // Intercalar mesas entre sedes (sede1mesa1, sede2mesa1, sede1mesa2, sede2mesa2...)
       const sedes = Object.values(porSede);
       if (sedes.length === 0) continue;
       const maxMesas = Math.max(...sedes.map(s => s.length));
@@ -67,17 +65,12 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     let asignados = 0;
 
     if (esSeries) {
-      // Obtener series sin asignar
+      // Obtener solo P1 y P2 de series (serieId contiene 'serie')
       const matches = await prisma.match.findMany({
         where: {
           phaseId,
           tableId: null,
-          serieId: { not: null },
-          NOT: [
-            { serieId: { contains: 'reduccion' } },
-            { serieId: { contains: 'repechaje' } },
-            { serieId: { contains: 'cruce' } },
-          ]
+          serieId: { contains: 'serie' }
         },
         orderBy: { round: 'asc' }
       });
@@ -98,7 +91,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         })
         .map(([_, ps]) => ps.sort((x, y) => x.round - y.round));
 
-      // Asignar round-robin: una serie por slot, rotando
+      // Round-robin: una serie por slot rotando
       for (let i = 0; i < series.length; i++) {
         const slot = slotsIntercalados[i % slotsIntercalados.length];
         const p1 = series[i][0];
@@ -114,7 +107,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         asignados++;
       }
     } else {
-      // Cruces: llenar fecha por fecha, equitativo entre mesas
+      // Cruces
       const partidos = await prisma.match.findMany({
         where: { phaseId, tableId: null },
         orderBy: { round: 'asc' }
@@ -124,7 +117,6 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       const contadorPorMesa: Record<number, number> = {};
       let cruceIdx = 0;
 
-      // Agrupar slots por fecha
       const slotsPorFecha: Record<string, Slot[]> = {};
       for (const slot of slotsIntercalados) {
         if (!slotsPorFecha[slot.fecha]) slotsPorFecha[slot.fecha] = [];
@@ -169,7 +161,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       });
     }
 
-    res.json({ message: 'Asignación completada', asignados, total: esSeries ? Object.keys({}).length : 0 });
+    res.json({ message: 'Asignación completada', asignados, total: asignados });
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
