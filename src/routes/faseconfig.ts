@@ -192,10 +192,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       });
     }
 
-    res.json({ 
-  message: 'Asignación completada', 
-  asignados, 
-  total: asignados,
+    res.json({ message: `Asignación completada. Slots encontrados: ${slotsIntercalados.length}`, asignados, total: asignados,
   debug_slots: slotsIntercalados.length,
   debug_mesas: slotsIntercalados.map(s => ({ tableId: s.tableId, fecha: s.fecha }))
 });
