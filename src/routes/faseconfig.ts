@@ -35,7 +35,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       res.status(400).json({ error: 'Se requiere horaInicio y crucesPerMesa para cruces' }); return;
     }
 
-    // Construir lista de slots intercalados entre sedes (una entrada por mesa disponible)
+    // Construir lista de slots intercalados entre sedes
     interface Slot { fecha: string; tableId: number; venueId: number; }
     const slotsIntercalados: Slot[] = [];
 
@@ -75,24 +75,27 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
     const updates: { id: number; tableId: number; scheduledAt: Date; status: string }[] = [];
     let asignados = 0;
 
+    // Helper: convertir minutos totales + fecha a Date con timezone Uruguay
+    const minutosAFecha = (fecha: string, minutos: number): Date => {
+      const hh = String(Math.floor(minutos / 60)).padStart(2, '0');
+      const mm = String(minutos % 60).padStart(2, '0');
+      return new Date(`${fecha}T${hh}:${mm}:00-03:00`);
+    };
+
     if (esSeries) {
-      // Calcular tiempos base en minutos desde medianoche
       const [h1, m1] = horaP1.split(':').map(Number);
       const [h2, m2] = horaP2.split(':').map(Number);
       const baseP1Min = h1 * 60 + m1;
       const baseP2Min = h2 * 60 + m2;
-      const gapMinutos = baseP2Min - baseP1Min; // ej: 45 min
+      const gapMinutos = baseP2Min - baseP1Min;
       const duracion = (phase.config as any).duracionSerie ?? 45;
-      // Offset por cada vuelta adicional sobre la misma mesa: P2 + duracion
       const offsetPorRonda = gapMinutos + duracion;
 
-      // Obtener series
       const matches = await prisma.match.findMany({
         where: { phaseId, serieId: { contains: 'serie' } },
         orderBy: { round: 'asc' }
       });
 
-      // Agrupar por serieId
       const seriesMap: Record<string, any[]> = {};
       for (const m of matches) {
         if (!m.serieId) continue;
@@ -108,7 +111,6 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         })
         .map(([_, ps]) => ps.sort((x, y) => x.round - y.round));
 
-      // Contar cuántas veces se usa cada mesa para avanzar el horario
       const mesaRonda: Record<number, number> = {};
 
       for (let i = 0; i < series.length; i++) {
@@ -127,11 +129,8 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         const minutosP1 = baseP1Min + ronda * offsetPorRonda;
         const minutosP2 = baseP2Min + ronda * offsetPorRonda;
 
-        const fechaP1 = new Date(`${slot.fecha}T00:00:00`);
-        fechaP1.setMinutes(minutosP1);
-
-        const fechaP2 = new Date(`${slot.fecha}T00:00:00`);
-        fechaP2.setMinutes(minutosP2);
+        const fechaP1 = minutosAFecha(slot.fecha, minutosP1);
+        const fechaP2 = minutosAFecha(slot.fecha, minutosP2);
 
         updates.push({ id: p1.id, tableId: slot.tableId, scheduledAt: fechaP1, status: 'asignado' });
         updates.push({ id: p2.id, tableId: slot.tableId, scheduledAt: fechaP2, status: 'asignado' });
@@ -140,7 +139,6 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       }
 
     } else {
-      // Cruces
       const partidos = await prisma.match.findMany({
         where: { phaseId },
         orderBy: { round: 'asc' }
@@ -165,8 +163,8 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
           if (!contadorPorMesa[slot.tableId]) contadorPorMesa[slot.tableId] = 0;
           if (contadorPorMesa[slot.tableId] >= crucesPerMesa) continue;
 
-          const horaCruce = new Date(`${fecha}T${String(horaH).padStart(2, '0')}:${String(horaM).padStart(2, '0')}:00`);
-          horaCruce.setHours(horaCruce.getHours() + contadorPorMesa[slot.tableId]);
+          const minutosBase = horaH * 60 + horaM + contadorPorMesa[slot.tableId] * 60;
+          const horaCruce = minutosAFecha(fecha, minutosBase);
 
           updates.push({
             id: partidos[cruceIdx].id,
