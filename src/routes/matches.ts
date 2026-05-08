@@ -7,12 +7,74 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 const router = Router();
 
 // -------------------------------------------------------
+// HELPER: rellenar repechaje con ganadores de cruces 16 y 17
+// -------------------------------------------------------
+async function rellenarRepechaje(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { result: true }
+    });
+
+    if (!match || !match.result?.winnerId) return;
+    if (!match.serieId) return;
+
+    const esCruce16 = match.serieId === 'clasif-reduccion-16';
+    const esCruce17 = match.serieId === 'clasif-reduccion-17';
+    if (!esCruce16 && !esCruce17) return;
+
+    const repechaje = await prisma.match.findFirst({
+      where: { phaseId: match.phaseId, serieId: 'clasif-repechaje' }
+    });
+    if (!repechaje) return;
+
+    const winnerId = match.result.winnerId;
+
+    await prisma.match.update({
+      where: { id: repechaje.id },
+      data: {
+        ...(esCruce16 ? { playerAId: winnerId, slotA: null } : {}),
+        ...(esCruce17 ? { playerBId: winnerId, slotB: null } : {}),
+      }
+    });
+
+    const repechajeActualizado = await prisma.match.findUnique({
+      where: { id: repechaje.id }
+    });
+
+    if (repechajeActualizado?.playerAId && repechajeActualizado?.playerBId) {
+      await prisma.match.update({
+        where: { id: repechaje.id },
+        data: { status: repechajeActualizado.tableId ? 'asignado' : 'pendiente' }
+      });
+      console.log('✅ Repechaje listo con ambos jugadores');
+
+      const updatedRepechaje = await prisma.match.findUnique({
+        where: { id: repechaje.id },
+        include: {
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
+          table: { include: { venue: true } },
+          phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          sets: { orderBy: { setNumber: 'asc' } },
+        }
+      });
+      if (updatedRepechaje) emitMatchUpdate(io, updatedRepechaje);
+    }
+
+    console.log(`✅ Repechaje actualizado con ganador de ${match.serieId}`);
+  } catch (error) {
+    console.error('Error rellenando repechaje:', error);
+  }
+}
+
+// -------------------------------------------------------
 // HELPER: calcular ranking de clasificados y rellenar cruces
 // Se ejecuta cuando termina el último P5 de las series del clasificatorio
 // -------------------------------------------------------
 async function rellenarCrucesReduccion(phaseId: number) {
   try {
-    // Obtener todas las series del clasificatorio
     const todasLasSeries = await prisma.match.findMany({
       where: {
         phaseId,
@@ -22,7 +84,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
       orderBy: { round: 'asc' }
     });
 
-    // Agrupar por serieId
     const seriesMap: Record<string, any[]> = {};
     for (const m of todasLasSeries) {
       if (!m.serieId) continue;
@@ -30,11 +91,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
       seriesMap[m.serieId].push(m);
     }
 
-    const numSeries = Object.keys(seriesMap).length;
-
-    // Verificar que todos los P5 tienen resultado
-    // P5 tiene round = roundBase + 4, donde roundBase = i*10 + 1
-    // Entonces P5 termina en 5 (round % 10 === 5)
     for (const serieId of Object.keys(seriesMap)) {
       const partidos = seriesMap[serieId];
       const p5 = partidos.find(p => {
@@ -43,17 +99,16 @@ async function rellenarCrucesReduccion(phaseId: number) {
       });
       if (!p5 || !p5.result?.winnerId) {
         console.log(`Serie ${serieId} aún no tiene P5 con resultado`);
-        return; // No todas las series terminaron
+        return;
       }
     }
 
     console.log('✅ Todas las series terminaron, calculando ranking de clasificados...');
 
-    // Calcular ranking de cada jugador en su serie
     interface ClasificadoStats {
       playerId: number;
-      posEnSerie: number; // 1=primero, 2=segundo
-      puntos: number;     // 8=primero, 6=segundo
+      posEnSerie: number;
+      puntos: number;
       setsGanados: number;
       tantosAFavor: number;
       tantosEnContra: number;
@@ -64,7 +119,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
     for (const serieId of Object.keys(seriesMap)) {
       const partidos = seriesMap[serieId];
 
-      // Calcular stats de cada jugador en la serie
       const jugadoresIds = new Set<number>();
       for (const p of partidos) {
         if (p.playerAId) jugadoresIds.add(p.playerAId);
@@ -96,7 +150,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
         }
       }
 
-      // Ordenar jugadores de la serie por wins desc
       const jugadoresOrdenados = Array.from(jugadoresIds)
         .filter(id => statsJugador[id])
         .sort((a, b) => {
@@ -108,7 +161,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
           return sa.ptsAgainst - sb.ptsAgainst;
         });
 
-      // Primero y segundo de la serie entran al ranking de cruces
       if (jugadoresOrdenados[0]) {
         const s = statsJugador[jugadoresOrdenados[0]];
         clasificados.push({
@@ -133,7 +185,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
       }
     }
 
-    // Ordenar los 34 clasificados: primero por puntos, luego sets, tantos a favor, tantos en contra
     clasificados.sort((a, b) => {
       if (b.puntos !== a.puntos) return b.puntos - a.puntos;
       if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
@@ -143,7 +194,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
 
     console.log(`Ranking calculado: ${clasificados.length} clasificados`);
 
-    // Obtener los cruces de reducción ordenados por round
     const crucesReduccion = await prisma.match.findMany({
       where: {
         phaseId,
@@ -152,8 +202,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
       orderBy: { round: 'asc' }
     });
 
-    // Armar cruces en espejo: #1 vs #34, #2 vs #33, etc.
-    const N = clasificados.length; // 34
+    const N = clasificados.length;
     for (let i = 0; i < crucesReduccion.length && i < Math.floor(N / 2); i++) {
       const cruce = crucesReduccion[i];
       const jugA = clasificados[i];
@@ -174,7 +223,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
       }
     }
 
-    // Actualizar repechaje con slots correctos
     const repechaje = await prisma.match.findFirst({
       where: { phaseId, serieId: 'clasif-repechaje' }
     });
@@ -321,7 +369,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
           emitMatchUpdate(io, newP5);
           console.log(`✅ Serie ${match.serieId}: P5 generado`);
 
-          // Verificar si este es el último P5 de todas las series del clasificatorio
           if (match.phase?.type === 'clasificatorio' && match.serieId?.startsWith('clasif-serie-')) {
             await rellenarCrucesReduccion(phaseId);
           }
@@ -391,7 +438,6 @@ router.get('/:id', async (req, res: Response) => {
   res.json(match);
 });
 
-// PUT /:id — actualizar scheduledAt
 router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { scheduledAt } = req.body;
   const match = await prisma.match.update({
@@ -410,7 +456,6 @@ router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: 
   res.json(match);
 });
 
-// PUT /:id/assign
 router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { tableId } = req.body;
   const matchId = Number(req.params.id);
@@ -438,7 +483,6 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
   res.json(match);
 });
 
-// PUT /:id/start
 router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const match = await prisma.match.update({
     where: { id: Number(req.params.id) },
@@ -456,7 +500,6 @@ router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async 
   res.json(match);
 });
 
-// PUT /:id/set
 router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
   const { setNumber, pointsA, pointsB } = req.body;
@@ -508,7 +551,6 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
   res.json(updatedMatch);
 });
 
-// PUT /:id/result
 router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
   const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
@@ -581,7 +623,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     },
   });
 
-  // NO liberar la mesa si el partido pertenece a una serie
   const esPartidoDeSerie = existingMatch.serieId &&
     !existingMatch.serieId.includes('reduccion') &&
     !existingMatch.serieId.includes('repechaje') &&
@@ -589,7 +630,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const roundBase = Math.floor(existingMatch.round / 10) * 10 + 1;
   const posEnSerie = existingMatch.round - roundBase;
-  const esUltimoPartidoSerie = posEnSerie === 4; // P5
+  const esUltimoPartidoSerie = posEnSerie === 4;
 
   if (!esPartidoDeSerie || esUltimoPartidoSerie) {
     if (updatedMatch.tableId) {
@@ -605,14 +646,21 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   emitMatchUpdate(io, updatedMatch);
 
   const phaseType = existingMatch.phase?.type;
+
+  // Generar siguiente partido de serie
   if (phaseType === 'clasificatorio' || phaseType === 'segunda') {
     await generarSiguientePartidoSerie(matchId);
+  }
+
+  // Rellenar repechaje si terminó cruce 16 o 17
+  if (phaseType === 'clasificatorio' &&
+    (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')) {
+    await rellenarRepechaje(matchId);
   }
 
   res.json({ match: updatedMatch, result });
 });
 
-// POST /auto-assign
 router.post('/auto-assign', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { matchId, venueId } = req.body;
 
