@@ -218,7 +218,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       });
     }
 
-    res.json({ message: 'Asignación completada', asignados, total: series?.length ?? asignados });
+    res.json({ message: 'Asignación completada', asignados, total: asignados });
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
