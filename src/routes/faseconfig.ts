@@ -23,12 +23,51 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
 
     if (fechas.length === 0) { res.status(400).json({ error: 'No hay fechas configuradas para esta fase' }); return; }
 
-    // Obtener partidos a asignar
-    let partidos: any[] = [];
+    if (esSeries && (!horaP1 || !horaP2)) {
+      res.status(400).json({ error: 'Se requiere horaP1 y horaP2 para series' }); return;
+    }
+    if (!esSeries && (!horaInicio || !crucesPerMesa)) {
+      res.status(400).json({ error: 'Se requiere horaInicio y crucesPerMesa para cruces' }); return;
+    }
+
+    // Construir lista de slots: { fecha, tableId, venueId }
+    interface Slot { fecha: string; tableId: number; venueId: number; }
+    const slotsIntercalados: Slot[] = [];
+
+    for (const cfecha of fechas.sort((a: any, b: any) => a.fecha.localeCompare(b.fecha))) {
+      // Agrupar mesas por sede
+      const porSede: Record<number, Slot[]> = {};
+      for (const csede of cfecha.sedes) {
+        for (const cmesa of csede.mesas) {
+          const table = await prisma.table.findFirst({
+            where: { id: cmesa.mesaId, venueId: csede.venueId }
+          });
+          if (!table) continue;
+          if (!porSede[csede.venueId]) porSede[csede.venueId] = [];
+          porSede[csede.venueId].push({ fecha: cfecha.fecha, tableId: table.id, venueId: csede.venueId });
+        }
+      }
+
+      // Intercalar mesas entre sedes (sede1mesa1, sede2mesa1, sede1mesa2, sede2mesa2...)
+      const sedes = Object.values(porSede);
+      if (sedes.length === 0) continue;
+      const maxMesas = Math.max(...sedes.map(s => s.length));
+      for (let i = 0; i < maxMesas; i++) {
+        for (const sede of sedes) {
+          if (sede[i]) slotsIntercalados.push(sede[i]);
+        }
+      }
+    }
+
+    if (slotsIntercalados.length === 0) {
+      res.status(400).json({ error: 'No hay mesas disponibles configuradas' }); return;
+    }
+
+    const updates: { id: number; tableId: number; scheduledAt: Date; status: string }[] = [];
+    let asignados = 0;
 
     if (esSeries) {
-      if (!horaP1 || !horaP2) { res.status(400).json({ error: 'Se requiere horaP1 y horaP2 para series' }); return; }
-
+      // Obtener series sin asignar
       const matches = await prisma.match.findMany({
         where: {
           phaseId,
@@ -43,6 +82,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         orderBy: { round: 'asc' }
       });
 
+      // Agrupar por serieId
       const seriesMap: Record<string, any[]> = {};
       for (const m of matches) {
         if (!m.serieId) continue;
@@ -50,130 +90,67 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
         seriesMap[m.serieId].push(m);
       }
 
-      partidos = Object.entries(seriesMap)
+      const series = Object.entries(seriesMap)
         .sort(([a], [b]) => {
           const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0');
           const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0');
           return numA - numB;
         })
-        .map(([serieId, ps]) => ({ serieId, partidos: ps.sort((x, y) => x.round - y.round) }));
-    } else {
-      if (!horaInicio || !crucesPerMesa) { res.status(400).json({ error: 'Se requiere horaInicio y crucesPerMesa para cruces' }); return; }
+        .map(([_, ps]) => ps.sort((x, y) => x.round - y.round));
 
-      partidos = await prisma.match.findMany({
-        where: { phaseId, tableId: null },
-        orderBy: { round: 'asc' }
-      });
-    }
+      // Asignar round-robin: una serie por slot, rotando
+      for (let i = 0; i < series.length; i++) {
+        const slot = slotsIntercalados[i % slotsIntercalados.length];
+        const p1 = series[i][0];
+        const p2 = series[i][1];
 
-    if (partidos.length === 0) {
-      res.json({ message: 'No hay partidos pendientes de asignación', asignados: 0, total: 0 });
-      return;
-    }
+        if (!p1 || !p2) continue;
 
-    // Construir slots disponibles
-    interface Slot { fecha: string; tableId: number; venueId: number; }
+        const fechaP1 = new Date(`${slot.fecha}T${horaP1}:00`);
+        const fechaP2 = new Date(`${slot.fecha}T${horaP2}:00`);
 
-    const slotsPorFecha: Record<string, Slot[]> = {};
-
-    for (const cfecha of fechas) {
-      if (!slotsPorFecha[cfecha.fecha]) slotsPorFecha[cfecha.fecha] = [];
-
-      const porSede: Record<number, Slot[]> = {};
-      for (const csede of cfecha.sedes) {
-        for (const cmesa of csede.mesas) {
-          const table = await prisma.table.findFirst({
-            where: { id: cmesa.mesaId, venueId: csede.venueId }
-          });
-          if (!table) continue;
-          if (!porSede[csede.venueId]) porSede[csede.venueId] = [];
-          porSede[csede.venueId].push({ fecha: cfecha.fecha, tableId: table.id, venueId: csede.venueId });
-        }
-      }
-
-      // Intercalar mesas entre sedes
-      const sedes = Object.values(porSede);
-      const maxMesas = Math.max(...sedes.map(s => s.length), 0);
-      for (let i = 0; i < maxMesas; i++) {
-        for (const sede of sedes) {
-          if (sede[i]) slotsPorFecha[cfecha.fecha].push(sede[i]);
-        }
-      }
-    }
-
-    const fechasOrdenadas = Object.keys(slotsPorFecha).sort();
-
-    if (fechasOrdenadas.every(f => slotsPorFecha[f].length === 0)) {
-      res.status(400).json({ error: 'No hay mesas disponibles configuradas' });
-      return;
-    }
-
-    const updates: { id: number; tableId: number; scheduledAt: Date; status: string }[] = [];
-    let asignados = 0;
-
-    if (esSeries) {
-      const numSeries = partidos.length;
-      // Calcular total de slots disponibles
-      const todosSlots: Slot[] = [];
-      for (const fecha of fechasOrdenadas) {
-        todosSlots.push(...slotsPorFecha[fecha]);
-      }
-
-      if (todosSlots.length === 0) {
-        res.status(400).json({ error: 'No hay mesas disponibles configuradas' });
-        return;
-      }
-
-      // Repartir equitativamente entre slots
-      const seriesPorSlot = Math.ceil(numSeries / todosSlots.length);
-      let serieIdx = 0;
-
-      for (const slot of todosSlots) {
-        for (let s = 0; s < seriesPorSlot && serieIdx < numSeries; s++) {
-          const serie = partidos[serieIdx] as { serieId: string; partidos: any[] };
-          const p1 = serie.partidos[0];
-          const p2 = serie.partidos[1];
-
-          if (!p1 || !p2) { serieIdx++; continue; }
-
-          const fechaP1 = new Date(`${slot.fecha}T${horaP1}:00`);
-          const fechaP2 = new Date(`${slot.fecha}T${horaP2}:00`);
-
-          updates.push({ id: p1.id, tableId: slot.tableId, scheduledAt: fechaP1, status: 'asignado' });
-          updates.push({ id: p2.id, tableId: slot.tableId, scheduledAt: fechaP2, status: 'asignado' });
-
-          asignados++;
-          serieIdx++;
-        }
-        if (serieIdx >= numSeries) break;
+        updates.push({ id: p1.id, tableId: slot.tableId, scheduledAt: fechaP1, status: 'asignado' });
+        updates.push({ id: p2.id, tableId: slot.tableId, scheduledAt: fechaP2, status: 'asignado' });
+        asignados++;
       }
     } else {
       // Cruces: llenar fecha por fecha, equitativo entre mesas
+      const partidos = await prisma.match.findMany({
+        where: { phaseId, tableId: null },
+        orderBy: { round: 'asc' }
+      });
+
+      const [horaH, horaM] = horaInicio.split(':').map(Number);
+      const contadorPorMesa: Record<number, number> = {};
       let cruceIdx = 0;
-      const numCruces = partidos.length;
 
-      for (const fecha of fechasOrdenadas) {
-        if (cruceIdx >= numCruces) break;
+      // Agrupar slots por fecha
+      const slotsPorFecha: Record<string, Slot[]> = {};
+      for (const slot of slotsIntercalados) {
+        if (!slotsPorFecha[slot.fecha]) slotsPorFecha[slot.fecha] = [];
+        slotsPorFecha[slot.fecha].push(slot);
+      }
+
+      for (const fecha of Object.keys(slotsPorFecha).sort()) {
+        if (cruceIdx >= partidos.length) break;
         const slotsEnFecha = slotsPorFecha[fecha];
-        if (slotsEnFecha.length === 0) continue;
 
-        const [horaH, horaM] = horaInicio.split(':').map(Number);
-        const contadorPorMesa: Record<number, number> = {};
-
-        const crucesEnEstaFecha = Math.min(slotsEnFecha.length * crucesPerMesa, numCruces - cruceIdx);
-
-        for (let i = 0; i < crucesEnEstaFecha && cruceIdx < numCruces; i++) {
-          const slotActual = slotsEnFecha[i % slotsEnFecha.length];
-          if (!contadorPorMesa[slotActual.tableId]) contadorPorMesa[slotActual.tableId] = 0;
-          if (contadorPorMesa[slotActual.tableId] >= crucesPerMesa) continue;
+        for (let i = 0; i < slotsEnFecha.length * crucesPerMesa && cruceIdx < partidos.length; i++) {
+          const slot = slotsEnFecha[i % slotsEnFecha.length];
+          if (!contadorPorMesa[slot.tableId]) contadorPorMesa[slot.tableId] = 0;
+          if (contadorPorMesa[slot.tableId] >= crucesPerMesa) continue;
 
           const horaCruce = new Date(`${fecha}T${String(horaH).padStart(2, '0')}:${String(horaM).padStart(2, '0')}:00`);
-          horaCruce.setHours(horaCruce.getHours() + contadorPorMesa[slotActual.tableId]);
+          horaCruce.setHours(horaCruce.getHours() + contadorPorMesa[slot.tableId]);
 
-          const cruce = partidos[cruceIdx] as any;
-          updates.push({ id: cruce.id, tableId: slotActual.tableId, scheduledAt: horaCruce, status: 'asignado' });
+          updates.push({
+            id: partidos[cruceIdx].id,
+            tableId: slot.tableId,
+            scheduledAt: horaCruce,
+            status: 'asignado'
+          });
 
-          contadorPorMesa[slotActual.tableId]++;
+          contadorPorMesa[slot.tableId]++;
           asignados++;
           cruceIdx++;
         }
@@ -192,7 +169,7 @@ router.post('/:phaseId/asignar', authenticate, requireRole('admin'), async (req:
       });
     }
 
-    res.json({ message: 'Asignación completada', asignados, total: partidos.length });
+    res.json({ message: 'Asignación completada', asignados, total: esSeries ? Object.keys({}).length : 0 });
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
