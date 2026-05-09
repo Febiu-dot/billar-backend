@@ -7,6 +7,132 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 const router = Router();
 
 // -------------------------------------------------------
+// HELPER: rellenar slot de Segunda con ganador de cruce de reducción
+// -------------------------------------------------------
+async function rellenarSlotSegunda(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { result: true }
+    });
+
+    if (!match || !match.result?.winnerId) return;
+    if (!match.serieId) return;
+
+    // Solo cruces de reducción 1-15
+    const mReduccion = match.serieId.match(/^clasif-reduccion-(\d+)$/);
+    if (!mReduccion) return;
+
+    const cruceNum = parseInt(mReduccion[1]);
+    if (cruceNum > 15) return;
+
+    const slotLabel = `Clasificado Clasif. #${cruceNum}`;
+    const winnerId = match.result.winnerId;
+
+    const segundaMatch = await prisma.match.findFirst({
+      where: {
+        OR: [{ slotA: slotLabel }, { slotB: slotLabel }]
+      }
+    });
+
+    if (!segundaMatch) {
+      console.log(`No se encontró partido de Segunda con slot ${slotLabel}`);
+      return;
+    }
+
+    const esSlotA = segundaMatch.slotA === slotLabel;
+
+    await prisma.match.update({
+      where: { id: segundaMatch.id },
+      data: esSlotA
+        ? { playerAId: winnerId, slotA: null }
+        : { playerBId: winnerId, slotB: null }
+    });
+
+    const actualizado = await prisma.match.findUnique({ where: { id: segundaMatch.id } });
+
+    if (actualizado?.playerAId && actualizado?.playerBId) {
+      await prisma.match.update({
+        where: { id: segundaMatch.id },
+        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
+      });
+
+      const full = await prisma.match.findUnique({
+        where: { id: segundaMatch.id },
+        include: {
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
+          table: { include: { venue: true } },
+          phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          sets: { orderBy: { setNumber: 'asc' } },
+        }
+      });
+      if (full) emitMatchUpdate(io, full);
+    }
+
+    console.log(`✅ Slot ${slotLabel} rellenado en Segunda con jugador ${winnerId}`);
+  } catch (error) {
+    console.error('Error rellenando slot de Segunda:', error);
+  }
+}
+
+// -------------------------------------------------------
+// HELPER: rellenar slot #16 de Segunda con ganador del repechaje
+// -------------------------------------------------------
+async function rellenarSlotSegundaConRepechaje(winnerId: number) {
+  try {
+    const slotLabel = 'Clasificado Clasif. #16';
+
+    const segundaMatch = await prisma.match.findFirst({
+      where: {
+        OR: [{ slotA: slotLabel }, { slotB: slotLabel }]
+      }
+    });
+
+    if (!segundaMatch) {
+      console.log(`No se encontró partido de Segunda con slot ${slotLabel}`);
+      return;
+    }
+
+    const esSlotA = segundaMatch.slotA === slotLabel;
+
+    await prisma.match.update({
+      where: { id: segundaMatch.id },
+      data: esSlotA
+        ? { playerAId: winnerId, slotA: null }
+        : { playerBId: winnerId, slotB: null }
+    });
+
+    const actualizado = await prisma.match.findUnique({ where: { id: segundaMatch.id } });
+
+    if (actualizado?.playerAId && actualizado?.playerBId) {
+      await prisma.match.update({
+        where: { id: segundaMatch.id },
+        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
+      });
+
+      const full = await prisma.match.findUnique({
+        where: { id: segundaMatch.id },
+        include: {
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
+          table: { include: { venue: true } },
+          phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          sets: { orderBy: { setNumber: 'asc' } },
+        }
+      });
+      if (full) emitMatchUpdate(io, full);
+    }
+
+    console.log(`✅ Slot ${slotLabel} rellenado en Segunda con ganador del repechaje ${winnerId}`);
+  } catch (error) {
+    console.error('Error rellenando slot de Segunda con repechaje:', error);
+  }
+}
+
+// -------------------------------------------------------
 // HELPER: rellenar repechaje con ganadores de cruces 16 y 17
 // -------------------------------------------------------
 async function rellenarRepechaje(matchId: number) {
@@ -38,9 +164,7 @@ async function rellenarRepechaje(matchId: number) {
       }
     });
 
-    const repechajeActualizado = await prisma.match.findUnique({
-      where: { id: repechaje.id }
-    });
+    const repechajeActualizado = await prisma.match.findUnique({ where: { id: repechaje.id } });
 
     if (repechajeActualizado?.playerAId && repechajeActualizado?.playerBId) {
       await prisma.match.update({
@@ -70,8 +194,7 @@ async function rellenarRepechaje(matchId: number) {
 }
 
 // -------------------------------------------------------
-// HELPER: calcular ranking de clasificados y rellenar cruces
-// Se ejecuta cuando termina el último P5 de las series del clasificatorio
+// HELPER: calcular ranking y rellenar cruces de reducción
 // -------------------------------------------------------
 async function rellenarCrucesReduccion(phaseId: number) {
   try {
@@ -103,7 +226,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
       }
     }
 
-    console.log('✅ Todas las series terminaron, calculando ranking de clasificados...');
+    console.log('✅ Todas las series terminaron, calculando ranking...');
 
     interface ClasificadoStats {
       playerId: number;
@@ -238,7 +361,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
       });
     }
 
-    console.log('✅ Cruces de reducción rellenados con jugadores reales');
+    console.log('✅ Cruces de reducción rellenados');
   } catch (error) {
     console.error('Error rellenando cruces de reducción:', error);
   }
@@ -647,7 +770,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const phaseType = existingMatch.phase?.type;
 
-  // Generar siguiente partido de serie
+  // Generar siguiente partido de serie (clasificatorio y segunda)
   if (phaseType === 'clasificatorio' || phaseType === 'segunda') {
     await generarSiguientePartidoSerie(matchId);
   }
@@ -656,6 +779,19 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   if (phaseType === 'clasificatorio' &&
     (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')) {
     await rellenarRepechaje(matchId);
+  }
+
+  // Rellenar slot de Segunda si terminó cruce de reducción 1-15
+  if (phaseType === 'clasificatorio') {
+    const mCruce = existingMatch.serieId?.match(/^clasif-reduccion-(\d+)$/);
+    if (mCruce && parseInt(mCruce[1]) <= 15) {
+      await rellenarSlotSegunda(matchId);
+    }
+  }
+
+  // Rellenar slot #16 de Segunda si terminó el repechaje
+  if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId) {
+    await rellenarSlotSegundaConRepechaje(winnerId);
   }
 
   res.json({ match: updatedMatch, result });
