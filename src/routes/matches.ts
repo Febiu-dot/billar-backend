@@ -19,7 +19,6 @@ async function rellenarSlotSegunda(matchId: number) {
     if (!match || !match.result?.winnerId) return;
     if (!match.serieId) return;
 
-    // Solo cruces de reducción 1-15
     const mReduccion = match.serieId.match(/^clasif-reduccion-(\d+)$/);
     if (!mReduccion) return;
 
@@ -491,10 +490,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
           });
           emitMatchUpdate(io, newP5);
           console.log(`✅ Serie ${match.serieId}: P5 generado`);
-
-          if (match.phase?.type === 'clasificatorio' && match.serieId?.startsWith('clasif-serie-')) {
-            await rellenarCrucesReduccion(phaseId);
-          }
         }
       }
     }
@@ -770,9 +765,16 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const phaseType = existingMatch.phase?.type;
 
-  // Generar siguiente partido de serie (clasificatorio y segunda)
+  // Generar siguiente partido de serie
   if (phaseType === 'clasificatorio' || phaseType === 'segunda') {
     await generarSiguientePartidoSerie(matchId);
+  }
+
+  // Si terminó P5 de una serie del clasificatorio → rellenar cruces de reducción
+  const roundBaseP5 = Math.floor(existingMatch.round / 10) * 10 + 1;
+  const posP5 = existingMatch.round - roundBaseP5;
+  if (phaseType === 'clasificatorio' && existingMatch.serieId?.startsWith('clasif-serie-') && posP5 === 4) {
+    await rellenarCrucesReduccion(existingMatch.phaseId);
   }
 
   // Rellenar repechaje si terminó cruce 16 o 17
