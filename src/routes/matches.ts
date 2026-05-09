@@ -538,7 +538,16 @@ router.get('/active', async (_req, res: Response) => {
   });
   res.json(matches);
 });
-
+// POST /matches/trigger-reduccion/:phaseId — disparo manual
+router.post('/trigger-reduccion/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const phaseId = parseInt(req.params.phaseId);
+    await rellenarCrucesReduccion(phaseId);
+    res.json({ message: 'Cruces de reducción rellenados correctamente' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
 router.get('/:id', async (req, res: Response) => {
   const match = await prisma.match.findUnique({
     where: { id: Number(req.params.id) },
