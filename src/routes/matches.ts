@@ -1,829 +1,356 @@
-import { Router, Response } from 'express';
-import prisma from '../services/prisma';
-import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
-import { io } from '../index';
-import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
+import { useEffect, useState } from 'react';
+import { api } from '../services/api';
+import { LoadingSpinner, EmptyState, Modal } from '../components/ui';
 
-const router = Router();
-
-// -------------------------------------------------------
-// HELPER: rellenar slots de Primera con clasificados de Segunda
-// -------------------------------------------------------
-async function rellenarSlotsPrimera(phaseId: number) {
-  try {
-    const todasLasSeries = await prisma.match.findMany({
-      where: {
-        phaseId,
-        serieId: { startsWith: 'segunda-serie-' },
-      },
-      include: { result: true },
-      orderBy: { round: 'asc' }
-    });
-
-    const seriesMap: Record<string, any[]> = {};
-    for (const m of todasLasSeries) {
-      if (!m.serieId) continue;
-      if (!seriesMap[m.serieId]) seriesMap[m.serieId] = [];
-      seriesMap[m.serieId].push(m);
-    }
-
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const roundBase = Math.min(...partidos.map(p => p.round));
-      const p5 = partidos.find(p => p.round === roundBase + 4);
-      if (!p5 || !p5.result?.winnerId) {
-        console.log(`Serie ${serieId} de Segunda aún no terminó`);
-        return;
-      }
-    }
-
-    console.log('✅ Todas las series de Segunda terminaron, calculando ranking...');
-
-    const clasificados: { playerId: number; puntos: number; setsGanados: number; tantosAFavor: number; tantosEnContra: number }[] = [];
-
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const roundBase = Math.min(...partidos.map(p => p.round));
-
-      const jugadoresIds = new Set<number>();
-      for (const p of partidos) {
-        if (p.playerAId) jugadoresIds.add(p.playerAId);
-        if (p.playerBId) jugadoresIds.add(p.playerBId);
-      }
-
-      const statsJugador: Record<number, { wins: number; sets: number; ptsFor: number; ptsAgainst: number }> = {};
-      for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-
-      for (const partido of partidos) {
-        if (!partido.result) continue;
-        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
-        const pA = partido.playerAId;
-        const pB = partido.playerBId;
-        if (pA && statsJugador[pA]) {
-          statsJugador[pA].wins += winnerId === pA ? 1 : 0;
-          statsJugador[pA].sets += setsA;
-          statsJugador[pA].ptsFor += pointsA;
-          statsJugador[pA].ptsAgainst += pointsB;
-        }
-        if (pB && statsJugador[pB]) {
-          statsJugador[pB].wins += winnerId === pB ? 1 : 0;
-          statsJugador[pB].sets += setsB;
-          statsJugador[pB].ptsFor += pointsB;
-          statsJugador[pB].ptsAgainst += pointsA;
-        }
-      }
-
-      const p3 = partidos.find(p => p.round === roundBase + 2);
-      const p5 = partidos.find(p => p.round === roundBase + 4);
-
-      if (p3?.result?.winnerId) {
-        const s = statsJugador[p3.result.winnerId] ?? { sets: 0, ptsFor: 0, ptsAgainst: 0 };
-        clasificados.push({ playerId: p3.result.winnerId, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
-      }
-      if (p5?.result?.winnerId) {
-        const s = statsJugador[p5.result.winnerId] ?? { sets: 0, ptsFor: 0, ptsAgainst: 0 };
-        clasificados.push({ playerId: p5.result.winnerId, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
-      }
-    }
-
-    clasificados.sort((a, b) => {
-      if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-      if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
-      if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor;
-      return a.tantosEnContra - b.tantosEnContra;
-    });
-
-    console.log(`Ranking Segunda: ${clasificados.length} clasificados`);
-
-    for (let i = 0; i < clasificados.length; i++) {
-      const slotLabel = `Clasificado Segunda #${i + 1}`;
-      const winnerId = clasificados[i].playerId;
-
-      const primeraMatch = await prisma.match.findFirst({
-        where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
-      });
-
-      if (!primeraMatch) { console.log(`No se encontró slot ${slotLabel} en Primera`); continue; }
-
-      const esSlotA = primeraMatch.slotA === slotLabel;
-      await prisma.match.update({
-        where: { id: primeraMatch.id },
-        data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null }
-      });
-
-      const actualizado = await prisma.match.findUnique({ where: { id: primeraMatch.id } });
-      if (actualizado?.playerAId && actualizado?.playerBId) {
-        await prisma.match.update({
-          where: { id: primeraMatch.id },
-          data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
-        });
-        const full = await prisma.match.findUnique({
-          where: { id: primeraMatch.id },
-          include: {
-            playerA: { include: { category: true } },
-            playerB: { include: { category: true } },
-            table: { include: { venue: true } },
-            phase: { include: { circuit: { include: { tournament: true } } } },
-            result: true,
-            sets: { orderBy: { setNumber: 'asc' } },
-          }
-        });
-        if (full) emitMatchUpdate(io, full);
-      }
-      console.log(`✅ Slot ${slotLabel} rellenado con jugador ${winnerId}`);
-    }
-
-    console.log('✅ Slots de Primera rellenados');
-  } catch (error) {
-    console.error('Error rellenando slots de Primera:', error);
-  }
+interface Venue { id: number; name: string; departamentoId?: number; tables?: { id: number; number: number; status: string }[]; }
+interface Cruce {
+  id: number;
+  round: number;
+  serieId?: string;
+  fase: string;
+  phaseId: number;
+  playerA?: any;
+  playerB?: any;
+  slotA?: string;
+  slotB?: string;
+  tableId?: number;
+  table?: any;
+  scheduledAt?: string;
+  status: string;
 }
 
-// -------------------------------------------------------
-// HELPER: rellenar slot de Segunda con ganador de cruce de reducción
-// -------------------------------------------------------
-async function rellenarSlotSegunda(matchId: number) {
-  try {
-    const match = await prisma.match.findUnique({
-      where: { id: matchId },
-      include: { result: true }
+export default function CrucesPage() {
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [cruces, setCruces] = useState<Cruce[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [torneoDepId, setTorneoDepId] = useState<number | null>(null);
+  const [asignandoModal, setAsignandoModal] = useState<Cruce | null>(null);
+  const [form, setForm] = useState({ venueId: '', tableId: '', scheduledAt: '', hora: '', minutos: '' });
+  const [saving, setSaving] = useState(false);
+  const [filtroFase, setFiltroFase] = useState<string>('todas');
+  const [disparando, setDisparando] = useState(false);
+  const [disparoMsg, setDisparoMsg] = useState('');
+
+  const cargarDatos = async () => {
+    const [vRes, mRes, tRes] = await Promise.all([
+      api.get('/venues'),
+      api.get('/matches'),
+      api.get('/tournaments'),
+    ]);
+    setVenues(vRes.data);
+
+    const matchesCruces = mRes.data.filter((m: any) =>
+      m.phase?.type === 'primera' ||
+      m.phase?.type === 'master' ||
+      (m.serieId && (m.serieId.includes('reduccion') || m.serieId.includes('repechaje')))
+    ).map((m: any) => ({
+      id: m.id,
+      round: m.round,
+      serieId: m.serieId,
+      fase: m.serieId?.includes('reduccion') || m.serieId?.includes('repechaje')
+        ? 'reduccion'
+        : m.phase?.type ?? '',
+      phaseId: m.phaseId,
+      playerA: m.playerA,
+      playerB: m.playerB,
+      slotA: m.slotA,
+      slotB: m.slotB,
+      tableId: m.tableId,
+      table: m.table,
+      scheduledAt: m.scheduledAt,
+      status: m.status,
+    }));
+
+    matchesCruces.sort((a: Cruce, b: Cruce) => {
+      const orden: Record<string, number> = { reduccion: 1, primera: 2, master: 3 };
+      if (a.fase !== b.fase) return (orden[a.fase] ?? 9) - (orden[b.fase] ?? 9);
+      if (!a.scheduledAt && !b.scheduledAt) return a.round - b.round;
+      if (!a.scheduledAt) return 1;
+      if (!b.scheduledAt) return -1;
+      return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
     });
 
-    if (!match || !match.result?.winnerId) return;
-    if (!match.serieId) return;
+    setCruces(matchesCruces);
+    const torneoActivo = tRes.data.find((t: any) => t.active) ?? tRes.data[0];
+    setTorneoDepId(torneoActivo?.departamentoId ?? null);
+    setLoading(false);
+  };
 
-    const mReduccion = match.serieId.match(/^clasif-reduccion-(\d+)$/);
-    if (!mReduccion) return;
+  useEffect(() => {
+    cargarDatos().catch(() => setLoading(false));
+  }, []);
 
-    const cruceNum = parseInt(mReduccion[1]);
-    if (cruceNum > 15) return;
-
-    const slotLabel = `Clasificado Clasif. #${cruceNum}`;
-    const winnerId = match.result.winnerId;
-
-    const segundaMatch = await prisma.match.findFirst({
-      where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
-    });
-
-    if (!segundaMatch) { console.log(`No se encontró partido de Segunda con slot ${slotLabel}`); return; }
-
-    const esSlotA = segundaMatch.slotA === slotLabel;
-    await prisma.match.update({
-      where: { id: segundaMatch.id },
-      data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null }
-    });
-
-    const actualizado = await prisma.match.findUnique({ where: { id: segundaMatch.id } });
-    if (actualizado?.playerAId && actualizado?.playerBId) {
-      await prisma.match.update({
-        where: { id: segundaMatch.id },
-        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
-      });
-      const full = await prisma.match.findUnique({
-        where: { id: segundaMatch.id },
-        include: {
-          playerA: { include: { category: true } },
-          playerB: { include: { category: true } },
-          table: { include: { venue: true } },
-          phase: { include: { circuit: { include: { tournament: true } } } },
-          result: true,
-          sets: { orderBy: { setNumber: 'asc' } },
-        }
-      });
-      if (full) emitMatchUpdate(io, full);
+  const handleDispararReduccion = async () => {
+    setDisparando(true);
+    setDisparoMsg('');
+    try {
+      const res = await api.post('/matches/trigger-reduccion/30');
+      setDisparoMsg(`✅ ${res.data.message}`);
+      await cargarDatos();
+    } catch (err: any) {
+      setDisparoMsg(`❌ ${err?.response?.data?.error ?? 'Error al disparar reducción'}`);
+    } finally {
+      setDisparando(false);
     }
-    console.log(`✅ Slot ${slotLabel} rellenado en Segunda con jugador ${winnerId}`);
-  } catch (error) {
-    console.error('Error rellenando slot de Segunda:', error);
-  }
+  };
+
+  const handleDispararSegunda = async () => {
+    setDisparando(true);
+    setDisparoMsg('');
+    try {
+      const res = await api.post('/matches/trigger-segunda/31');
+      setDisparoMsg(`✅ ${res.data.message}`);
+      await cargarDatos();
+    } catch (err: any) {
+      setDisparoMsg(`❌ ${err?.response?.data?.error ?? 'Error al disparar Segunda'}`);
+    } finally {
+      setDisparando(false);
+    }
+  };
+
+  const abrirAsignacion = (cruce: Cruce) => {
+    setAsignandoModal(cruce);
+    const horaCompleta = cruce.scheduledAt ? cruce.scheduledAt.split('T')[1]?.slice(0, 5) : '';
+    setForm({
+      venueId: cruce.table?.venue?.id?.toString() ?? '',
+      tableId: cruce.tableId?.toString() ?? '',
+      scheduledAt: cruce.scheduledAt ? cruce.scheduledAt.split('T')[0] : '',
+      hora: horaCompleta.split(':')[0] ?? '',
+      minutos: horaCompleta.split(':')[1] ?? '00',
+    });
+  };
+
+  const handleGuardar = async () => {
+    if (!asignandoModal) return;
+    setSaving(true);
+    try {
+      const scheduledAt = form.scheduledAt && form.hora
+        ? new Date(`${form.scheduledAt}T${form.hora}:${form.minutos || '00'}:00`).toISOString()
+        : undefined;
+
+      if (form.tableId) {
+        await api.put(`/matches/${asignandoModal.id}/assign`, { tableId: parseInt(form.tableId) });
+      }
+      if (scheduledAt) {
+        await api.put(`/matches/${asignandoModal.id}`, { scheduledAt });
+      }
+
+      setAsignandoModal(null);
+      await cargarDatos();
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Error al asignar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sedesFiltradas = torneoDepId
+    ? venues.filter(v => v.departamentoId === torneoDepId)
+    : venues;
+
+  const getTablasDeSede = (venueId: string) => {
+    const venue = sedesFiltradas.find(v => v.id === parseInt(venueId));
+    return venue?.tables ?? [];
+  };
+
+  const pn = (player: any, slot?: string) => {
+    if (player) return `${player.lastName}, ${player.firstName}`;
+    if (slot) return slot;
+    return '—';
+  };
+
+  const labelFase = (fase: string) => {
+    if (fase === 'reduccion') return 'Reducción Clasif.';
+    if (fase === 'primera') return 'Tercera Fase';
+    if (fase === 'master') return 'Fase Final';
+    return fase;
+  };
+
+  const crucesFiltrados = filtroFase === 'todas' ? cruces : cruces.filter(c => c.fase === filtroFase);
+
+  if (loading) return <LoadingSpinner />;
+
+  return (
+    <div>
+      <div className="px-6 pt-6 pb-4 border-b border-felt-light/20 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-display text-4xl text-gold">CRUCES</h1>
+          <p className="text-chalk/50 text-sm mt-1">Asignación de sede, mesa, fecha y hora — Reducción, Primera y Máster</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button
+              className="btn-secondary text-xs py-1.5 px-3"
+              disabled={disparando}
+              onClick={handleDispararReduccion}
+            >
+              {disparando ? 'Procesando...' : '⚡ Rellenar cruces de reducción'}
+            </button>
+            <button
+              className="btn-secondary text-xs py-1.5 px-3"
+              disabled={disparando}
+              onClick={handleDispararSegunda}
+            >
+              {disparando ? 'Procesando...' : '⚡ Rellenar slots de Primera'}
+            </button>
+          </div>
+          {disparoMsg && (
+            <span className={`text-xs ${disparoMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
+              {disparoMsg}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="p-6 space-y-4">
+        <div className="flex gap-2 flex-wrap">
+          {['todas', 'reduccion', 'primera', 'master'].map(f => (
+            <button
+              key={f}
+              className={`py-1 px-3 text-xs rounded-lg border transition-all ${filtroFase === f ? 'border-gold/40 text-gold bg-gold/10' : 'border-felt-light/20 text-chalk/40 hover:border-chalk/30'}`}
+              onClick={() => setFiltroFase(f)}
+            >
+              {f === 'todas' ? 'Todas' : labelFase(f)}
+            </button>
+          ))}
+          <span className="text-chalk/30 text-xs self-center ml-2">{crucesFiltrados.length} cruces</span>
+        </div>
+
+        {crucesFiltrados.length === 0 ? (
+          <EmptyState message="No hay cruces. Generá los partidos desde Fixture primero." />
+        ) : (
+          <div className="card p-0 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-felt-light/10 text-chalk/40 text-xs uppercase tracking-widest">
+                  <th className="text-left px-4 py-3">Fase</th>
+                  <th className="text-left px-4 py-3">Cruce</th>
+                  <th className="text-left px-4 py-3">Jugador A</th>
+                  <th className="text-left px-4 py-3">Jugador B</th>
+                  <th className="text-left px-4 py-3 hidden md:table-cell">Sede / Mesa</th>
+                  <th className="text-left px-4 py-3 hidden md:table-cell">Fecha / Hora</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {crucesFiltrados.map(cruce => {
+                  const asignado = cruce.tableId || cruce.scheduledAt;
+                  return (
+                    <tr key={cruce.id} className={`border-b border-felt-light/5 ${asignado ? 'bg-green-900/5' : ''}`}>
+                      <td className="px-4 py-3">
+                        <span className={`badge-status text-xs ${
+                          cruce.fase === 'reduccion' ? 'bg-orange-900/30 text-orange-400' :
+                          cruce.fase === 'primera' ? 'bg-blue-900/30 text-blue-400' :
+                          'bg-gold/20 text-gold'
+                        }`}>
+                          {labelFase(cruce.fase)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-chalk/40 text-xs font-mono">
+                        {cruce.serieId?.includes('repechaje') ? 'Repechaje' : `#${cruce.round}`}
+                      </td>
+                      <td className="px-4 py-3 text-chalk/80">{pn(cruce.playerA, cruce.slotA)}</td>
+                      <td className="px-4 py-3 text-chalk/80">{pn(cruce.playerB, cruce.slotB)}</td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {cruce.table ? (
+                          <span className="text-green-400/60 text-xs font-mono">
+                            {cruce.table.venue?.name} — Mesa {cruce.table.number}
+                          </span>
+                        ) : (
+                          <span className="text-chalk/20 text-xs">Sin asignar</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {cruce.scheduledAt ? (
+                          <span className="text-chalk/60 text-xs font-mono">
+                            {new Date(cruce.scheduledAt).toLocaleString('es-UY', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
+                          </span>
+                        ) : (
+                          <span className="text-chalk/20 text-xs">Sin fecha</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          className="py-0.5 px-2 text-xs rounded border border-gold/30 text-gold/70 hover:bg-gold/10 transition-all"
+                          onClick={() => abrirAsignacion(cruce)}
+                        >
+                          {asignado ? 'Editar' : 'Asignar'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {asignandoModal && (
+        <Modal title={`ASIGNAR — ${labelFase(asignandoModal.fase)} ${asignandoModal.serieId?.includes('repechaje') ? 'Repechaje' : `#${asignandoModal.round}`}`} onClose={() => setAsignandoModal(null)}>
+          <div className="space-y-4">
+            <div>
+              <p className="text-chalk/60 text-xs uppercase tracking-widest mb-1">Partido</p>
+              <p className="text-chalk/80 text-sm">
+                {pn(asignandoModal.playerA, asignandoModal.slotA)} vs {pn(asignandoModal.playerB, asignandoModal.slotB)}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-chalk/60 text-xs uppercase tracking-widest mb-1.5">
+                Sede {torneoDepId ? '(filtradas por departamento)' : ''}
+              </label>
+              <select className="input" value={form.venueId} onChange={e => setForm({ ...form, venueId: e.target.value, tableId: '' })}>
+                <option value="">Seleccionar sede...</option>
+                {sedesFiltradas.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+
+            {form.venueId && (
+              <div>
+                <label className="block text-chalk/60 text-xs uppercase tracking-widest mb-1.5">Mesa</label>
+                <select className="input" value={form.tableId} onChange={e => setForm({ ...form, tableId: e.target.value })}>
+                  <option value="">Seleccionar mesa...</option>
+                  {getTablasDeSede(form.venueId).map((t: any) => (
+                    <option key={t.id} value={t.id}>Mesa {t.number} — {t.status}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-chalk/60 text-xs uppercase tracking-widest mb-1.5">Fecha</label>
+                <input type="date" className="input" value={form.scheduledAt} onChange={e => setForm({ ...form, scheduledAt: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-chalk/60 text-xs uppercase tracking-widest mb-1.5">Hora (24hs)</label>
+                <div className="flex gap-2">
+                  <select className="input flex-1" value={form.hora} onChange={e => setForm({ ...form, hora: e.target.value })}>
+                    <option value="">HH</option>
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                  <select className="input flex-1" value={form.minutos} onChange={e => setForm({ ...form, minutos: e.target.value })}>
+                    <option value="">MM</option>
+                    {['00', '15', '30', '45'].map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button className="btn-primary flex-1" disabled={saving} onClick={handleGuardar}>
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+              <button className="btn-secondary flex-1" onClick={() => setAsignandoModal(null)}>Cancelar</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
-
-// -------------------------------------------------------
-// HELPER: rellenar slot #16 de Segunda con ganador del repechaje
-// -------------------------------------------------------
-async function rellenarSlotSegundaConRepechaje(winnerId: number) {
-  try {
-    const slotLabel = 'Clasificado Clasif. #16';
-    const segundaMatch = await prisma.match.findFirst({
-      where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
-    });
-
-    if (!segundaMatch) { console.log(`No se encontró partido de Segunda con slot ${slotLabel}`); return; }
-
-    const esSlotA = segundaMatch.slotA === slotLabel;
-    await prisma.match.update({
-      where: { id: segundaMatch.id },
-      data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null }
-    });
-
-    const actualizado = await prisma.match.findUnique({ where: { id: segundaMatch.id } });
-    if (actualizado?.playerAId && actualizado?.playerBId) {
-      await prisma.match.update({
-        where: { id: segundaMatch.id },
-        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
-      });
-      const full = await prisma.match.findUnique({
-        where: { id: segundaMatch.id },
-        include: {
-          playerA: { include: { category: true } },
-          playerB: { include: { category: true } },
-          table: { include: { venue: true } },
-          phase: { include: { circuit: { include: { tournament: true } } } },
-          result: true,
-          sets: { orderBy: { setNumber: 'asc' } },
-        }
-      });
-      if (full) emitMatchUpdate(io, full);
-    }
-    console.log(`✅ Slot ${slotLabel} rellenado con ganador del repechaje ${winnerId}`);
-  } catch (error) {
-    console.error('Error rellenando slot de Segunda con repechaje:', error);
-  }
-}
-
-// -------------------------------------------------------
-// HELPER: rellenar repechaje con ganadores de cruces 16 y 17
-// -------------------------------------------------------
-async function rellenarRepechaje(matchId: number) {
-  try {
-    const match = await prisma.match.findUnique({
-      where: { id: matchId },
-      include: { result: true }
-    });
-
-    if (!match || !match.result?.winnerId) return;
-    if (!match.serieId) return;
-
-    const esCruce16 = match.serieId === 'clasif-reduccion-16';
-    const esCruce17 = match.serieId === 'clasif-reduccion-17';
-    if (!esCruce16 && !esCruce17) return;
-
-    const repechaje = await prisma.match.findFirst({
-      where: { phaseId: match.phaseId, serieId: 'clasif-repechaje' }
-    });
-    if (!repechaje) return;
-
-    const winnerId = match.result.winnerId;
-    await prisma.match.update({
-      where: { id: repechaje.id },
-      data: {
-        ...(esCruce16 ? { playerAId: winnerId, slotA: null } : {}),
-        ...(esCruce17 ? { playerBId: winnerId, slotB: null } : {}),
-      }
-    });
-
-    const repechajeActualizado = await prisma.match.findUnique({ where: { id: repechaje.id } });
-    if (repechajeActualizado?.playerAId && repechajeActualizado?.playerBId) {
-      await prisma.match.update({
-        where: { id: repechaje.id },
-        data: { status: repechajeActualizado.tableId ? 'asignado' : 'pendiente' }
-      });
-      console.log('✅ Repechaje listo con ambos jugadores');
-      const updatedRepechaje = await prisma.match.findUnique({
-        where: { id: repechaje.id },
-        include: {
-          playerA: { include: { category: true } },
-          playerB: { include: { category: true } },
-          table: { include: { venue: true } },
-          phase: { include: { circuit: { include: { tournament: true } } } },
-          result: true,
-          sets: { orderBy: { setNumber: 'asc' } },
-        }
-      });
-      if (updatedRepechaje) emitMatchUpdate(io, updatedRepechaje);
-    }
-    console.log(`✅ Repechaje actualizado con ganador de ${match.serieId}`);
-  } catch (error) {
-    console.error('Error rellenando repechaje:', error);
-  }
-}
-
-// -------------------------------------------------------
-// HELPER: calcular ranking y rellenar cruces de reducción
-// -------------------------------------------------------
-async function rellenarCrucesReduccion(phaseId: number) {
-  try {
-    const todasLasSeries = await prisma.match.findMany({
-      where: { phaseId, serieId: { startsWith: 'clasif-serie-' } },
-      include: { result: true, sets: true },
-      orderBy: { round: 'asc' }
-    });
-
-    const seriesMap: Record<string, any[]> = {};
-    for (const m of todasLasSeries) {
-      if (!m.serieId) continue;
-      if (!seriesMap[m.serieId]) seriesMap[m.serieId] = [];
-      seriesMap[m.serieId].push(m);
-    }
-
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const p5 = partidos.find(p => {
-        const roundBase = Math.floor(p.round / 10) * 10 + 1;
-        return p.round === roundBase + 4;
-      });
-      if (!p5 || !p5.result?.winnerId) {
-        console.log(`Serie ${serieId} aún no tiene P5 con resultado`);
-        return;
-      }
-    }
-
-    console.log('✅ Todas las series terminaron, calculando ranking...');
-
-    const clasificados: { playerId: number; posEnSerie: number; puntos: number; setsGanados: number; tantosAFavor: number; tantosEnContra: number }[] = [];
-
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const jugadoresIds = new Set<number>();
-      for (const p of partidos) {
-        if (p.playerAId) jugadoresIds.add(p.playerAId);
-        if (p.playerBId) jugadoresIds.add(p.playerBId);
-      }
-
-      const statsJugador: Record<number, { wins: number; sets: number; ptsFor: number; ptsAgainst: number }> = {};
-      for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-
-      for (const partido of partidos) {
-        if (!partido.result) continue;
-        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
-        const pA = partido.playerAId;
-        const pB = partido.playerBId;
-        if (pA && statsJugador[pA]) {
-          statsJugador[pA].wins += winnerId === pA ? 1 : 0;
-          statsJugador[pA].sets += setsA;
-          statsJugador[pA].ptsFor += pointsA;
-          statsJugador[pA].ptsAgainst += pointsB;
-        }
-        if (pB && statsJugador[pB]) {
-          statsJugador[pB].wins += winnerId === pB ? 1 : 0;
-          statsJugador[pB].sets += setsB;
-          statsJugador[pB].ptsFor += pointsB;
-          statsJugador[pB].ptsAgainst += pointsA;
-        }
-      }
-
-      const jugadoresOrdenados = Array.from(jugadoresIds).filter(id => statsJugador[id]).sort((a, b) => {
-        const sa = statsJugador[a]; const sb = statsJugador[b];
-        if (sb.wins !== sa.wins) return sb.wins - sa.wins;
-        if (sb.sets !== sa.sets) return sb.sets - sa.sets;
-        if (sb.ptsFor !== sa.ptsFor) return sb.ptsFor - sa.ptsFor;
-        return sa.ptsAgainst - sb.ptsAgainst;
-      });
-
-      if (jugadoresOrdenados[0]) {
-        const s = statsJugador[jugadoresOrdenados[0]];
-        clasificados.push({ playerId: jugadoresOrdenados[0], posEnSerie: 1, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
-      }
-      if (jugadoresOrdenados[1]) {
-        const s = statsJugador[jugadoresOrdenados[1]];
-        clasificados.push({ playerId: jugadoresOrdenados[1], posEnSerie: 2, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
-      }
-    }
-
-    clasificados.sort((a, b) => {
-      if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-      if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
-      if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor;
-      return a.tantosEnContra - b.tantosEnContra;
-    });
-
-    console.log(`Ranking calculado: ${clasificados.length} clasificados`);
-
-    const crucesReduccion = await prisma.match.findMany({
-      where: { phaseId, serieId: { startsWith: 'clasif-reduccion-' } },
-      orderBy: { round: 'asc' }
-    });
-
-    const N = clasificados.length;
-    for (let i = 0; i < crucesReduccion.length && i < Math.floor(N / 2); i++) {
-      const cruce = crucesReduccion[i];
-      const jugA = clasificados[i];
-      const jugB = clasificados[N - 1 - i];
-      if (jugA && jugB) {
-        await prisma.match.update({
-          where: { id: cruce.id },
-          data: { playerAId: jugA.playerId, playerBId: jugB.playerId, slotA: null, slotB: null, status: cruce.tableId ? 'asignado' : 'pendiente' }
-        });
-        console.log(`✅ Cruce ${i + 1}: #${i + 1} vs #${N - i}`);
-      }
-    }
-
-    const repechaje = await prisma.match.findFirst({ where: { phaseId, serieId: 'clasif-repechaje' } });
-    if (repechaje && crucesReduccion.length >= 2) {
-      const ultimoCruce = crucesReduccion[crucesReduccion.length - 1];
-      const penultimoCruce = crucesReduccion[crucesReduccion.length - 2];
-      await prisma.match.update({
-        where: { id: repechaje.id },
-        data: { slotA: `Ganador Cruce ${penultimoCruce.round}`, slotB: `Ganador Cruce ${ultimoCruce.round}` }
-      });
-    }
-
-    console.log('✅ Cruces de reducción rellenados');
-  } catch (error) {
-    console.error('Error rellenando cruces de reducción:', error);
-  }
-}
-
-// -------------------------------------------------------
-// HELPER: generar siguiente partido de la serie
-// -------------------------------------------------------
-async function generarSiguientePartidoSerie(matchId: number) {
-  try {
-    const match = await prisma.match.findUnique({
-      where: { id: matchId },
-      include: { result: true, phase: true }
-    });
-    if (!match || !match.result?.winnerId) return;
-
-    const phaseId = match.phaseId;
-    const round = match.round;
-    const roundBase = Math.floor(round / 10) * 10 + 1;
-    const posEnSerie = round - roundBase;
-
-    if (posEnSerie > 3) return;
-
-    const partidos = await prisma.match.findMany({
-      where: { phaseId, serieId: match.serieId },
-      include: { result: true },
-      orderBy: { round: 'asc' },
-    });
-
-    const p1 = partidos.find(p => p.round === roundBase);
-    const p2 = partidos.find(p => p.round === roundBase + 1);
-    const p3 = partidos.find(p => p.round === roundBase + 2);
-    const p4 = partidos.find(p => p.round === roundBase + 3);
-
-    const tableId = p1?.tableId ?? null;
-    const ruleSetId = p1?.ruleSetId ?? null;
-
-    if (posEnSerie <= 1) {
-      const p1Done = p1?.result?.winnerId;
-      const p2Done = p2?.result?.winnerId;
-
-      if (p1Done && p2Done && !p3) {
-        const newP3 = await prisma.match.create({
-          data: {
-            phaseId, playerAId: p1.result!.winnerId!, playerBId: p2.result!.winnerId!,
-            round: roundBase + 2, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
-          },
-          include: {
-            playerA: { include: { category: true } }, playerB: { include: { category: true } },
-            table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-            result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
-          }
-        });
-
-        const p1LoserId = p1.playerAId === p1.result!.winnerId ? p1.playerBId : p1.playerAId;
-        const p2LoserId = p2.playerAId === p2.result!.winnerId ? p2.playerBId : p2.playerAId;
-
-        if (p1LoserId && p2LoserId) {
-          const newP4 = await prisma.match.create({
-            data: {
-              phaseId, playerAId: p1LoserId, playerBId: p2LoserId,
-              round: roundBase + 3, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
-            },
-            include: {
-              playerA: { include: { category: true } }, playerB: { include: { category: true } },
-              table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-              result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
-            }
-          });
-          emitMatchUpdate(io, newP4);
-        }
-        emitMatchUpdate(io, newP3);
-        console.log(`✅ Serie ${match.serieId}: P3 y P4 generados`);
-      }
-    }
-
-    if (posEnSerie >= 2 && posEnSerie <= 3) {
-      const p3Done = p3?.result?.winnerId;
-      const p4Done = p4?.result?.winnerId;
-      const p5existe = partidos.find(p => p.round === roundBase + 4);
-
-      if (p3Done && p4Done && !p5existe) {
-        const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
-        if (p3LoserId && p4!.result!.winnerId) {
-          const newP5 = await prisma.match.create({
-            data: {
-              phaseId, playerAId: p3LoserId, playerBId: p4!.result!.winnerId!,
-              round: roundBase + 4, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
-            },
-            include: {
-              playerA: { include: { category: true } }, playerB: { include: { category: true } },
-              table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-              result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
-            }
-          });
-          emitMatchUpdate(io, newP5);
-          console.log(`✅ Serie ${match.serieId}: P5 generado`);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error generando siguiente partido de serie:', error);
-  }
-}
-
-// -------------------------------------------------------
-// ENDPOINTS
-// -------------------------------------------------------
-
-// POST /matches/trigger-reduccion/:phaseId — disparo manual
-router.post('/trigger-reduccion/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    const phaseId = parseInt(req.params.phaseId);
-    await rellenarCrucesReduccion(phaseId);
-    res.json({ message: 'Cruces de reducción rellenados correctamente' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// POST /matches/trigger-segunda/:phaseId — disparo manual slots Primera
-router.post('/trigger-segunda/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    const phaseId = parseInt(req.params.phaseId);
-    await rellenarSlotsPrimera(phaseId);
-    res.json({ message: 'Slots de Primera rellenados correctamente' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET all matches
-router.get('/', async (req, res: Response) => {
-  const { phaseId, status, tableId, venueId } = req.query;
-  const matches = await prisma.match.findMany({
-    where: {
-      ...(phaseId ? { phaseId: Number(phaseId) } : {}),
-      ...(status ? { status: status as any } : {}),
-      ...(tableId ? { tableId: Number(tableId) } : {}),
-      ...(venueId ? { table: { venueId: Number(venueId) } } : {}),
-    },
-    include: {
-      playerA: { include: { category: true } },
-      playerB: { include: { category: true } },
-      table: { include: { venue: true } },
-      phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, ruleSet: true,
-      sets: { orderBy: { setNumber: 'asc' } },
-    },
-    orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
-  });
-  res.json(matches);
-});
-
-router.get('/active', async (_req, res: Response) => {
-  const matches = await prisma.match.findMany({
-    where: { status: { in: ['asignado', 'en_juego'] } },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
-  res.json(matches);
-});
-
-router.get('/:id', async (req, res: Response) => {
-  const match = await prisma.match.findUnique({
-    where: { id: Number(req.params.id) },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  if (!match) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
-  res.json(match);
-});
-
-router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const { scheduledAt } = req.body;
-  const match = await prisma.match.update({
-    where: { id: Number(req.params.id) },
-    data: { scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  emitMatchUpdate(io, match);
-  res.json(match);
-});
-
-router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const { tableId } = req.body;
-  const matchId = Number(req.params.id);
-  await prisma.table.update({ where: { id: tableId }, data: { status: 'ocupada' } });
-  const match = await prisma.match.update({
-    where: { id: matchId },
-    data: { tableId, status: 'asignado' },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  emitMatchUpdate(io, match);
-  if (match.table) emitTableUpdate(io, match.table);
-  res.json(match);
-});
-
-router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const match = await prisma.match.update({
-    where: { id: Number(req.params.id) },
-    data: { status: 'en_juego', startedAt: new Date() },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  emitMatchUpdate(io, match);
-  res.json(match);
-});
-
-router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const matchId = Number(req.params.id);
-  const { setNumber, pointsA, pointsB } = req.body;
-  const existingMatch = await prisma.match.findUnique({ where: { id: matchId }, include: { ruleSet: true, sets: true } });
-  if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
-
-  const winnerId = pointsA > pointsB ? existingMatch.playerAId : existingMatch.playerBId;
-  await prisma.setResult.upsert({
-    where: { id: (existingMatch.sets.find(s => s.setNumber === setNumber)?.id ?? 0) },
-    create: { matchId, setNumber, pointsA, pointsB, winnerId },
-    update: { pointsA, pointsB, winnerId },
-  });
-
-  const allSets = await prisma.setResult.findMany({ where: { matchId }, orderBy: { setNumber: 'asc' } });
-  const setsA = allSets.filter(s => s.pointsA > s.pointsB).length;
-  const setsB = allSets.filter(s => s.pointsB > s.pointsA).length;
-  const totalPtsA = allSets.reduce((acc, s) => acc + s.pointsA, 0);
-  const totalPtsB = allSets.reduce((acc, s) => acc + s.pointsB, 0);
-
-  await prisma.matchResult.upsert({
-    where: { matchId },
-    create: { matchId, setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB, isWO: false },
-    update: { setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB },
-  });
-
-  const updatedMatch = await prisma.match.findUnique({
-    where: { id: matchId },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  emitMatchUpdate(io, updatedMatch);
-  res.json(updatedMatch);
-});
-
-router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const matchId = Number(req.params.id);
-  const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
-
-  const existingMatch = await prisma.match.findUnique({
-    where: { id: matchId },
-    include: { ruleSet: true, phase: { include: { circuit: true } } },
-  });
-  if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
-
-  const ruleSet = existingMatch.ruleSet;
-  let finalSetsA = setsA, finalSetsB = setsB, finalPtsA = pointsA, finalPtsB = pointsB;
-  let winnerId: number | null = null;
-
-  if (isWO) {
-    const absentId = woPlayerId;
-    const winnPId = absentId === existingMatch.playerAId ? existingMatch.playerBId : existingMatch.playerAId;
-    winnerId = winnPId;
-    if (ruleSet) {
-      if (absentId === existingMatch.playerAId) {
-        finalSetsA = ruleSet.woSetsLoser; finalSetsB = ruleSet.woSetsWinner;
-        finalPtsA = ruleSet.woPtsLoser; finalPtsB = ruleSet.woPtsWinner;
-      } else {
-        finalSetsA = ruleSet.woSetsWinner; finalSetsB = ruleSet.woSetsLoser;
-        finalPtsA = ruleSet.woPtsWinner; finalPtsB = ruleSet.woPtsLoser;
-      }
-    }
-  } else {
-    const setsToWin = ruleSet?.setsToWin ?? 2;
-    if (finalSetsA >= setsToWin) winnerId = existingMatch.playerAId;
-    else if (finalSetsB >= setsToWin) winnerId = existingMatch.playerBId;
-  }
-
-  const result = await prisma.matchResult.upsert({
-    where: { matchId },
-    create: { matchId, setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
-    update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
-  });
-
-  if (!isWO && sets && Array.isArray(sets) && sets.length > 0) {
-    await prisma.setResult.deleteMany({ where: { matchId } });
-    await prisma.setResult.createMany({
-      data: sets.map((s: { setNumber: number; pointsA: number; pointsB: number }) => ({
-        matchId, setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB,
-        winnerId: s.pointsA > s.pointsB ? existingMatch.playerAId : existingMatch.playerBId,
-      })),
-    });
-  }
-
-  const updatedMatch = await prisma.match.update({
-    where: { id: matchId },
-    data: { status: isWO ? 'wo' : 'finalizado', finishedAt: new Date() },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-
-  const esPartidoDeSerie = existingMatch.serieId &&
-    !existingMatch.serieId.includes('reduccion') &&
-    !existingMatch.serieId.includes('repechaje') &&
-    (existingMatch.phase?.type === 'clasificatorio' || existingMatch.phase?.type === 'segunda');
-
-  const roundBase = Math.floor(existingMatch.round / 10) * 10 + 1;
-  const posEnSerie = existingMatch.round - roundBase;
-  const esUltimoPartidoSerie = posEnSerie === 4;
-
-  if (!esPartidoDeSerie || esUltimoPartidoSerie) {
-    if (updatedMatch.tableId) {
-      const freedTable = await prisma.table.update({
-        where: { id: updatedMatch.tableId },
-        data: { status: 'libre' },
-        include: { venue: true },
-      });
-      emitTableUpdate(io, freedTable);
-    }
-  }
-
-  emitMatchUpdate(io, updatedMatch);
-
-  const phaseType = existingMatch.phase?.type;
-
-  // Generar siguiente partido de serie
-  if (phaseType === 'clasificatorio' || phaseType === 'segunda') {
-    await generarSiguientePartidoSerie(matchId);
-  }
-
-  // Si terminó P5 de clasificatorio → rellenar cruces de reducción
-  if (phaseType === 'clasificatorio' && existingMatch.serieId?.startsWith('clasif-serie-') && posEnSerie === 4) {
-    await rellenarCrucesReduccion(existingMatch.phaseId);
-  }
-
-  // Si terminó P5 de Segunda → rellenar slots de Primera
-  if (phaseType === 'segunda' && existingMatch.serieId?.startsWith('segunda-serie-') && posEnSerie === 4) {
-    await rellenarSlotsPrimera(existingMatch.phaseId);
-  }
-
-  // Rellenar repechaje si terminó cruce 16 o 17
-  if (phaseType === 'clasificatorio' &&
-    (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')) {
-    await rellenarRepechaje(matchId);
-  }
-
-  // Rellenar slot de Segunda si terminó cruce de reducción 1-15
-  if (phaseType === 'clasificatorio') {
-    const mCruce = existingMatch.serieId?.match(/^clasif-reduccion-(\d+)$/);
-    if (mCruce && parseInt(mCruce[1]) <= 15) {
-      await rellenarSlotSegunda(matchId);
-    }
-  }
-
-  // Rellenar slot #16 de Segunda si terminó el repechaje
-  if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId) {
-    await rellenarSlotSegundaConRepechaje(winnerId);
-  }
-
-  res.json({ match: updatedMatch, result });
-});
-
-router.post('/auto-assign', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { matchId, venueId } = req.body;
-  const freeTable = await prisma.table.findFirst({
-    where: { status: 'libre', ...(venueId ? { venueId: Number(venueId) } : {}) },
-    orderBy: [{ venueId: 'asc' }, { number: 'asc' }],
-  });
-  if (!freeTable) return res.status(409).json({ error: 'No hay mesas libres disponibles' }) as any;
-
-  await prisma.table.update({ where: { id: freeTable.id }, data: { status: 'ocupada' } });
-  const match = await prisma.match.update({
-    where: { id: matchId },
-    data: { tableId: freeTable.id, status: 'asignado' },
-    include: {
-      playerA: { include: { category: true } }, playerB: { include: { category: true } },
-      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true, sets: { orderBy: { setNumber: 'asc' } },
-    },
-  });
-  emitMatchUpdate(io, match);
-  emitTableUpdate(io, { ...freeTable, status: 'ocupada' });
-  res.json(match);
-});
-
-export default router;
