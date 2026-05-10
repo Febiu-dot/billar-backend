@@ -6,9 +6,6 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 
 const router = Router();
 
-// -------------------------------------------------------
-// Interfaces
-// -------------------------------------------------------
 interface PlayerStats {
   wins: number;
   sets: number;
@@ -25,7 +22,81 @@ interface ClasificadoStats {
 }
 
 // -------------------------------------------------------
-// HELPER: rellenar slots de Master con ganadores de Primera
+// HELPER: rellenar UN slot de Master cuando termina un partido de Primera
+// -------------------------------------------------------
+async function rellenarSlotMasterConGanadorPrimera(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { result: true }
+    });
+
+    if (!match || !match.result?.winnerId) return;
+
+    const todosPrimera = await prisma.match.findMany({
+      where: { phaseId: match.phaseId },
+      orderBy: { round: 'asc' }
+    });
+
+    const pos = todosPrimera.findIndex(m => m.id === matchId) + 1;
+    if (pos === 0) return;
+
+    const slotLabel = `Clasificado Primera #${pos}`;
+    const winnerId = match.result.winnerId;
+
+    const masterMatch = await prisma.match.findFirst({
+      where: {
+        OR: [
+          { slotA: slotLabel },
+          { slotB: slotLabel }
+        ]
+      }
+    });
+
+    if (!masterMatch) {
+      console.log(`No se encontró slot ${slotLabel} en Master`);
+      return;
+    }
+
+    const esSlotA = masterMatch.slotA === slotLabel;
+
+    await prisma.match.update({
+      where: { id: masterMatch.id },
+      data: esSlotA
+        ? { playerAId: winnerId, slotA: null }
+        : { playerBId: winnerId, slotB: null }
+    });
+
+    const actualizado = await prisma.match.findUnique({ where: { id: masterMatch.id } });
+
+    if (actualizado?.playerAId && actualizado?.playerBId) {
+      await prisma.match.update({
+        where: { id: masterMatch.id },
+        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
+      });
+
+      const full = await prisma.match.findUnique({
+        where: { id: masterMatch.id },
+        include: {
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
+          table: { include: { venue: true } },
+          phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          sets: { orderBy: { setNumber: 'asc' } },
+        }
+      });
+      if (full) emitMatchUpdate(io, full);
+    }
+
+    console.log(`✅ Slot ${slotLabel} rellenado con jugador ${winnerId}`);
+  } catch (error) {
+    console.error('Error rellenando slot de Master:', error);
+  }
+}
+
+// -------------------------------------------------------
+// HELPER: rellenar TODOS los slots de Master (trigger manual)
 // -------------------------------------------------------
 async function rellenarSlotsMaster(phaseId: number) {
   try {
@@ -35,22 +106,11 @@ async function rellenarSlotsMaster(phaseId: number) {
       orderBy: { round: 'asc' }
     });
 
-    const sinResultado = matchesPrimera.filter(m => !m.result?.winnerId);
-    if (sinResultado.length > 0) {
-      console.log(`Faltan ${sinResultado.length} resultados en Primera`);
-      return;
-    }
-
-    if (matchesPrimera.length === 0) {
-      console.log('No hay partidos de Primera');
-      return;
-    }
-
-    console.log('✅ Todos los partidos de Primera terminaron, rellenando Master...');
+    if (matchesPrimera.length === 0) return;
 
     let pos = 1;
     for (const match of matchesPrimera) {
-      if (!match.result?.winnerId) continue;
+      if (!match.result?.winnerId) { pos++; continue; }
 
       const slotLabel = `Clasificado Primera #${pos}`;
       const winnerId = match.result.winnerId;
@@ -64,11 +124,7 @@ async function rellenarSlotsMaster(phaseId: number) {
         }
       });
 
-      if (!masterMatch) {
-        console.log(`No se encontró slot ${slotLabel} en Master`);
-        pos++;
-        continue;
-      }
+      if (!masterMatch) { pos++; continue; }
 
       const esSlotA = masterMatch.slotA === slotLabel;
 
@@ -101,7 +157,7 @@ async function rellenarSlotsMaster(phaseId: number) {
         if (full) emitMatchUpdate(io, full);
       }
 
-      console.log(`✅ Slot ${slotLabel} rellenado con jugador ${winnerId}`);
+      console.log(`✅ Slot ${slotLabel} rellenado`);
       pos++;
     }
 
@@ -213,8 +269,6 @@ async function rellenarSlotsPrimera(phaseId: number) {
       return a.tantosEnContra - b.tantosEnContra;
     });
 
-    console.log(`Ranking Segunda: ${clasificados.length} clasificados`);
-
     for (let i = 0; i < clasificados.length; i++) {
       const slotLabel = `Clasificado Segunda #${i + 1}`;
       const winnerId = clasificados[i].playerId;
@@ -228,10 +282,7 @@ async function rellenarSlotsPrimera(phaseId: number) {
         }
       });
 
-      if (!primeraMatch) {
-        console.log(`No se encontró slot ${slotLabel} en Primera`);
-        continue;
-      }
+      if (!primeraMatch) continue;
 
       const esSlotA = primeraMatch.slotA === slotLabel;
 
@@ -263,8 +314,6 @@ async function rellenarSlotsPrimera(phaseId: number) {
         });
         if (full) emitMatchUpdate(io, full);
       }
-
-      console.log(`✅ Slot ${slotLabel} rellenado con jugador ${winnerId}`);
     }
 
     console.log('✅ Slots de Primera rellenados');
@@ -304,10 +353,7 @@ async function rellenarSlotSegunda(matchId: number) {
       }
     });
 
-    if (!segundaMatch) {
-      console.log(`No se encontró partido de Segunda con slot ${slotLabel}`);
-      return;
-    }
+    if (!segundaMatch) return;
 
     const esSlotA = segundaMatch.slotA === slotLabel;
 
@@ -339,8 +385,6 @@ async function rellenarSlotSegunda(matchId: number) {
       });
       if (full) emitMatchUpdate(io, full);
     }
-
-    console.log(`✅ Slot ${slotLabel} rellenado en Segunda con jugador ${winnerId}`);
   } catch (error) {
     console.error('Error rellenando slot de Segunda:', error);
   }
@@ -362,10 +406,7 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number) {
       }
     });
 
-    if (!segundaMatch) {
-      console.log(`No se encontró partido de Segunda con slot ${slotLabel}`);
-      return;
-    }
+    if (!segundaMatch) return;
 
     const esSlotA = segundaMatch.slotA === slotLabel;
 
@@ -397,8 +438,6 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number) {
       });
       if (full) emitMatchUpdate(io, full);
     }
-
-    console.log(`✅ Slot ${slotLabel} rellenado con ganador del repechaje ${winnerId}`);
   } catch (error) {
     console.error('Error rellenando slot de Segunda con repechaje:', error);
   }
@@ -445,8 +484,6 @@ async function rellenarRepechaje(matchId: number) {
         data: { status: repechajeActualizado.tableId ? 'asignado' : 'pendiente' }
       });
 
-      console.log('✅ Repechaje listo con ambos jugadores');
-
       const updatedRepechaje = await prisma.match.findUnique({
         where: { id: repechaje.id },
         include: {
@@ -460,8 +497,6 @@ async function rellenarRepechaje(matchId: number) {
       });
       if (updatedRepechaje) emitMatchUpdate(io, updatedRepechaje);
     }
-
-    console.log(`✅ Repechaje actualizado con ganador de ${match.serieId}`);
   } catch (error) {
     console.error('Error rellenando repechaje:', error);
   }
@@ -499,8 +534,6 @@ async function rellenarCrucesReduccion(phaseId: number) {
         return;
       }
     }
-
-    console.log('✅ Todas las series terminaron, calculando ranking...');
 
     const clasificados: ClasificadoStats[] = [];
 
@@ -551,23 +584,11 @@ async function rellenarCrucesReduccion(phaseId: number) {
 
       if (jugadoresOrdenados[0]) {
         const s = statsJugador[jugadoresOrdenados[0]];
-        clasificados.push({
-          playerId: jugadoresOrdenados[0],
-          puntos: 8,
-          setsGanados: s.sets,
-          tantosAFavor: s.ptsFor,
-          tantosEnContra: s.ptsAgainst,
-        });
+        clasificados.push({ playerId: jugadoresOrdenados[0], puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
       }
       if (jugadoresOrdenados[1]) {
         const s = statsJugador[jugadoresOrdenados[1]];
-        clasificados.push({
-          playerId: jugadoresOrdenados[1],
-          puntos: 6,
-          setsGanados: s.sets,
-          tantosAFavor: s.ptsFor,
-          tantosEnContra: s.ptsAgainst,
-        });
+        clasificados.push({ playerId: jugadoresOrdenados[1], puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
       }
     }
 
@@ -578,13 +599,8 @@ async function rellenarCrucesReduccion(phaseId: number) {
       return a.tantosEnContra - b.tantosEnContra;
     });
 
-    console.log(`Ranking calculado: ${clasificados.length} clasificados`);
-
     const crucesReduccion = await prisma.match.findMany({
-      where: {
-        phaseId,
-        serieId: { startsWith: 'clasif-reduccion-' }
-      },
+      where: { phaseId, serieId: { startsWith: 'clasif-reduccion-' } },
       orderBy: { round: 'asc' }
     });
 
@@ -593,35 +609,21 @@ async function rellenarCrucesReduccion(phaseId: number) {
       const cruce = crucesReduccion[i];
       const jugA = clasificados[i];
       const jugB = clasificados[N - 1 - i];
-
       if (jugA && jugB) {
         await prisma.match.update({
           where: { id: cruce.id },
-          data: {
-            playerAId: jugA.playerId,
-            playerBId: jugB.playerId,
-            slotA: null,
-            slotB: null,
-            status: cruce.tableId ? 'asignado' : 'pendiente',
-          }
+          data: { playerAId: jugA.playerId, playerBId: jugB.playerId, slotA: null, slotB: null, status: cruce.tableId ? 'asignado' : 'pendiente' }
         });
-        console.log(`✅ Cruce ${i + 1}: #${i + 1} vs #${N - i}`);
       }
     }
 
-    const repechaje = await prisma.match.findFirst({
-      where: { phaseId, serieId: 'clasif-repechaje' }
-    });
-
+    const repechaje = await prisma.match.findFirst({ where: { phaseId, serieId: 'clasif-repechaje' } });
     if (repechaje && crucesReduccion.length >= 2) {
       const ultimoCruce = crucesReduccion[crucesReduccion.length - 1];
       const penultimoCruce = crucesReduccion[crucesReduccion.length - 2];
       await prisma.match.update({
         where: { id: repechaje.id },
-        data: {
-          slotA: `Ganador Cruce ${penultimoCruce.round}`,
-          slotB: `Ganador Cruce ${ultimoCruce.round}`,
-        }
+        data: { slotA: `Ganador Cruce ${penultimoCruce.round}`, slotB: `Ganador Cruce ${ultimoCruce.round}` }
       });
     }
 
@@ -670,23 +672,13 @@ async function generarSiguientePartidoSerie(matchId: number) {
       if (p1Done && p2Done && !p3) {
         const newP3 = await prisma.match.create({
           data: {
-            phaseId,
-            playerAId: p1.result!.winnerId!,
-            playerBId: p2.result!.winnerId!,
-            round: roundBase + 2,
-            status: 'asignado',
-            serieId: match.serieId,
-            tableId,
-            ruleSetId,
+            phaseId, playerAId: p1.result!.winnerId!, playerBId: p2.result!.winnerId!,
+            round: roundBase + 2, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
           },
           include: {
-            playerA: { include: { category: true } },
-            playerB: { include: { category: true } },
-            table: { include: { venue: true } },
-            phase: { include: { circuit: { include: { tournament: true } } } },
-            result: true,
-            ruleSet: true,
-            sets: { orderBy: { setNumber: 'asc' } },
+            playerA: { include: { category: true } }, playerB: { include: { category: true } },
+            table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+            result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
           }
         });
 
@@ -696,30 +688,18 @@ async function generarSiguientePartidoSerie(matchId: number) {
         if (p1LoserId && p2LoserId) {
           const newP4 = await prisma.match.create({
             data: {
-              phaseId,
-              playerAId: p1LoserId,
-              playerBId: p2LoserId,
-              round: roundBase + 3,
-              status: 'asignado',
-              serieId: match.serieId,
-              tableId,
-              ruleSetId,
+              phaseId, playerAId: p1LoserId, playerBId: p2LoserId,
+              round: roundBase + 3, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
             },
             include: {
-              playerA: { include: { category: true } },
-              playerB: { include: { category: true } },
-              table: { include: { venue: true } },
-              phase: { include: { circuit: { include: { tournament: true } } } },
-              result: true,
-              ruleSet: true,
-              sets: { orderBy: { setNumber: 'asc' } },
+              playerA: { include: { category: true } }, playerB: { include: { category: true } },
+              table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+              result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
             }
           });
           emitMatchUpdate(io, newP4);
         }
-
         emitMatchUpdate(io, newP3);
-        console.log(`✅ Serie ${match.serieId}: P3 y P4 generados`);
       }
     }
 
@@ -734,27 +714,16 @@ async function generarSiguientePartidoSerie(matchId: number) {
         if (p3LoserId && p4!.result!.winnerId) {
           const newP5 = await prisma.match.create({
             data: {
-              phaseId,
-              playerAId: p3LoserId,
-              playerBId: p4!.result!.winnerId!,
-              round: roundBase + 4,
-              status: 'asignado',
-              serieId: match.serieId,
-              tableId,
-              ruleSetId,
+              phaseId, playerAId: p3LoserId, playerBId: p4!.result!.winnerId!,
+              round: roundBase + 4, status: 'asignado', serieId: match.serieId, tableId, ruleSetId,
             },
             include: {
-              playerA: { include: { category: true } },
-              playerB: { include: { category: true } },
-              table: { include: { venue: true } },
-              phase: { include: { circuit: { include: { tournament: true } } } },
-              result: true,
-              ruleSet: true,
-              sets: { orderBy: { setNumber: 'asc' } },
+              playerA: { include: { category: true } }, playerB: { include: { category: true } },
+              table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+              result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
             }
           });
           emitMatchUpdate(io, newP5);
-          console.log(`✅ Serie ${match.serieId}: P5 generado`);
         }
       }
     }
@@ -799,7 +768,6 @@ router.post('/trigger-primera/:phaseId', authenticate, requireRole('admin'), asy
 
 router.get('/', async (req, res: Response) => {
   const { phaseId, status, tableId, venueId } = req.query;
-
   const matches = await prisma.match.findMany({
     where: {
       ...(phaseId ? { phaseId: Number(phaseId) } : {}),
@@ -812,8 +780,7 @@ router.get('/', async (req, res: Response) => {
       playerB: { include: { category: true } },
       table: { include: { venue: true } },
       phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true,
-      ruleSet: true,
+      result: true, ruleSet: true,
       sets: { orderBy: { setNumber: 'asc' } },
     },
     orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
@@ -845,8 +812,7 @@ router.get('/:id', async (req, res: Response) => {
       playerB: { include: { category: true } },
       table: { include: { venue: true } },
       phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true,
-      ruleSet: true,
+      result: true, ruleSet: true,
       sets: { orderBy: { setNumber: 'asc' } },
     },
   });
@@ -875,12 +841,7 @@ router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: 
 router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { tableId } = req.body;
   const matchId = Number(req.params.id);
-
-  await prisma.table.update({
-    where: { id: tableId },
-    data: { status: 'ocupada' },
-  });
-
+  await prisma.table.update({ where: { id: tableId }, data: { status: 'ocupada' } });
   const match = await prisma.match.update({
     where: { id: matchId },
     data: { tableId, status: 'asignado' },
@@ -893,7 +854,6 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
       sets: { orderBy: { setNumber: 'asc' } },
     },
   });
-
   emitMatchUpdate(io, match);
   if (match.table) emitTableUpdate(io, match.table);
   res.json(match);
@@ -927,18 +887,13 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
   if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
 
   const winnerId = pointsA > pointsB ? existingMatch.playerAId : existingMatch.playerBId;
-
   await prisma.setResult.upsert({
     where: { id: (existingMatch.sets.find(s => s.setNumber === setNumber)?.id ?? 0) },
     create: { matchId, setNumber, pointsA, pointsB, winnerId },
     update: { pointsA, pointsB, winnerId },
   });
 
-  const allSets = await prisma.setResult.findMany({
-    where: { matchId },
-    orderBy: { setNumber: 'asc' },
-  });
-
+  const allSets = await prisma.setResult.findMany({ where: { matchId }, orderBy: { setNumber: 'asc' } });
   const setsA = allSets.filter(s => s.pointsA > s.pointsB).length;
   const setsB = allSets.filter(s => s.pointsB > s.pointsA).length;
   const totalPtsA = allSets.reduce((acc, s) => acc + s.pointsA, 0);
@@ -953,16 +908,11 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
   const updatedMatch = await prisma.match.findUnique({
     where: { id: matchId },
     include: {
-      playerA: { include: { category: true } },
-      playerB: { include: { category: true } },
-      table: { include: { venue: true } },
-      phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true,
-      ruleSet: true,
-      sets: { orderBy: { setNumber: 'asc' } },
+      playerA: { include: { category: true } }, playerB: { include: { category: true } },
+      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } },
     },
   });
-
   emitMatchUpdate(io, updatedMatch);
   res.json(updatedMatch);
 });
@@ -978,27 +928,19 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
 
   const ruleSet = existingMatch.ruleSet;
-  let finalSetsA = setsA;
-  let finalSetsB = setsB;
-  let finalPtsA = pointsA;
-  let finalPtsB = pointsB;
+  let finalSetsA = setsA, finalSetsB = setsB, finalPtsA = pointsA, finalPtsB = pointsB;
   let winnerId: number | null = null;
 
   if (isWO) {
     const absentId = woPlayerId;
-    const winnPId = absentId === existingMatch.playerAId ? existingMatch.playerBId : existingMatch.playerAId;
-    winnerId = winnPId;
+    winnerId = absentId === existingMatch.playerAId ? existingMatch.playerBId : existingMatch.playerAId;
     if (ruleSet) {
       if (absentId === existingMatch.playerAId) {
-        finalSetsA = ruleSet.woSetsLoser;
-        finalSetsB = ruleSet.woSetsWinner;
-        finalPtsA = ruleSet.woPtsLoser;
-        finalPtsB = ruleSet.woPtsWinner;
+        finalSetsA = ruleSet.woSetsLoser; finalSetsB = ruleSet.woSetsWinner;
+        finalPtsA = ruleSet.woPtsLoser; finalPtsB = ruleSet.woPtsWinner;
       } else {
-        finalSetsA = ruleSet.woSetsWinner;
-        finalSetsB = ruleSet.woSetsLoser;
-        finalPtsA = ruleSet.woPtsWinner;
-        finalPtsB = ruleSet.woPtsLoser;
+        finalSetsA = ruleSet.woSetsWinner; finalSetsB = ruleSet.woSetsLoser;
+        finalPtsA = ruleSet.woPtsWinner; finalPtsB = ruleSet.woPtsLoser;
       }
     }
   } else {
@@ -1009,37 +951,15 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const result = await prisma.matchResult.upsert({
     where: { matchId },
-    create: {
-      matchId,
-      setsA: finalSetsA,
-      setsB: finalSetsB,
-      pointsA: finalPtsA,
-      pointsB: finalPtsB,
-      winnerId,
-      isWO: !!isWO,
-      woPlayerId,
-      notes,
-    },
-    update: {
-      setsA: finalSetsA,
-      setsB: finalSetsB,
-      pointsA: finalPtsA,
-      pointsB: finalPtsB,
-      winnerId,
-      isWO: !!isWO,
-      woPlayerId,
-      notes,
-    },
+    create: { matchId, setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
+    update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
   });
 
   if (!isWO && sets && Array.isArray(sets) && sets.length > 0) {
     await prisma.setResult.deleteMany({ where: { matchId } });
     await prisma.setResult.createMany({
       data: sets.map((s: { setNumber: number; pointsA: number; pointsB: number }) => ({
-        matchId,
-        setNumber: s.setNumber,
-        pointsA: s.pointsA,
-        pointsB: s.pointsB,
+        matchId, setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB,
         winnerId: s.pointsA > s.pointsB ? existingMatch.playerAId : existingMatch.playerBId,
       })),
     });
@@ -1049,12 +969,9 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     where: { id: matchId },
     data: { status: isWO ? 'wo' : 'finalizado', finishedAt: new Date() },
     include: {
-      playerA: { include: { category: true } },
-      playerB: { include: { category: true } },
-      table: { include: { venue: true } },
-      phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true,
-      sets: { orderBy: { setNumber: 'asc' } },
+      playerA: { include: { category: true } }, playerB: { include: { category: true } },
+      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true, sets: { orderBy: { setNumber: 'asc' } },
     },
   });
 
@@ -1087,32 +1004,23 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     await generarSiguientePartidoSerie(matchId);
   }
 
-  if (
-    phaseType === 'clasificatorio' &&
-    existingMatch.serieId !== null &&
-    existingMatch.serieId.startsWith('clasif-serie-') &&
-    posEnSerie === 4
-  ) {
+  if (phaseType === 'clasificatorio' && existingMatch.serieId !== null &&
+    existingMatch.serieId.startsWith('clasif-serie-') && posEnSerie === 4) {
     await rellenarCrucesReduccion(existingMatch.phaseId);
   }
 
-  if (
-    phaseType === 'segunda' &&
-    existingMatch.serieId !== null &&
-    existingMatch.serieId.startsWith('segunda-serie-') &&
-    posEnSerie === 4
-  ) {
+  if (phaseType === 'segunda' && existingMatch.serieId !== null &&
+    existingMatch.serieId.startsWith('segunda-serie-') && posEnSerie === 4) {
     await rellenarSlotsPrimera(existingMatch.phaseId);
   }
 
+  // Cuando termina un partido de Primera → llenar slot correspondiente en Master
   if (phaseType === 'primera') {
-    await rellenarSlotsMaster(existingMatch.phaseId);
+    await rellenarSlotMasterConGanadorPrimera(matchId);
   }
 
-  if (
-    phaseType === 'clasificatorio' &&
-    (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')
-  ) {
+  if (phaseType === 'clasificatorio' &&
+    (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')) {
     await rellenarRepechaje(matchId);
   }
 
@@ -1123,11 +1031,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     }
   }
 
-  if (
-    phaseType === 'clasificatorio' &&
-    existingMatch.serieId === 'clasif-repechaje' &&
-    winnerId !== null
-  ) {
+  if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId !== null) {
     await rellenarSlotSegundaConRepechaje(winnerId);
   }
 
@@ -1136,32 +1040,22 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
 router.post('/auto-assign', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { matchId, venueId } = req.body;
-
   const freeTable = await prisma.table.findFirst({
-    where: {
-      status: 'libre',
-      ...(venueId ? { venueId: Number(venueId) } : {}),
-    },
+    where: { status: 'libre', ...(venueId ? { venueId: Number(venueId) } : {}) },
     orderBy: [{ venueId: 'asc' }, { number: 'asc' }],
   });
-
   if (!freeTable) return res.status(409).json({ error: 'No hay mesas libres disponibles' }) as any;
 
   await prisma.table.update({ where: { id: freeTable.id }, data: { status: 'ocupada' } });
-
   const match = await prisma.match.update({
     where: { id: matchId },
     data: { tableId: freeTable.id, status: 'asignado' },
     include: {
-      playerA: { include: { category: true } },
-      playerB: { include: { category: true } },
-      table: { include: { venue: true } },
-      phase: { include: { circuit: { include: { tournament: true } } } },
-      result: true,
-      sets: { orderBy: { setNumber: 'asc' } },
+      playerA: { include: { category: true } }, playerB: { include: { category: true } },
+      table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true, sets: { orderBy: { setNumber: 'asc' } },
     },
   });
-
   emitMatchUpdate(io, match);
   emitTableUpdate(io, { ...freeTable, status: 'ocupada' });
   res.json(match);
