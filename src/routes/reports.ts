@@ -69,4 +69,64 @@ router.post('/regenerar/serie/:phaseId/:serieId', authenticate, requireRole('adm
   }
 });
 
+router.post('/regenerar-todo', authenticate, requireRole('admin'), async (_req: AuthRequest, res: Response) => {
+  try {
+    let generados = 0;
+
+    // Series de clasificatorio
+    const seriesClasif = await prisma.match.findMany({
+      where: { phaseId: 30, serieId: { startsWith: 'clasif-serie-' }, status: 'finalizado' },
+      select: { serieId: true },
+      distinct: ['serieId'],
+    });
+    for (const { serieId } of seriesClasif) {
+      if (serieId) { await generarReporteSerie(30, serieId); generados++; }
+    }
+
+    // Series de segunda
+    const seriesSegunda = await prisma.match.findMany({
+      where: { phaseId: 31, serieId: { startsWith: 'segunda-serie-' }, status: 'finalizado' },
+      select: { serieId: true },
+      distinct: ['serieId'],
+    });
+    for (const { serieId } of seriesSegunda) {
+      if (serieId) { await generarReporteSerie(31, serieId); generados++; }
+    }
+
+    // Cruces de reducción
+    const crucesReduccion = await prisma.match.findMany({
+      where: { phaseId: 30, serieId: { contains: 'reduccion' }, status: 'finalizado' },
+    });
+    for (const match of crucesReduccion) {
+      await generarReporteCruce(match.id); generados++;
+    }
+
+    // Repechaje
+    const repechaje = await prisma.match.findFirst({
+      where: { phaseId: 30, serieId: 'clasif-repechaje', status: 'finalizado' },
+    });
+    if (repechaje) { await generarReporteCruce(repechaje.id); generados++; }
+
+    // Primera
+    const matchesPrimera = await prisma.match.findMany({
+      where: { phaseId: 32, status: 'finalizado' },
+    });
+    for (const match of matchesPrimera) {
+      await generarReporteCruce(match.id); generados++;
+    }
+
+    // Master
+    const matchesMaster = await prisma.match.findMany({
+      where: { phaseId: 33, status: 'finalizado' },
+    });
+    for (const match of matchesMaster) {
+      await generarReporteCruce(match.id); generados++;
+    }
+
+    res.json({ message: `${generados} reportes generados correctamente` });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
