@@ -237,7 +237,6 @@ async function rellenarSlotsMaster(phaseId: number) {
         if (full) emitMatchUpdate(io, full);
       }
 
-      console.log(`✅ Slot ${slotLabel} rellenado`);
       pos++;
     }
 
@@ -277,8 +276,6 @@ async function rellenarSlotsPrimera(phaseId: number) {
         return;
       }
     }
-
-    console.log('✅ Todas las series de Segunda terminaron, calculando ranking...');
 
     const clasificados: ClasificadoStats[] = [];
 
@@ -322,23 +319,11 @@ async function rellenarSlotsPrimera(phaseId: number) {
 
       if (p3?.result?.winnerId) {
         const s = statsJugador[p3.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-        clasificados.push({
-          playerId: p3.result.winnerId,
-          puntos: 8,
-          setsGanados: s.sets,
-          tantosAFavor: s.ptsFor,
-          tantosEnContra: s.ptsAgainst,
-        });
+        clasificados.push({ playerId: p3.result.winnerId, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
       }
       if (p5?.result?.winnerId) {
         const s = statsJugador[p5.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-        clasificados.push({
-          playerId: p5.result.winnerId,
-          puntos: 6,
-          setsGanados: s.sets,
-          tantosAFavor: s.ptsFor,
-          tantosEnContra: s.ptsAgainst,
-        });
+        clasificados.push({ playerId: p5.result.winnerId, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst });
       }
     }
 
@@ -354,12 +339,7 @@ async function rellenarSlotsPrimera(phaseId: number) {
       const winnerId = clasificados[i].playerId;
 
       const primeraMatch = await prisma.match.findFirst({
-        where: {
-          OR: [
-            { slotA: slotLabel },
-            { slotB: slotLabel }
-          ]
-        }
+        where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
       });
 
       if (!primeraMatch) continue;
@@ -425,12 +405,7 @@ async function rellenarSlotSegunda(matchId: number) {
     const winnerId = match.result.winnerId;
 
     const segundaMatch = await prisma.match.findFirst({
-      where: {
-        OR: [
-          { slotA: slotLabel },
-          { slotB: slotLabel }
-        ]
-      }
+      where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
     });
 
     if (!segundaMatch) return;
@@ -478,12 +453,7 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number) {
     const slotLabel = 'Clasificado Clasif. #16';
 
     const segundaMatch = await prisma.match.findFirst({
-      where: {
-        OR: [
-          { slotA: slotLabel },
-          { slotB: slotLabel }
-        ]
-      }
+      where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] }
     });
 
     if (!segundaMatch) return;
@@ -546,15 +516,11 @@ async function rellenarRepechaje(matchId: number) {
     if (!repechaje) return;
 
     const winnerId = match.result.winnerId;
-
     const dataUpdate = esCruce16
       ? { playerAId: winnerId, slotA: null as null }
       : { playerBId: winnerId, slotB: null as null };
 
-    await prisma.match.update({
-      where: { id: repechaje.id },
-      data: dataUpdate
-    });
+    await prisma.match.update({ where: { id: repechaje.id }, data: dataUpdate });
 
     const repechajeActualizado = await prisma.match.findUnique({ where: { id: repechaje.id } });
 
@@ -588,10 +554,7 @@ async function rellenarRepechaje(matchId: number) {
 async function rellenarCrucesReduccion(phaseId: number) {
   try {
     const todasLasSeries = await prisma.match.findMany({
-      where: {
-        phaseId,
-        serieId: { startsWith: 'clasif-serie-' },
-      },
+      where: { phaseId, serieId: { startsWith: 'clasif-serie-' } },
       include: { result: true, sets: true },
       orderBy: { round: 'asc' }
     });
@@ -610,7 +573,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
         return p.round === roundBase + 4;
       });
       if (!p5 || !p5.result?.winnerId) {
-        console.log(`Serie ${serieId} aún no tiene P5 con resultado`);
+        console.log(`Serie ${serieId} aún no tiene P5`);
         return;
       }
     }
@@ -654,8 +617,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
       const jugadoresOrdenados = Array.from(jugadoresIds)
         .filter(id => statsJugador[id])
         .sort((a, b) => {
-          const sa = statsJugador[a];
-          const sb = statsJugador[b];
+          const sa = statsJugador[a]; const sb = statsJugador[b];
           if (sb.wins !== sa.wins) return sb.wins - sa.wins;
           if (sb.sets !== sa.sets) return sb.sets - sa.sets;
           if (sb.ptsFor !== sa.ptsFor) return sb.ptsFor - sa.ptsFor;
@@ -741,7 +703,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
     const p2 = partidos.find(p => p.round === roundBase + 1);
     const p3 = partidos.find(p => p.round === roundBase + 2);
     const p4 = partidos.find(p => p.round === roundBase + 3);
-
     const tableId = p1?.tableId ?? null;
     const ruleSetId = p1?.ruleSetId ?? null;
 
@@ -790,7 +751,6 @@ async function generarSiguientePartidoSerie(matchId: number) {
 
       if (p3Done && p4Done && !p5existe) {
         const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
-
         if (p3LoserId && p4!.result!.winnerId) {
           const newP5 = await prisma.match.create({
             data: {
@@ -841,6 +801,31 @@ router.post('/trigger-primera/:phaseId', authenticate, requireRole('admin'), asy
     const phaseId = parseInt(req.params.phaseId);
     await rellenarSlotsMaster(phaseId);
     res.json({ message: 'Slots de Master rellenados correctamente' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/trigger-master/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const phaseId = parseInt(req.params.phaseId);
+    const crucesTerminados = await prisma.match.findMany({
+      where: {
+        phaseId,
+        round: { gte: 1, lte: 16 },
+        status: 'finalizado',
+      },
+      include: { result: true },
+      orderBy: { round: 'asc' },
+    });
+
+    for (const match of crucesTerminados) {
+      if (match.result?.winnerId) {
+        await avanzarBracketMaster(match.id);
+      }
+    }
+
+    res.json({ message: `Octavos rellenados con ${crucesTerminados.length} ganadores` });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
