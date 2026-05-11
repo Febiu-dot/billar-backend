@@ -153,16 +153,16 @@ model CircuitPlayer {
 }
 
 model Phase {
-  id        Int        @id @default(autoincrement())
+  id        Int         @id @default(autoincrement())
   name      String
   type      PhaseType
   circuitId Int
-  circuit   Circuit    @relation(fields: [circuitId], references: [id])
+  circuit   Circuit     @relation(fields: [circuitId], references: [id])
   order     Int
   matches   Match[]
   config    FaseConfig?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 }
 
 model FaseConfig {
@@ -259,4 +259,18 @@ model RankingEntry {
   updatedAt     DateTime @updatedAt
 
   @@unique([playerId, circuitId])
+}
+
+model Report {
+  id        Int      @id @default(autoincrement())
+  tipo      String
+  phaseId   Int
+  serieId   String?
+  matchId   Int?
+  titulo    String
+  contenido Json
+  texto     String   @db.Text
+  publicado Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
