@@ -22,6 +22,86 @@ interface ClasificadoStats {
 }
 
 // -------------------------------------------------------
+// HELPER: avanzar bracket Master (Octavos, Cuartos, Semis, Final)
+// -------------------------------------------------------
+async function avanzarBracketMaster(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { result: true }
+    });
+
+    if (!match || !match.result?.winnerId) return;
+
+    const round = match.round;
+    const winnerId = match.result.winnerId;
+    let slotLabel: string | null = null;
+
+    if (round >= 1 && round <= 16) {
+      slotLabel = `Gan. Cruce Master ${round}`;
+    } else if (round >= 17 && round <= 24) {
+      slotLabel = `Gan. Octavos ${round}`;
+    } else if (round >= 25 && round <= 28) {
+      slotLabel = `Gan. Cuartos ${round}`;
+    } else if (round >= 29 && round <= 30) {
+      slotLabel = `Gan. Semifinal ${round}`;
+    }
+
+    if (!slotLabel) return;
+
+    const nextMatch = await prisma.match.findFirst({
+      where: {
+        phaseId: match.phaseId,
+        OR: [
+          { slotA: slotLabel },
+          { slotB: slotLabel }
+        ]
+      }
+    });
+
+    if (!nextMatch) {
+      console.log(`No se encontró partido con slot ${slotLabel}`);
+      return;
+    }
+
+    const esSlotA = nextMatch.slotA === slotLabel;
+
+    await prisma.match.update({
+      where: { id: nextMatch.id },
+      data: esSlotA
+        ? { playerAId: winnerId, slotA: null }
+        : { playerBId: winnerId, slotB: null }
+    });
+
+    const actualizado = await prisma.match.findUnique({ where: { id: nextMatch.id } });
+
+    if (actualizado?.playerAId && actualizado?.playerBId) {
+      await prisma.match.update({
+        where: { id: nextMatch.id },
+        data: { status: actualizado.tableId ? 'asignado' : 'pendiente' }
+      });
+
+      const full = await prisma.match.findUnique({
+        where: { id: nextMatch.id },
+        include: {
+          playerA: { include: { category: true } },
+          playerB: { include: { category: true } },
+          table: { include: { venue: true } },
+          phase: { include: { circuit: { include: { tournament: true } } } },
+          result: true,
+          sets: { orderBy: { setNumber: 'asc' } },
+        }
+      });
+      if (full) emitMatchUpdate(io, full);
+    }
+
+    console.log(`✅ Bracket Master avanzado: slot ${slotLabel} rellenado`);
+  } catch (error) {
+    console.error('Error avanzando bracket Master:', error);
+  }
+}
+
+// -------------------------------------------------------
 // HELPER: rellenar UN slot de Master cuando termina un partido de Primera
 // -------------------------------------------------------
 async function rellenarSlotMasterConGanadorPrimera(matchId: number) {
@@ -1014,9 +1094,12 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     await rellenarSlotsPrimera(existingMatch.phaseId);
   }
 
-  // Cuando termina un partido de Primera → llenar slot correspondiente en Master
   if (phaseType === 'primera') {
     await rellenarSlotMasterConGanadorPrimera(matchId);
+  }
+
+  if (phaseType === 'master') {
+    await avanzarBracketMaster(matchId);
   }
 
   if (phaseType === 'clasificatorio' &&
