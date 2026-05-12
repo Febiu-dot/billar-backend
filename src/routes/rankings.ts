@@ -43,13 +43,11 @@ router.get('/circuit/:circuitId', async (req, res: Response) => {
 });
 
 // -------------------------------------------------------
-// GET /api/rankings/torneo — ranking por fases del torneo
+// GET /api/rankings/torneo
 // -------------------------------------------------------
 router.get('/torneo', async (_req, res: Response) => {
   try {
     const FASES = { clasificatorio: 30, segunda: 31, primera: 32, master: 33 };
-
-    // Estados de publicación guardados en FaseConfig
     const configs = await prisma.faseConfig.findMany({
       where: { phaseId: { in: Object.values(FASES) } }
     });
@@ -58,7 +56,6 @@ router.get('/torneo', async (_req, res: Response) => {
       return (config?.configuracion as any)?.rankingPublicado ?? false;
     };
 
-    // ---- CLASIFICATORIO: ganadores de cruces 1-15 + repechaje ----
     const crucesClasif = await prisma.match.findMany({
       where: {
         phaseId: FASES.clasificatorio,
@@ -86,7 +83,6 @@ router.get('/torneo', async (_req, res: Response) => {
       clasificadosClasif.push({ posicion: 16, jugador, fuente: 'Repechaje' });
     }
 
-    // ---- SEGUNDA: 1° y 2° de cada serie ----
     const matchesSegunda = await prisma.match.findMany({
       where: { phaseId: FASES.segunda },
       include: { result: true, playerA: true, playerB: true },
@@ -113,7 +109,6 @@ router.get('/torneo', async (_req, res: Response) => {
       const roundBase = Math.min(...partidos.map(p => p.round));
       const p3 = partidos.find(p => p.round === roundBase + 2);
       const p5 = partidos.find(p => p.round === roundBase + 4);
-
       if (p3?.result?.winnerId) {
         const jugador = p3.playerA?.id === p3.result.winnerId ? p3.playerA : p3.playerB;
         clasificadosSegunda.push({ posicion: posSegunda++, jugador, fuente: `${serieId} — 1°` });
@@ -124,7 +119,6 @@ router.get('/torneo', async (_req, res: Response) => {
       }
     }
 
-    // ---- PRIMERA: ganadores de cruces ----
     const matchesPrimera = await prisma.match.findMany({
       where: { phaseId: FASES.primera },
       include: { result: true, playerA: true, playerB: true },
@@ -140,7 +134,6 @@ router.get('/torneo', async (_req, res: Response) => {
       }
     }
 
-    // ---- MASTER: posiciones finales ----
     const matchesMaster = await prisma.match.findMany({
       where: { phaseId: FASES.master },
       include: { result: true, playerA: true, playerB: true },
@@ -148,7 +141,7 @@ router.get('/torneo', async (_req, res: Response) => {
     });
 
     const clasificadosMaster: any[] = [];
-    const finalMaster = matchesMaster[0]; // partido con round más alto = final
+    const finalMaster = matchesMaster[0];
     if (finalMaster?.result?.winnerId) {
       const campeon = finalMaster.playerA?.id === finalMaster.result.winnerId ? finalMaster.playerA : finalMaster.playerB;
       const subcampeon = finalMaster.playerA?.id === finalMaster.result.winnerId ? finalMaster.playerB : finalMaster.playerA;
@@ -162,7 +155,6 @@ router.get('/torneo', async (_req, res: Response) => {
       primera: { publicado: getPublicado(FASES.primera), clasificados: clasificadosPrimera },
       master: { publicado: getPublicado(FASES.master), clasificados: clasificadosMaster },
     });
-
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -175,17 +167,205 @@ router.put('/torneo/:phaseId/publicar', authenticate, requireRole('admin'), asyn
   try {
     const phaseId = parseInt(req.params.phaseId);
     const { publicado } = req.body;
-
     const config = await prisma.faseConfig.findUnique({ where: { phaseId } });
     const configuracionActual = (config?.configuracion as any) ?? {};
-
     await prisma.faseConfig.upsert({
       where: { phaseId },
       create: { phaseId, duracionSerie: 45, configuracion: { ...configuracionActual, rankingPublicado: publicado } },
       update: { configuracion: { ...configuracionActual, rankingPublicado: publicado }, updatedAt: new Date() }
     });
-
     res.json({ phaseId, publicado });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// -------------------------------------------------------
+// GET /api/rankings/final — ranking final del circuito con puntos completos
+// -------------------------------------------------------
+router.get('/final', async (_req, res: Response) => {
+  try {
+    const FASES = { clasificatorio: 30, segunda: 31, primera: 32, master: 33 };
+
+    // Compensaciones por categoría
+    const COMP: Record<string, { puntos: number; sets: number; tantos: number }> = {
+      tercera: { puntos: 0, sets: 0, tantos: 0 },
+      segunda: { puntos: 8, sets: 9, tantos: 540 },
+      primera: { puntos: 16, sets: 18, tantos: 1080 },
+      master: { puntos: 21, sets: 23, tantos: 1380 },
+    };
+
+    // Jugadores activos excepto LIBRE
+    const players = await prisma.player.findMany({
+      where: { active: true, NOT: { dni: 'FEBIU000' } },
+      include: { category: true },
+    });
+
+    // Todos los partidos finalizados
+    const allMatches = await prisma.match.findMany({
+      where: {
+        phaseId: { in: [FASES.clasificatorio, FASES.segunda, FASES.primera, FASES.master] },
+        status: { in: ['finalizado', 'wo'] },
+      },
+      include: {
+        result: true,
+        sets: { orderBy: { setNumber: 'asc' } },
+        phase: true,
+      }
+    });
+
+    interface PlayerStats {
+      puntos: number;
+      setsGanados: number;
+      setsJugados: number;
+      tantos: number;
+    }
+    const stats = new Map<number, PlayerStats>();
+
+    // Inicializar con compensaciones
+    for (const player of players) {
+      const catName = player.category.name.toLowerCase();
+      const comp = COMP[catName] ?? { puntos: 0, sets: 0, tantos: 0 };
+      stats.set(player.id, {
+        puntos: comp.puntos,
+        setsGanados: comp.sets,
+        setsJugados: comp.sets,
+        tantos: comp.tantos,
+      });
+    }
+
+    // Helper: sumar sets y tantos de un partido
+    const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (!s || !match.result) return;
+
+      if (match.sets && match.sets.length > 0) {
+        let setsWon = 0;
+        let tantos = 0;
+        for (const set of match.sets) {
+          const ptsFor = isPlayerA ? set.pointsA : set.pointsB;
+          const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
+          tantos += ptsFor;
+          if (ptsFor > ptsAgainst) setsWon++;
+        }
+        s.setsGanados += setsWon;
+        s.setsJugados += match.sets.length;
+        s.tantos += tantos;
+      } else {
+        const setsFor = isPlayerA ? match.result.setsA : match.result.setsB;
+        const setsAgainst = isPlayerA ? match.result.setsB : match.result.setsA;
+        const tantosFor = isPlayerA ? match.result.pointsA : match.result.pointsB;
+        s.setsGanados += setsFor;
+        s.setsJugados += setsFor + setsAgainst;
+        s.tantos += tantosFor;
+      }
+    };
+
+    // Helper: sumar puntos
+    const addPts = (playerId: number | null | undefined, pts: number) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (s) s.puntos += pts;
+    };
+
+    // Series (clasificatorio y segunda)
+    const serieMatches: Record<string, any[]> = {};
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
+      if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
+      serieMatches[match.serieId].push(match);
+    }
+
+    for (const matches of Object.values(serieMatches)) {
+      const roundBase = Math.min(...matches.map((m: any) => m.round));
+      const p3 = matches.find((m: any) => m.round === roundBase + 2);
+      const p4 = matches.find((m: any) => m.round === roundBase + 3);
+      const p5 = matches.find((m: any) => m.round === roundBase + 4);
+
+      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8); // 1°
+      if (p4?.result) {
+        const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId;
+        addPts(p4LoserId, 2); // 4°
+      }
+      if (p5?.result?.winnerId) {
+        const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+        addPts(p5.result.winnerId, 6); // 2°
+        addPts(p5LoserId, 4); // 3°
+      }
+
+      for (const match of matches) {
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+    }
+
+    // Reducción y repechaje
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
+      if (!match.result?.winnerId) continue;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, 5);
+      addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // Primera
+    for (const match of allMatches) {
+      if (match.phase.type !== 'primera') continue;
+      if (!match.result?.winnerId) continue;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, 5);
+      addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // Master
+    for (const match of allMatches) {
+      if (match.phase.type !== 'master') continue;
+      if (!match.result?.winnerId) continue;
+      const isFinal = match.round === 31;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, isFinal ? 7 : 5);
+      addPts(loserId, isFinal ? 2 : 1);
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // Construir ranking
+    const ranking = players
+      .map(player => {
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 };
+        const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
+        return {
+          playerId: player.id,
+          firstName: player.firstName,
+          lastName: player.lastName,
+          club: player.club ?? '',
+          categoria: player.category.name,
+          puntos: s.puntos,
+          setsGanados: s.setsGanados,
+          tantos: s.tantos,
+          promedio,
+        };
+      })
+      .sort((a, b) => {
+        if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+        if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
+        if (b.tantos !== a.tantos) return b.tantos - a.tantos;
+        return b.promedio - a.promedio;
+      })
+      .map((player, index) => ({
+        ...player,
+        posicion: index + 1,
+        categoriaProxima: index < 8 ? 'master' : index < 32 ? 'primera' : index < 64 ? 'segunda' : 'tercera',
+      }));
+
+    res.json(ranking);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
