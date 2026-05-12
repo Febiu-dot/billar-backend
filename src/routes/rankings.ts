@@ -59,12 +59,7 @@ router.get('/torneo', async (_req, res: Response) => {
     const crucesClasif = await prisma.match.findMany({
       where: {
         phaseId: FASES.clasificatorio,
-        serieId: {
-          in: [
-            ...Array.from({ length: 15 }, (_, i) => `clasif-reduccion-${i + 1}`),
-            'clasif-repechaje'
-          ]
-        }
+        serieId: { in: [...Array.from({ length: 15 }, (_, i) => `clasif-reduccion-${i + 1}`), 'clasif-repechaje'] }
       },
       include: { result: true, playerA: true, playerB: true }
     });
@@ -181,13 +176,12 @@ router.put('/torneo/:phaseId/publicar', authenticate, requireRole('admin'), asyn
 });
 
 // -------------------------------------------------------
-// GET /api/rankings/final — ranking final del circuito con puntos completos
+// GET /api/rankings/final — ranking final del circuito
 // -------------------------------------------------------
 router.get('/final', async (_req, res: Response) => {
   try {
     const FASES = { clasificatorio: 30, segunda: 31, primera: 32, master: 33 };
 
-    // Compensaciones por categoría
     const COMP: Record<string, { puntos: number; sets: number; tantos: number }> = {
       tercera: { puntos: 0, sets: 0, tantos: 0 },
       segunda: { puntos: 8, sets: 9, tantos: 540 },
@@ -195,81 +189,55 @@ router.get('/final', async (_req, res: Response) => {
       master: { puntos: 21, sets: 23, tantos: 1380 },
     };
 
-    // Jugadores activos excepto LIBRE
     const players = await prisma.player.findMany({
       where: { active: true, NOT: { dni: 'FEBIU000' } },
       include: { category: true },
     });
 
-    // Todos los partidos finalizados
     const allMatches = await prisma.match.findMany({
       where: {
         phaseId: { in: [FASES.clasificatorio, FASES.segunda, FASES.primera, FASES.master] },
         status: { in: ['finalizado', 'wo'] },
       },
-      include: {
-        result: true,
-        sets: { orderBy: { setNumber: 'asc' } },
-        phase: true,
-      }
+      include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
     });
 
-    interface PlayerStats {
-      puntos: number;
-      setsGanados: number;
-      setsJugados: number;
-      tantos: number;
-    }
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; }
     const stats = new Map<number, PlayerStats>();
 
-    // Inicializar con compensaciones
     for (const player of players) {
       const catName = player.category.name.toLowerCase();
       const comp = COMP[catName] ?? { puntos: 0, sets: 0, tantos: 0 };
-      stats.set(player.id, {
-        puntos: comp.puntos,
-        setsGanados: comp.sets,
-        setsJugados: comp.sets,
-        tantos: comp.tantos,
-      });
+      stats.set(player.id, { puntos: comp.puntos, setsGanados: comp.sets, setsJugados: comp.sets, tantos: comp.tantos });
     }
 
-    // Helper: sumar sets y tantos de un partido
     const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
       if (!playerId) return;
       const s = stats.get(playerId);
       if (!s || !match.result) return;
-
       if (match.sets && match.sets.length > 0) {
-        let setsWon = 0;
-        let tantos = 0;
+        let setsWon = 0, tantos = 0;
         for (const set of match.sets) {
           const ptsFor = isPlayerA ? set.pointsA : set.pointsB;
           const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
           tantos += ptsFor;
           if (ptsFor > ptsAgainst) setsWon++;
         }
-        s.setsGanados += setsWon;
-        s.setsJugados += match.sets.length;
-        s.tantos += tantos;
+        s.setsGanados += setsWon; s.setsJugados += match.sets.length; s.tantos += tantos;
       } else {
         const setsFor = isPlayerA ? match.result.setsA : match.result.setsB;
         const setsAgainst = isPlayerA ? match.result.setsB : match.result.setsA;
         const tantosFor = isPlayerA ? match.result.pointsA : match.result.pointsB;
-        s.setsGanados += setsFor;
-        s.setsJugados += setsFor + setsAgainst;
-        s.tantos += tantosFor;
+        s.setsGanados += setsFor; s.setsJugados += setsFor + setsAgainst; s.tantos += tantosFor;
       }
     };
 
-    // Helper: sumar puntos
     const addPts = (playerId: number | null | undefined, pts: number) => {
       if (!playerId) return;
       const s = stats.get(playerId);
       if (s) s.puntos += pts;
     };
 
-    // Series (clasificatorio y segunda)
     const serieMatches: Record<string, any[]> = {};
     for (const match of allMatches) {
       if (!match.serieId) continue;
@@ -283,75 +251,43 @@ router.get('/final', async (_req, res: Response) => {
       const p3 = matches.find((m: any) => m.round === roundBase + 2);
       const p4 = matches.find((m: any) => m.round === roundBase + 3);
       const p5 = matches.find((m: any) => m.round === roundBase + 4);
-
-      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8); // 1°
-      if (p4?.result) {
-        const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId;
-        addPts(p4LoserId, 2); // 4°
-      }
-      if (p5?.result?.winnerId) {
-        const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
-        addPts(p5.result.winnerId, 6); // 2°
-        addPts(p5LoserId, 4); // 3°
-      }
-
-      for (const match of matches) {
-        addSetsAndTantos(match.playerAId, match, true);
-        addSetsAndTantos(match.playerBId, match, false);
-      }
+      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+      if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+      if (p5?.result?.winnerId) { const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId; addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4); }
+      for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
     }
 
-    // Reducción y repechaje
     for (const match of allMatches) {
       if (!match.serieId) continue;
       if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
       if (!match.result?.winnerId) continue;
       const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      addPts(match.result.winnerId, 5);
-      addPts(loserId, 1);
-      addSetsAndTantos(match.playerAId, match, true);
-      addSetsAndTantos(match.playerBId, match, false);
+      addPts(match.result.winnerId, 5); addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
     }
 
-    // Primera
     for (const match of allMatches) {
       if (match.phase.type !== 'primera') continue;
       if (!match.result?.winnerId) continue;
       const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      addPts(match.result.winnerId, 5);
-      addPts(loserId, 1);
-      addSetsAndTantos(match.playerAId, match, true);
-      addSetsAndTantos(match.playerBId, match, false);
+      addPts(match.result.winnerId, 5); addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
     }
 
-    // Master
     for (const match of allMatches) {
       if (match.phase.type !== 'master') continue;
       if (!match.result?.winnerId) continue;
       const isFinal = match.round === 31;
       const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      addPts(match.result.winnerId, isFinal ? 7 : 5);
-      addPts(loserId, isFinal ? 2 : 1);
-      addSetsAndTantos(match.playerAId, match, true);
-      addSetsAndTantos(match.playerBId, match, false);
+      addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
     }
 
-    // Construir ranking
     const ranking = players
       .map(player => {
         const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 };
         const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
-        return {
-          playerId: player.id,
-          firstName: player.firstName,
-          lastName: player.lastName,
-          club: player.club ?? '',
-          categoria: player.category.name,
-          puntos: s.puntos,
-          setsGanados: s.setsGanados,
-          tantos: s.tantos,
-          promedio,
-        };
+        return { playerId: player.id, firstName: player.firstName, lastName: player.lastName, club: player.club ?? '', categoria: player.category.name, puntos: s.puntos, setsGanados: s.setsGanados, tantos: s.tantos, promedio };
       })
       .sort((a, b) => {
         if (b.puntos !== a.puntos) return b.puntos - a.puntos;
@@ -366,6 +302,168 @@ router.get('/final', async (_req, res: Response) => {
       }));
 
     res.json(ranking);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/rankings/guardar-final/:circuitId
+// Guarda el ranking calculado en RankingEntry para que el
+// siguiente circuito pueda usarlo como base de seeding
+// -------------------------------------------------------
+router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+
+    const FASES = { clasificatorio: 30, segunda: 31, primera: 32, master: 33 };
+
+    const COMP: Record<string, { puntos: number; sets: number; tantos: number }> = {
+      tercera: { puntos: 0, sets: 0, tantos: 0 },
+      segunda: { puntos: 8, sets: 9, tantos: 540 },
+      primera: { puntos: 16, sets: 18, tantos: 1080 },
+      master: { puntos: 21, sets: 23, tantos: 1380 },
+    };
+
+    const players = await prisma.player.findMany({
+      where: { active: true, NOT: { dni: 'FEBIU000' } },
+      include: { category: true },
+    });
+
+    const allMatches = await prisma.match.findMany({
+      where: {
+        phaseId: { in: [FASES.clasificatorio, FASES.segunda, FASES.primera, FASES.master] },
+        status: { in: ['finalizado', 'wo'] },
+      },
+      include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
+    });
+
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; }
+    const stats = new Map<number, PlayerStats>();
+
+    for (const player of players) {
+      const catName = player.category.name.toLowerCase();
+      const comp = COMP[catName] ?? { puntos: 0, sets: 0, tantos: 0 };
+      stats.set(player.id, { puntos: comp.puntos, setsGanados: comp.sets, setsJugados: comp.sets, tantos: comp.tantos });
+    }
+
+    const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (!s || !match.result) return;
+      if (match.sets && match.sets.length > 0) {
+        let setsWon = 0, tantos = 0;
+        for (const set of match.sets) {
+          const ptsFor = isPlayerA ? set.pointsA : set.pointsB;
+          const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
+          tantos += ptsFor;
+          if (ptsFor > ptsAgainst) setsWon++;
+        }
+        s.setsGanados += setsWon; s.setsJugados += match.sets.length; s.tantos += tantos;
+      } else {
+        const setsFor = isPlayerA ? match.result.setsA : match.result.setsB;
+        const setsAgainst = isPlayerA ? match.result.setsB : match.result.setsA;
+        const tantosFor = isPlayerA ? match.result.pointsA : match.result.pointsB;
+        s.setsGanados += setsFor; s.setsJugados += setsFor + setsAgainst; s.tantos += tantosFor;
+      }
+    };
+
+    const addPts = (playerId: number | null | undefined, pts: number) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (s) s.puntos += pts;
+    };
+
+    const serieMatches: Record<string, any[]> = {};
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
+      if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
+      serieMatches[match.serieId].push(match);
+    }
+
+    for (const matches of Object.values(serieMatches)) {
+      const roundBase = Math.min(...matches.map((m: any) => m.round));
+      const p3 = matches.find((m: any) => m.round === roundBase + 2);
+      const p4 = matches.find((m: any) => m.round === roundBase + 3);
+      const p5 = matches.find((m: any) => m.round === roundBase + 4);
+      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+      if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+      if (p5?.result?.winnerId) { const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId; addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4); }
+      for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
+    }
+
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
+      if (!match.result?.winnerId) continue;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, 5); addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    for (const match of allMatches) {
+      if (match.phase.type !== 'primera') continue;
+      if (!match.result?.winnerId) continue;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, 5); addPts(loserId, 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    for (const match of allMatches) {
+      if (match.phase.type !== 'master') continue;
+      if (!match.result?.winnerId) continue;
+      const isFinal = match.round === 31;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1);
+      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // Ordenar y calcular posiciones
+    const ranked = players
+      .map(player => {
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 };
+        const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
+        return { playerId: player.id, puntos: s.puntos, setsGanados: s.setsGanados, setsJugados: s.setsJugados, tantos: s.tantos, promedio };
+      })
+      .sort((a, b) => {
+        if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+        if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
+        if (b.tantos !== a.tantos) return b.tantos - a.tantos;
+        return b.promedio - a.promedio;
+      });
+
+    // Guardar en RankingEntry
+    let guardados = 0;
+    for (let i = 0; i < ranked.length; i++) {
+      const entry = ranked[i];
+      const position = i + 1;
+      await prisma.rankingEntry.upsert({
+        where: { playerId_circuitId: { playerId: entry.playerId, circuitId } },
+        create: {
+          playerId: entry.playerId,
+          circuitId,
+          position,
+          points: entry.puntos,
+          matchesPlayed: 0,
+          matchesWon: 0,
+          setsWon: entry.setsGanados,
+          setsLost: entry.setsJugados - entry.setsGanados,
+          pointsFor: entry.tantos,
+          pointsAgainst: 0,
+        },
+        update: {
+          position,
+          points: entry.puntos,
+          setsWon: entry.setsGanados,
+          setsLost: entry.setsJugados - entry.setsGanados,
+          pointsFor: entry.tantos,
+        }
+      });
+      guardados++;
+    }
+
+    res.json({ message: `Ranking guardado correctamente — ${guardados} jugadores`, circuitId });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
