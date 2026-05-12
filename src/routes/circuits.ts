@@ -41,10 +41,10 @@ async function getJugadoresOrdenados(circuit: any, circuitId: number) {
 
   const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
 
-  const master   = ordenados.filter((p: any) => getRankPos(p.id) <= CORTE_MASTER);
-  const primera  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_MASTER && getRankPos(p.id) <= CORTE_PRIMERA);
-  const segunda  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_PRIMERA && getRankPos(p.id) <= CORTE_SEGUNDA);
-  const clasif   = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_SEGUNDA);
+  const master  = ordenados.filter((p: any) => getRankPos(p.id) <= CORTE_MASTER);
+  const primera = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_MASTER && getRankPos(p.id) <= CORTE_PRIMERA);
+  const segunda = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_PRIMERA && getRankPos(p.id) <= CORTE_SEGUNDA);
+  const clasif  = ordenados.filter((p: any) => getRankPos(p.id) > CORTE_SEGUNDA);
 
   return { master, primera, segunda, clasif, getRankPos, rankings };
 }
@@ -83,13 +83,12 @@ function mkMatch(phaseId: number, playerAId: number | null, playerBId: number | 
   };
 }
 
-// Genera el cuadro final con sistema espejo en cada ronda
-// Garantiza que #1 y #2 no se crucen antes de la final
+// Genera el cuadro final con sistema espejo
 function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number): any[] {
   const matches: any[] = [];
   const N = jugadores.length; // 32
 
-  // DIECISEISAVOS — 16 partidos, espejo: #1 vs #32, #2 vs #31, etc.
+  // CRUCES MASTER — 16 partidos, espejo: #1 vs #32, #2 vs #31, etc.
   for (let i = 0; i < N / 2; i++) {
     const jA = jugadores[i];
     const jB = jugadores[N - 1 - i];
@@ -98,13 +97,12 @@ function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number
       jA.id ?? null, jB.id ?? null,
       i + 1,
       jA.slot ?? undefined, jB.slot ?? undefined,
-      `master-dieciseisavos-${i + 1}`,
+      `master-cruce-${i + 1}`,
       ruleSetId
     ));
   }
 
-  // OCTAVOS — 8 partidos, espejo de ganadores de dieciseisavos
-  // P17: Gan.1 vs Gan.16, P18: Gan.2 vs Gan.15, etc.
+  // OCTAVOS — 8 partidos, espejo de ganadores de Cruces Master
   const octavosBase = N / 2; // 16
   for (let i = 0; i < N / 4; i++) {
     const cruceA = i + 1;
@@ -113,15 +111,14 @@ function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number
       phaseId,
       null, null,
       octavosBase + i + 1,
-      `Gan. Dieciseisavos ${cruceA}`,
-      `Gan. Dieciseisavos ${cruceB}`,
+      `Gan. Cruce Master ${cruceA}`,
+      `Gan. Cruce Master ${cruceB}`,
       `master-octavos-${i + 1}`,
       ruleSetId
     ));
   }
 
-  // CUARTOS — 4 partidos, espejo de ganadores de octavos
-  // P25: Gan.17 vs Gan.24, P26: Gan.18 vs Gan.23, etc.
+  // CUARTOS — 4 partidos, espejo de ganadores de Octavos
   const cuartosBase = octavosBase + N / 4; // 24
   for (let i = 0; i < N / 8; i++) {
     const cruceA = octavosBase + i + 1;
@@ -322,7 +319,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
         master: master.length,
         primera: primera.length,
         segunda: segunda.length,
-        clasificatorio: clasif.length
+        tercera: clasif.length
       },
       clasificatorio: {
         totalJugadores: jugConLibre.length,
@@ -413,8 +410,9 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     // -------------------------------------------------------
     // FASE SEGUNDA — series al mejor de 3
     // -------------------------------------------------------
-    if (phaseSegunda && segunda.length > 0) {
-      const slots16 = Array.from({ length: 16 }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
+    if (phaseSegunda) {
+      const numSlots = 16;
+      const slots16 = Array.from({ length: numSlots }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
       let jugConSlots = [...segunda, ...slots16] as any[];
       while (jugConSlots.length % 4 !== 0) jugConSlots.push({ id: null, slot: 'LIBRE' });
 
@@ -427,7 +425,6 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
         const serieId = `segunda-serie-${i + 1}`;
         const posiciones = [i, N2 - 1 - i, mitad - 1 - i, mitad + i];
         const [j0, j1, j2, j3] = posiciones.map(pos => jugConSlots[pos]);
-
         matchesCreados.push(mkMatch(phaseSegunda.id, j0.id ?? null, j1.id ?? null, roundBase, j0.slot ?? undefined, j1.slot ?? undefined, serieId, RULESET_SERIES));
         matchesCreados.push(mkMatch(phaseSegunda.id, j2.id ?? null, j3.id ?? null, roundBase + 1, j2.slot ?? undefined, j3.slot ?? undefined, serieId, RULESET_SERIES));
       }
@@ -436,7 +433,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     // -------------------------------------------------------
     // FASE PRIMERA — cruces al mejor de 5
     // -------------------------------------------------------
-    if (fasePrimera && primera.length > 0) {
+    if (fasePrimera) {
       const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }));
       const jugConSlots = [...primera, ...slots24] as any[];
       const total = jugConSlots.length;
@@ -455,12 +452,11 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     }
 
     // -------------------------------------------------------
-    // FASE MASTER — cuadro de 32 con sistema espejo en cada ronda
+    // FASE MASTER — cuadro de 32 con sistema espejo
     // -------------------------------------------------------
-    if (faseMaster && master.length > 0) {
+    if (faseMaster) {
       const slots24 = Array.from({ length: 24 }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
       const jugConSlots = [...master, ...slots24] as any[];
-
       const cuadroMatches = generarCuadroFinal(faseMaster.id, jugConSlots, RULESET_CRUCES);
       matchesCreados.push(...cuadroMatches);
     }
