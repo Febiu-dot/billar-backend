@@ -427,12 +427,25 @@ router.post('/trigger-master/:phaseId', authenticate, requireRole('admin'), asyn
 router.get('/', async (req, res: Response) => {
   const { phaseId, status, tableId, venueId } = req.query;
   const matches = await prisma.match.findMany({
-    where: { ...(phaseId ? { phaseId: Number(phaseId) } : {}), ...(status ? { status: status as any } : {}), ...(tableId ? { tableId: Number(tableId) } : {}), ...(venueId ? { table: { venueId: Number(venueId) } } : {}) },
-    include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } },
-    orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
+    where: {
+      ...(phaseId ? { phaseId: Number(phaseId) } : {}),
+      ...(status ? { status: status as any } : {}),
+      ...(tableId ? { tableId: Number(tableId) } : {}),
+      ...(venueId ? { table: { venueId: Number(venueId) } } : {}),
+    },
+    include: {
+      playerA: { include: { category: true } },
+      playerB: { include: { category: true } },
+      table: { include: { venue: true } },
+      phase: { include: { circuit: { include: { tournament: true } } } },
+      result: true, ruleSet: true,
+      sets: { orderBy: { setNumber: 'asc' } },
+    },
+    orderBy: [{ phase: { order: 'asc' } }, { scheduledAt: 'asc' }, { round: 'asc' }, { createdAt: 'asc' }],
   });
   res.json(matches);
 });
+
 
 router.get('/active', async (_req, res: Response) => {
   const matches = await prisma.match.findMany({
