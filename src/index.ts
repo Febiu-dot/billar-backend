@@ -15,6 +15,7 @@ import departamentoRoutes from './routes/departamentos';
 import userRoutes from './routes/users';
 import faseconfigRoutes from './routes/faseconfig';
 import reportsRoutes from './routes/reports';
+import publicacionesRoutes from './routes/publicaciones';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
@@ -52,6 +53,7 @@ app.use('/api/departamentos', departamentoRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/faseconfig', faseconfigRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/publicaciones', publicacionesRoutes);
 
 setupSocketHandlers(io);
 
