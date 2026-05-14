@@ -44,7 +44,7 @@ router.get('/circuitos', async (_req, res: Response) => {
 });
 
 // GET /api/publicaciones/:circuitId/:tipoFase
-// tipoFase: clasificatorio | reduccion | segunda | primera | master
+// tipoFase: clasificatorio | reduccion | segunda | primera | master | ranking
 router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
   try {
     const circuitId = parseInt(req.params.circuitId);
@@ -56,6 +56,47 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     });
     if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
 
+    const base = {
+      tipoFase,
+      torneo: circuit.tournament.name,
+      circuito: circuit.name,
+      temporada: String(circuit.tournament.year),
+      formato: '',
+    };
+
+    // ---- RANKING DEL CIRCUITO ----
+    if (tipoFase === 'ranking') {
+      const entries = await prisma.rankingEntry.findMany({
+        where: { circuitId },
+        include: { player: true },
+        orderBy: { position: 'asc' }
+      });
+
+      if (entries.length === 0) {
+        res.status(404).json({ error: 'No hay ranking guardado para este circuito. Generalo desde la página Ranking Final.' });
+        return;
+      }
+
+      const jugadores = entries.map(e => ({
+        posicion: e.position,
+        nombre: `${e.player.lastName}, ${e.player.firstName}`,
+        club: abrev(e.player.club),
+        puntos: e.points,
+        setsGanados: e.setsWon,
+        tantos: e.pointsFor,
+        seccion: e.position <= 8 ? 'MÁSTER' : e.position <= 32 ? 'PRIMERA' : e.position <= 64 ? 'SEGUNDA' : 'TERCERA',
+      }));
+
+      return res.json({
+        ...base,
+        tipo: 'ranking',
+        fase: `RANKING — ${circuit.name.toUpperCase()}`,
+        fechaPrincipal: '',
+        jugadores,
+      });
+    }
+
+    // ---- FASES DE PARTIDOS ----
     let rankings = await prisma.rankingEntry.findMany({ where: { circuitId }, orderBy: { position: 'asc' } });
     if (rankings.length === 0) {
       const prev = await prisma.circuit.findFirst({ where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 } });
@@ -76,13 +117,6 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     });
 
     const formato = ['primera', 'master'].includes(phaseTypeMap[tipoFase]) ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
-    const base = {
-      tipoFase,
-      torneo: circuit.tournament.name,
-      circuito: circuit.name,
-      temporada: String(circuit.tournament.year),
-      formato,
-    };
 
     // SERIES
     if (tipoFase === 'clasificatorio' || tipoFase === 'segunda') {
@@ -109,7 +143,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       }).sort((a, b) => a.numero - b.numero);
 
       const pf = sm.find(m => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', fechaPrincipal: fechaLarga(pf), series });
+      return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: fechaLarga(pf), series });
     }
 
     // REDUCCIÓN
@@ -127,7 +161,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       })).sort((a, b) => a.numero - b.numero);
 
       const pf = rm.find(m => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', fechaPrincipal: fechaLarga(pf), cruces });
+      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: fechaLarga(pf), cruces });
     }
 
     // CRUCES PRIMERA / MASTER
@@ -152,7 +186,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     }));
 
     const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
-    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', fechaPrincipal: fechaLarga(pf), cruces });
+    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', formato, fechaPrincipal: fechaLarga(pf), cruces });
 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
