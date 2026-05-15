@@ -76,12 +76,10 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         include: { player: { include: { category: true } } },
         orderBy: { position: 'asc' }
       });
-
       if (entries.length === 0) {
         res.status(404).json({ error: 'No hay ranking guardado para este circuito. Generalo desde la página Ranking Final.' });
         return;
       }
-
       const jugadores = entries.map(e => ({
         posicion: e.position,
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
@@ -91,7 +89,6 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         tantos: e.pointsFor,
         seccion: e.position <= 8 ? 'MÁSTER' : e.position <= 32 ? 'PRIMERA' : e.position <= 64 ? 'SEGUNDA' : 'TERCERA',
       }));
-
       return res.json({ ...base, tipo: 'ranking', fase: `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', jugadores });
     }
 
