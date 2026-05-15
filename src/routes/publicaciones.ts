@@ -29,8 +29,14 @@ const fechaLarga = (dt?: any) => {
 
 const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
   player
-    ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, esSlot: false }
-    : { nombre: slot ?? '—', club: '', ranking: null, esSlot: true };
+    ? {
+        nombre: `${player.lastName}, ${player.firstName}`,
+        club: abrev(player.club),
+        ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null,
+        categoria: player.category?.name ?? null,
+        esSlot: false
+      }
+    : { nombre: slot ?? '—', club: '', ranking: null, categoria: null, esSlot: true };
 
 // GET /api/publicaciones/circuitos
 router.get('/circuitos', async (_req, res: Response) => {
@@ -111,9 +117,15 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada` }); return; }
 
     const matches = await prisma.match.findMany({
-      where: { phaseId: phase.id },
-      include: { playerA: true, playerB: true, table: { include: { venue: true } }, result: true },
-      orderBy: { round: 'asc' }
+  where: { phaseId: phase.id },
+  include: {
+    playerA: { include: { category: true } },
+    playerB: { include: { category: true } },
+    table: { include: { venue: true } },
+    result: true
+  },
+  orderBy: { round: 'asc' }
+});
     });
 
     const formato = ['primera', 'master'].includes(phaseTypeMap[tipoFase]) ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
