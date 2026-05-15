@@ -50,7 +50,6 @@ router.get('/circuitos', async (_req, res: Response) => {
 });
 
 // GET /api/publicaciones/:circuitId/:tipoFase
-// tipoFase: clasificatorio | reduccion | segunda | primera | master | ranking
 router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
   try {
     const circuitId = parseInt(req.params.circuitId);
@@ -70,11 +69,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       formato: '',
     };
 
-    // ---- RANKING DEL CIRCUITO ----
+    // ---- RANKING ----
     if (tipoFase === 'ranking') {
       const entries = await prisma.rankingEntry.findMany({
         where: { circuitId },
-        include: { player: true },
+        include: { player: { include: { category: true } } },
         orderBy: { position: 'asc' }
       });
 
@@ -93,13 +92,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         seccion: e.position <= 8 ? 'MÁSTER' : e.position <= 32 ? 'PRIMERA' : e.position <= 64 ? 'SEGUNDA' : 'TERCERA',
       }));
 
-      return res.json({
-        ...base,
-        tipo: 'ranking',
-        fase: `RANKING — ${circuit.name.toUpperCase()}`,
-        fechaPrincipal: '',
-        jugadores,
-      });
+      return res.json({ ...base, tipo: 'ranking', fase: `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', jugadores });
     }
 
     // ---- FASES DE PARTIDOS ----
@@ -117,15 +110,14 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada` }); return; }
 
     const matches = await prisma.match.findMany({
-  where: { phaseId: phase.id },
-  include: {
-    playerA: { include: { category: true } },
-    playerB: { include: { category: true } },
-    table: { include: { venue: true } },
-    result: true
-  },
-  orderBy: { round: 'asc' }
-});
+      where: { phaseId: phase.id },
+      include: {
+        playerA: { include: { category: true } },
+        playerB: { include: { category: true } },
+        table: { include: { venue: true } },
+        result: true
+      },
+      orderBy: { round: 'asc' }
     });
 
     const formato = ['primera', 'master'].includes(phaseTypeMap[tipoFase]) ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
