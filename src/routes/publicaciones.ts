@@ -38,6 +38,14 @@ const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
       }
     : { nombre: slot ?? '—', club: '', ranking: null, categoria: null, esSlot: true };
 
+const getSeccion = (pos: number | null): string => {
+  const p = pos ?? 999;
+  if (p <= 8)  return 'MÁSTER';
+  if (p <= 32) return 'PRIMERA';
+  if (p <= 64) return 'SEGUNDA';
+  return 'TERCERA';
+};
+
 // GET /api/publicaciones/circuitos
 router.get('/circuitos', async (_req, res: Response) => {
   try {
@@ -81,13 +89,13 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         return;
       }
       const jugadores = entries.map(e => ({
-        posicion: e.position,
+        posicion: e.position ?? 0,
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
         club: abrev(e.player.club),
         puntos: e.points,
         setsGanados: e.setsWon,
         tantos: e.pointsFor,
-        seccion: e.position <= 8 ? 'MÁSTER' : e.position <= 32 ? 'PRIMERA' : e.position <= 64 ? 'SEGUNDA' : 'TERCERA',
+        seccion: getSeccion(e.position),
       }));
       return res.json({ ...base, tipo: 'ranking', fase: `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', jugadores });
     }
