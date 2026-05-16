@@ -4,6 +4,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { io } from '../index';
 import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 import { generarReporteCruce, generarReporteSerie } from '../services/reportService';
+import { calcularYGuardarAcumulado } from './acumulado';
 
 const router = Router();
 
@@ -446,7 +447,6 @@ router.get('/', async (req, res: Response) => {
   res.json(matches);
 });
 
-
 router.get('/active', async (_req, res: Response) => {
   const matches = await prisma.match.findMany({
     where: { status: { in: ['asignado', 'en_juego'] } },
@@ -519,7 +519,10 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   const matchId = Number(req.params.id);
   const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
 
-  const existingMatch = await prisma.match.findUnique({ where: { id: matchId }, include: { ruleSet: true, phase: { include: { circuit: true } } } });
+  const existingMatch = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: { ruleSet: true, phase: { include: { circuit: { include: { tournament: true } } } } }
+  });
   if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
 
   const ruleSet = existingMatch.ruleSet;
@@ -582,6 +585,28 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     if (mCruce && parseInt(mCruce[1]) <= 15) await rellenarSlotSegunda(matchId);
   }
   if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId !== null) await rellenarSlotSegundaConRepechaje(winnerId);
+
+  // ── TRIGGER ACUMULADO ──────────────────────────────────────────
+  // Si es un partido de la fase Master, verificar si es el último
+  // y recalcular el ranking acumulado del torneo
+  if (phaseType === 'master') {
+    try {
+      const phaseId = existingMatch.phaseId;
+      const totalMaster   = await prisma.match.count({ where: { phaseId } });
+      const finishedMaster = await prisma.match.count({
+        where: { phaseId, status: { in: ['finalizado', 'wo'] } }
+      });
+      if (totalMaster > 0 && totalMaster === finishedMaster) {
+        const tournamentId = existingMatch.phase?.circuit?.tournament?.id;
+        if (tournamentId) {
+          await calcularYGuardarAcumulado(tournamentId);
+        }
+      }
+    } catch (acumError) {
+      console.error('Error calculando acumulado (no crítico):', acumError);
+    }
+  }
+  // ──────────────────────────────────────────────────────────────
 
   try {
     if ((phaseType === 'clasificatorio' || phaseType === 'segunda') && esPartidoDeSerie && posEnSerie === 4 && existingMatch.serieId) {
