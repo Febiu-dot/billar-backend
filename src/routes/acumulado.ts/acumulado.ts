@@ -4,22 +4,31 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-// Calcula y guarda el ranking acumulado de un torneo
-export async function calcularYGuardarAcumulado(tournamentId: number) {
-  // Obtener todos los circuitos del torneo
+interface PlayerAcum {
+  playerId: number;
+  points: number;
+  setsWon: number;
+  setsLost: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  matchesPlayed: number;
+  matchesWon: number;
+}
+
+export async function calcularYGuardarAcumulado(tournamentId: number): Promise<void> {
   const circuits = await prisma.circuit.findMany({
     where: { tournamentId },
     include: { phases: true },
     orderBy: { order: 'asc' }
   });
 
-  // Determinar cuáles circuitos están completos (todos los partidos de Master finalizados)
   const completedCircuits: typeof circuits = [];
+
   for (const circuit of circuits) {
-    const masterPhase = circuit.phases.find(p => p.type === 'master');
+    const masterPhase = circuit.phases.find((p: { type: string }) => p.type === 'master');
     if (!masterPhase) continue;
 
-    const total = await prisma.match.count({ where: { phaseId: masterPhase.id } });
+    const total    = await prisma.match.count({ where: { phaseId: masterPhase.id } });
     const finished = await prisma.match.count({
       where: { phaseId: masterPhase.id, status: { in: ['finalizado', 'wo'] } }
     });
@@ -31,23 +40,13 @@ export async function calcularYGuardarAcumulado(tournamentId: number) {
 
   if (completedCircuits.length === 0) return;
 
-  // Obtener RankingEntry de todos los circuitos completos
-  const completedIds = completedCircuits.map(c => c.id);
+  const completedIds = completedCircuits.map((c: { id: number }) => c.id);
+
   const entries = await prisma.rankingEntry.findMany({
     where: { circuitId: { in: completedIds } }
   });
 
-  // Agrupar por jugador y sumar stats
-  const playerMap: Record<number, {
-    playerId: number;
-    points: number;
-    setsWon: number;
-    setsLost: number;
-    pointsFor: number;
-    pointsAgainst: number;
-    matchesPlayed: number;
-    matchesWon: number;
-  }> = {};
+  const playerMap: Record<number, PlayerAcum> = {};
 
   for (const e of entries) {
     if (!playerMap[e.playerId]) {
@@ -67,8 +66,7 @@ export async function calcularYGuardarAcumulado(tournamentId: number) {
     playerMap[e.playerId].matchesWon    += e.matchesWon;
   }
 
-  // Ordenar y asignar posiciones
-  const sorted = Object.values(playerMap).sort((a, b) => {
+  const sorted: PlayerAcum[] = Object.values(playerMap).sort((a: PlayerAcum, b: PlayerAcum) => {
     if (b.points    !== a.points)    return b.points    - a.points;
     if (b.setsWon   !== a.setsWon)   return b.setsWon   - a.setsWon;
     if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
@@ -76,9 +74,8 @@ export async function calcularYGuardarAcumulado(tournamentId: number) {
   });
 
   const lastCircuit = completedCircuits[completedCircuits.length - 1];
-  const circuitosIncluidos = completedCircuits.map(c => c.name).join(', ');
+  const circuitosIncluidos = completedCircuits.map((c: { name: string }) => c.name).join(', ');
 
-  // Upsert de todas las entradas
   for (let i = 0; i < sorted.length; i++) {
     const e = sorted[i];
     await prisma.rankingAcumulado.upsert({
@@ -112,7 +109,7 @@ export async function calcularYGuardarAcumulado(tournamentId: number) {
     });
   }
 
-  console.log(`✅ Ranking acumulado calculado: ${sorted.length} jugadores, circuitos: ${circuitosIncluidos}`);
+  console.log(`✅ Ranking acumulado: ${sorted.length} jugadores, ${circuitosIncluidos}`);
 }
 
 // GET /api/acumulado/:tournamentId
@@ -126,7 +123,7 @@ router.get('/:tournamentId', async (req, res: Response) => {
     });
 
     if (entries.length === 0) {
-      res.status(404).json({ error: 'No hay ranking acumulado disponible aún. Se genera automáticamente al finalizar cada circuito.' });
+      res.status(404).json({ error: 'No hay ranking acumulado disponible aún. Se genera automáticamente al finalizar cada fase Máster.' });
       return;
     }
 
@@ -136,7 +133,7 @@ router.get('/:tournamentId', async (req, res: Response) => {
   }
 });
 
-// POST /api/acumulado/calcular/:tournamentId — trigger manual (admin)
+// POST /api/acumulado/calcular/:tournamentId — trigger manual
 router.post('/calcular/:tournamentId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     const tournamentId = parseInt(req.params.tournamentId);
