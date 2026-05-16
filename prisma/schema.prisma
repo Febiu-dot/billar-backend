@@ -136,6 +136,7 @@ model Circuit {
   startDate    DateTime?
   endDate      DateTime?
   active       Boolean         @default(true)
+  configTorneo Json?
   phases       Phase[]
   rankings     RankingEntry[]
   players      CircuitPlayer[]
