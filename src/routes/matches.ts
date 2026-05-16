@@ -4,7 +4,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { io } from '../index';
 import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 import { generarReporteCruce, generarReporteSerie } from '../services/reportService';
-import { calcularYGuardarAcumulado } from './acumulado';
+import { calcularYGuardarAcumulado } from './rankingAcumulado';
 
 const router = Router();
 
