@@ -94,35 +94,37 @@ model Category {
 }
 
 model Player {
-  id             Int             @id @default(autoincrement())
+  id             Int                @id @default(autoincrement())
   firstName      String
   lastName       String
-  dni            String?         @unique
+  dni            String?            @unique
   categoryId     Int
-  category       Category        @relation(fields: [categoryId], references: [id])
+  category       Category           @relation(fields: [categoryId], references: [id])
   club           String?
   departamentoId Int?
-  departamento   Departamento?   @relation(fields: [departamentoId], references: [id])
-  active         Boolean         @default(true)
-  matchesA       Match[]         @relation("PlayerA")
-  matchesB       Match[]         @relation("PlayerB")
-  rankings       RankingEntry[]acumulados     RankingAcumulado[]
+  departamento   Departamento?      @relation(fields: [departamentoId], references: [id])
+  active         Boolean            @default(true)
+  matchesA       Match[]            @relation("PlayerA")
+  matchesB       Match[]            @relation("PlayerB")
+  rankings       RankingEntry[]
+  acumulados     RankingAcumulado[]
   circuits       CircuitPlayer[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 }
 
 model Tournament {
-  id             Int           @id @default(autoincrement())
+  id             Int                @id @default(autoincrement())
   name           String
   year           Int
   description    String?
-  active         Boolean       @default(true)
+  active         Boolean            @default(true)
   departamentoId Int?
-  departamento   Departamento? @relation(fields: [departamentoId], references: [id])
-  circuits       Circuit[]acumulados     RankingAcumulado[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  departamento   Departamento?      @relation(fields: [departamentoId], references: [id])
+  circuits       Circuit[]
+  acumulados     RankingAcumulado[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 }
 
 model Circuit {
@@ -261,18 +263,6 @@ model RankingEntry {
   @@unique([playerId, circuitId])
 }
 
-model Report {
-  id        Int      @id @default(autoincrement())
-  tipo      String
-  phaseId   Int
-  serieId   String?
-  matchId   Int?
-  titulo    String
-  contenido Json
-  texto     String   @db.Text
-  publicado Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 model RankingAcumulado {
   id                 Int        @id @default(autoincrement())
   playerId           Int
@@ -293,4 +283,18 @@ model RankingAcumulado {
   updatedAt          DateTime   @updatedAt
 
   @@unique([playerId, tournamentId])
-}}
+}
+
+model Report {
+  id        Int      @id @default(autoincrement())
+  tipo      String
+  phaseId   Int
+  serieId   String?
+  matchId   Int?
+  titulo    String
+  contenido Json
+  texto     String   @db.Text
+  publicado Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
