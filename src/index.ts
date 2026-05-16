@@ -16,7 +16,7 @@ import userRoutes from './routes/users';
 import faseconfigRoutes from './routes/faseconfig';
 import reportsRoutes from './routes/reports';
 import publicacionesRoutes from './routes/publicaciones';
-import acumuladoRoutes from './routes/acumulado';
+import acumuladoRoutes from './routes/rankingAcumulado';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
