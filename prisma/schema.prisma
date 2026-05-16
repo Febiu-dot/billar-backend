@@ -106,7 +106,7 @@ model Player {
   active         Boolean         @default(true)
   matchesA       Match[]         @relation("PlayerA")
   matchesB       Match[]         @relation("PlayerB")
-  rankings       RankingEntry[]
+  rankings       RankingEntry[]acumulados     RankingAcumulado[]
   circuits       CircuitPlayer[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -120,7 +120,7 @@ model Tournament {
   active         Boolean       @default(true)
   departamentoId Int?
   departamento   Departamento? @relation(fields: [departamentoId], references: [id])
-  circuits       Circuit[]
+  circuits       Circuit[]acumulados     RankingAcumulado[]
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 }
@@ -273,4 +273,24 @@ model Report {
   publicado Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
+model RankingAcumulado {
+  id                 Int        @id @default(autoincrement())
+  playerId           Int
+  player             Player     @relation(fields: [playerId], references: [id])
+  tournamentId       Int
+  tournament         Tournament @relation(fields: [tournamentId], references: [id])
+  position           Int?
+  points             Int        @default(0)
+  setsWon            Int        @default(0)
+  setsLost           Int        @default(0)
+  pointsFor          Int        @default(0)
+  pointsAgainst      Int        @default(0)
+  matchesPlayed      Int        @default(0)
+  matchesWon         Int        @default(0)
+  lastCircuitOrder   Int        @default(0)
+  circuitosIncluidos String     @default("")
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([playerId, tournamentId])
+}}
