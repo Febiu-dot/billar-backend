@@ -16,6 +16,7 @@ import userRoutes from './routes/users';
 import faseconfigRoutes from './routes/faseconfig';
 import reportsRoutes from './routes/reports';
 import publicacionesRoutes from './routes/publicaciones';
+import acumuladoRoutes from './routes/acumulado';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
@@ -40,20 +41,21 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/auth', authRoutes);
-app.use('/api/venues', venueRoutes);
-app.use('/api/tables', tableRoutes);
-app.use('/api/players', playerRoutes);
-app.use('/api/tournaments', tournamentRoutes);
-app.use('/api/matches', matchRoutes);
-app.use('/api/rankings', rankingRoutes);
-app.use('/api/categories', categoryRoutes);
-app.use('/api/circuits', circuitRoutes);
+app.use('/api/auth',          authRoutes);
+app.use('/api/venues',        venueRoutes);
+app.use('/api/tables',        tableRoutes);
+app.use('/api/players',       playerRoutes);
+app.use('/api/tournaments',   tournamentRoutes);
+app.use('/api/matches',       matchRoutes);
+app.use('/api/rankings',      rankingRoutes);
+app.use('/api/categories',    categoryRoutes);
+app.use('/api/circuits',      circuitRoutes);
 app.use('/api/departamentos', departamentoRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/faseconfig', faseconfigRoutes);
-app.use('/api/reports', reportsRoutes);
+app.use('/api/users',         userRoutes);
+app.use('/api/faseconfig',    faseconfigRoutes);
+app.use('/api/reports',       reportsRoutes);
 app.use('/api/publicaciones', publicacionesRoutes);
+app.use('/api/acumulado',     acumuladoRoutes);
 
 setupSocketHandlers(io);
 
