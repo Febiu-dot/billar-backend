@@ -23,6 +23,20 @@ interface ClasificadoStats {
   tantosEnContra: number;
 }
 
+// ── Helper: obtiene cuposDesdeClasif del circuito del partido ─────────
+async function getCuposDesdeClasif(phaseId: number): Promise<number> {
+  try {
+    const phase = await prisma.phase.findUnique({
+      where: { id: phaseId },
+      include: { circuit: true }
+    });
+    const config = (phase?.circuit as any)?.configTorneo as any;
+    return config?.cuposDesdeClasif ?? 16;
+  } catch {
+    return 16;
+  }
+}
+
 async function avanzarBracketMaster(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
@@ -205,6 +219,7 @@ async function rellenarSlotsPrimera(phaseId: number) {
   } catch (error) { console.error('Error rellenando slots de Primera:', error); }
 }
 
+// ── ACTUALIZADA: usa cuposDesdeClasif dinámico ────────────────────────
 async function rellenarSlotSegunda(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
@@ -213,7 +228,9 @@ async function rellenarSlotSegunda(matchId: number) {
     const mReduccion = match.serieId.match(/^clasif-reduccion-(\d+)$/);
     if (!mReduccion) return;
     const cruceNum = parseInt(mReduccion[1]);
-    if (cruceNum > 15) return;
+
+    const cuposDesdeClasif = await getCuposDesdeClasif(match.phaseId);
+    if (cruceNum > cuposDesdeClasif - 1) return; // Solo los directos van a segunda
 
     const slotLabel = `Clasificado Clasif. #${cruceNum}`;
     const winnerId = match.result.winnerId;
@@ -235,9 +252,11 @@ async function rellenarSlotSegunda(matchId: number) {
   } catch (error) { console.error('Error rellenando slot de Segunda:', error); }
 }
 
-async function rellenarSlotSegundaConRepechaje(winnerId: number) {
+// ── ACTUALIZADA: slot del repechaje usa cuposDesdeClasif dinámico ─────
+async function rellenarSlotSegundaConRepechaje(winnerId: number, phaseId: number) {
   try {
-    const slotLabel = 'Clasificado Clasif. #16';
+    const cuposDesdeClasif = await getCuposDesdeClasif(phaseId);
+    const slotLabel = `Clasificado Clasif. #${cuposDesdeClasif}`;
     const segundaMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
     if (!segundaMatch) return;
 
@@ -256,20 +275,28 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number) {
   } catch (error) { console.error('Error rellenando slot de Segunda con repechaje:', error); }
 }
 
+// ── ACTUALIZADA: cruces del repechaje usan cuposDesdeClasif dinámico ──
 async function rellenarRepechaje(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
     if (!match || !match.result?.winnerId || !match.serieId) return;
 
-    const esCruce16 = match.serieId === 'clasif-reduccion-16';
-    const esCruce17 = match.serieId === 'clasif-reduccion-17';
-    if (!esCruce16 && !esCruce17) return;
+    const mReduccion = match.serieId.match(/^clasif-reduccion-(\d+)$/);
+    if (!mReduccion) return;
+    const cruceNum = parseInt(mReduccion[1]);
+
+    const cuposDesdeClasif = await getCuposDesdeClasif(match.phaseId);
+    const esCruceRepechajeA = cruceNum === cuposDesdeClasif;
+    const esCruceRepechajeB = cruceNum === cuposDesdeClasif + 1;
+    if (!esCruceRepechajeA && !esCruceRepechajeB) return;
 
     const repechaje = await prisma.match.findFirst({ where: { phaseId: match.phaseId, serieId: 'clasif-repechaje' } });
     if (!repechaje) return;
 
     const winnerId = match.result.winnerId;
-    const dataUpdate = esCruce16 ? { playerAId: winnerId, slotA: null as null } : { playerBId: winnerId, slotB: null as null };
+    const dataUpdate = esCruceRepechajeA
+      ? { playerAId: winnerId, slotA: null as null }
+      : { playerBId: winnerId, slotB: null as null };
     await prisma.match.update({ where: { id: repechaje.id }, data: dataUpdate });
 
     const repechajeActualizado = await prisma.match.findUnique({ where: { id: repechaje.id } });
@@ -397,9 +424,7 @@ async function generarSiguientePartidoSerie(matchId: number) {
   } catch (error) { console.error('Error generando siguiente partido de serie:', error); }
 }
 
-// -------------------------------------------------------
-// ENDPOINTS
-// -------------------------------------------------------
+// ── ENDPOINTS ─────────────────────────────────────────────────────────
 
 router.post('/trigger-reduccion/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try { await rellenarCrucesReduccion(parseInt(req.params.phaseId)); res.json({ message: 'Cruces de reducción rellenados correctamente' }); }
@@ -579,34 +604,29 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   if (phaseType === 'segunda' && existingMatch.serieId?.startsWith('segunda-serie-') && posEnSerie === 4) await rellenarSlotsPrimera(existingMatch.phaseId);
   if (phaseType === 'primera') await rellenarSlotMasterConGanadorPrimera(matchId);
   if (phaseType === 'master') await avanzarBracketMaster(matchId);
-  if (phaseType === 'clasificatorio' && (existingMatch.serieId === 'clasif-reduccion-16' || existingMatch.serieId === 'clasif-reduccion-17')) await rellenarRepechaje(matchId);
   if (phaseType === 'clasificatorio' && existingMatch.serieId) {
     const mCruce = existingMatch.serieId.match(/^clasif-reduccion-(\d+)$/);
-    if (mCruce && parseInt(mCruce[1]) <= 15) await rellenarSlotSegunda(matchId);
+    if (mCruce) {
+      await rellenarRepechaje(matchId);
+      await rellenarSlotSegunda(matchId);
+    }
   }
-  if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId !== null) await rellenarSlotSegundaConRepechaje(winnerId);
+  if (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje' && winnerId !== null) {
+    await rellenarSlotSegundaConRepechaje(winnerId, existingMatch.phaseId);
+  }
 
-  // ── TRIGGER ACUMULADO ──────────────────────────────────────────
-  // Si es un partido de la fase Master, verificar si es el último
-  // y recalcular el ranking acumulado del torneo
+  // ── TRIGGER ACUMULADO ─────────────────────────────────────────────
   if (phaseType === 'master') {
     try {
       const phaseId = existingMatch.phaseId;
-      const totalMaster   = await prisma.match.count({ where: { phaseId } });
-      const finishedMaster = await prisma.match.count({
-        where: { phaseId, status: { in: ['finalizado', 'wo'] } }
-      });
+      const totalMaster    = await prisma.match.count({ where: { phaseId } });
+      const finishedMaster = await prisma.match.count({ where: { phaseId, status: { in: ['finalizado', 'wo'] } } });
       if (totalMaster > 0 && totalMaster === finishedMaster) {
         const tournamentId = existingMatch.phase?.circuit?.tournament?.id;
-        if (tournamentId) {
-          await calcularYGuardarAcumulado(tournamentId);
-        }
+        if (tournamentId) await calcularYGuardarAcumulado(tournamentId);
       }
-    } catch (acumError) {
-      console.error('Error calculando acumulado (no crítico):', acumError);
-    }
+    } catch (acumError) { console.error('Error calculando acumulado (no crítico):', acumError); }
   }
-  // ──────────────────────────────────────────────────────────────
 
   try {
     if ((phaseType === 'clasificatorio' || phaseType === 'segunda') && esPartidoDeSerie && posEnSerie === 4 && existingMatch.serieId) {
@@ -614,9 +634,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     } else if (phaseType === 'primera' || phaseType === 'master' || (phaseType === 'clasificatorio' && !esPartidoDeSerie)) {
       await generarReporteCruce(matchId);
     }
-  } catch (reportError) {
-    console.error('Error generando reporte (no crítico):', reportError);
-  }
+  } catch (reportError) { console.error('Error generando reporte (no crítico):', reportError); }
 
   res.json({ match: updatedMatch, result });
 });
