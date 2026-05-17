@@ -201,10 +201,10 @@ router.put('/:id/config-torneo', async (req: Request, res: Response) => {
       return;
     }
 
-    const configTorneo: ConfigTorneo = { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif };
+    const configData = { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif };
     const circuit = await prisma.circuit.update({
       where: { id: circuitId },
-      data: { configTorneo }
+      data: { configTorneo: configData as any }
     });
     res.json({ ok: true, configTorneo: getConfigTorneo(circuit) });
   } catch (error: any) {
