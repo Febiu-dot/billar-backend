@@ -43,17 +43,79 @@ router.get('/:id', async (req, res: Response) => {
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { firstName, lastName, dni, categoryId, club, departamentoId } = req.body;
   const player = await prisma.player.create({
-    data: { firstName, lastName, dni, categoryId, club, departamentoId: departamentoId ? Number(departamentoId) : undefined },
+    data: {
+      firstName,
+      lastName,
+      dni,
+      categoryId,
+      club,
+      departamentoId: departamentoId ? Number(departamentoId) : undefined,
+    },
     include: { category: true, departamento: true },
   });
   res.status(201).json(player);
+});
+
+// POST /api/players/bulk — creación masiva de jugadores nuevos
+router.post('/bulk', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const { players } = req.body as {
+    players: {
+      firstName: string;
+      lastName: string;
+      dni?: string;
+      categoryId: number;
+      club?: string;
+      departamentoId?: number;
+    }[];
+  };
+
+  if (!Array.isArray(players) || players.length === 0) {
+    return res.status(400).json({ error: 'Se requiere un array de jugadores' }) as any;
+  }
+
+  const created: any[] = [];
+  const errors: { index: number; dni?: string; error: string }[] = [];
+
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    try {
+      const player = await prisma.player.create({
+        data: {
+          firstName: p.firstName,
+          lastName: p.lastName,
+          dni: p.dni || undefined,
+          categoryId: Number(p.categoryId),
+          club: p.club || undefined,
+          departamentoId: p.departamentoId ? Number(p.departamentoId) : undefined,
+        },
+        include: { category: true, departamento: true },
+      });
+      created.push(player);
+    } catch (e: any) {
+      errors.push({ index: i, dni: p.dni, error: e.message });
+    }
+  }
+
+  res.status(201).json({
+    creados: created.length,
+    errores: errors.length,
+    detallesErrores: errors,
+  });
 });
 
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { firstName, lastName, dni, categoryId, active, club, departamentoId } = req.body;
   const player = await prisma.player.update({
     where: { id: Number(req.params.id) },
-    data: { firstName, lastName, dni, categoryId, active, club, departamentoId: departamentoId ? Number(departamentoId) : null },
+    data: {
+      firstName,
+      lastName,
+      dni,
+      categoryId,
+      active,
+      club,
+      departamentoId: departamentoId ? Number(departamentoId) : null,
+    },
     include: { category: true, departamento: true },
   });
   res.json(player);
