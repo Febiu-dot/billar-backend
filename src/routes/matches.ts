@@ -451,13 +451,15 @@ router.post('/trigger-master/:phaseId', authenticate, requireRole('admin'), asyn
 });
 
 router.get('/', async (req, res: Response) => {
-  const { phaseId, status, tableId, venueId } = req.query;
+  const { phaseId, status, tableId, venueId, circuitId, tournamentId } = req.query;
   const matches = await prisma.match.findMany({
     where: {
-      ...(phaseId ? { phaseId: Number(phaseId) } : {}),
-      ...(status ? { status: status as any } : {}),
-      ...(tableId ? { tableId: Number(tableId) } : {}),
-      ...(venueId ? { table: { venueId: Number(venueId) } } : {}),
+      ...(phaseId     ? { phaseId: Number(phaseId) }   : {}),
+      ...(status      ? { status: status as any }       : {}),
+      ...(tableId     ? { tableId: Number(tableId) }    : {}),
+      ...(venueId     ? { table: { venueId: Number(venueId) } } : {}),
+      ...(circuitId   ? { phase: { circuitId: Number(circuitId) } } : {}),
+      ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
     include: {
       playerA: { include: { category: true } },
