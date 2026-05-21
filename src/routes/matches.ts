@@ -23,18 +23,120 @@ interface ClasificadoStats {
   tantosEnContra: number;
 }
 
-// ── Helper: obtiene cuposDesdeClasif del circuito del partido ─────────
-async function getCuposDesdeClasif(phaseId: number): Promise<number> {
+// ── Helper: obtiene circuitId y cuposDesdeClasif desde phaseId ────────
+async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cuposDesdeClasif: number }> {
   try {
     const phase = await prisma.phase.findUnique({
       where: { id: phaseId },
       include: { circuit: true }
     });
     const config = (phase?.circuit as any)?.configTorneo as any;
-    return config?.cuposDesdeClasif ?? 16;
+    return {
+      circuitId: phase?.circuitId ?? 0,
+      cuposDesdeClasif: config?.cuposDesdeClasif ?? 16,
+    };
   } catch {
-    return 16;
+    return { circuitId: 0, cuposDesdeClasif: 16 };
   }
+}
+
+// ── Helper: sumar puntos a RankingEntry ───────────────────────────────
+async function sumarPuntosRanking(playerId: number, circuitId: number, puntos: number) {
+  if (!playerId || !circuitId || puntos === 0) return;
+  try {
+    await prisma.rankingEntry.updateMany({
+      where: { playerId, circuitId },
+      data: { points: { increment: puntos } },
+    });
+  } catch (e) {
+    console.error('Error sumando puntos ranking:', e);
+  }
+}
+
+// ── Puntos de serie (Clasificatorio y Segunda) ────────────────────────
+// Posiciones: 1°=8, 2°=6, 3°=4, 4°=2, WO=0
+// Reducción y Repechaje: 0 puntos
+async function asignarPuntosSerie(phaseId: number, serieId: string) {
+  try {
+    // Reducción y repechaje no dan puntos
+    if (serieId.includes('reduccion') || serieId.includes('repechaje')) return;
+
+    const { circuitId } = await getCircuitInfo(phaseId);
+    if (!circuitId) return;
+
+    const partidos = await prisma.match.findMany({
+      where: { phaseId, serieId },
+      include: { result: true },
+      orderBy: { round: 'asc' }
+    });
+
+    const roundBase = Math.min(...partidos.map(p => p.round));
+    const p3 = partidos.find(p => p.round === roundBase + 2);
+    const p4 = partidos.find(p => p.round === roundBase + 3);
+    const p5 = partidos.find(p => p.round === roundBase + 4);
+
+    if (!p5?.result) return;
+
+    // 1° lugar: ganador de P3 (winners final)
+    const primero = p3?.result?.winnerId;
+    // 2° lugar: ganador de P5
+    const segundo = p5?.result?.winnerId;
+    // 3° lugar: perdedor de P5
+    const tercero = p5 ? (p5.playerAId === p5.result?.winnerId ? p5.playerBId : p5.playerAId) : null;
+    // 4° lugar: perdedor de P4
+    const cuarto  = p4?.result ? (p4.playerAId === p4.result?.winnerId ? p4.playerBId : p4.playerAId) : null;
+
+    // WO: 0 puntos (no se asigna nada)
+    if (primero) await sumarPuntosRanking(primero, circuitId, 8);
+    if (segundo) await sumarPuntosRanking(segundo, circuitId, 6);
+    if (tercero) await sumarPuntosRanking(tercero, circuitId, 4);
+    if (cuarto)  await sumarPuntosRanking(cuarto,  circuitId, 2);
+
+  } catch (e) {
+    console.error('Error asignando puntos de serie:', e);
+  }
+}
+
+// ── Puntos de cruces (Primera y Máster) ──────────────────────────────
+// Final: 7/2, resto: 5/1, WO: 0
+async function asignarPuntosCruce(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { result: true, phase: true }
+    });
+    if (!match || !match.result) return;
+
+    // Reducción y repechaje: 0 puntos
+    if (match.serieId?.includes('reduccion') || match.serieId?.includes('repechaje')) return;
+
+    const { circuitId } = await getCircuitInfo(match.phaseId);
+    if (!circuitId) return;
+
+    const isWO      = match.result.isWO;
+    const winnerId  = match.result.winnerId;
+    const loserId   = match.playerAId === winnerId ? match.playerBId : match.playerAId;
+    const esFinal   = match.serieId === 'master-final';
+
+    if (isWO) {
+      // WO: ganador lleva 0, perdedor (ausente) lleva 0
+      return;
+    }
+
+    const ptsGanador = esFinal ? 7 : 5;
+    const ptsPerdedor = esFinal ? 2 : 1;
+
+    if (winnerId) await sumarPuntosRanking(winnerId, circuitId, ptsGanador);
+    if (loserId)  await sumarPuntosRanking(loserId,  circuitId, ptsPerdedor);
+
+  } catch (e) {
+    console.error('Error asignando puntos de cruce:', e);
+  }
+}
+
+async function getCuposDesdeClasif(phaseId: number): Promise<number> {
+  const { cuposDesdeClasif } = await getCircuitInfo(phaseId);
+  return cuposDesdeClasif;
 }
 
 async function avanzarBracketMaster(matchId: number) {
@@ -219,7 +321,6 @@ async function rellenarSlotsPrimera(phaseId: number) {
   } catch (error) { console.error('Error rellenando slots de Primera:', error); }
 }
 
-// ── ACTUALIZADA: usa cuposDesdeClasif dinámico ────────────────────────
 async function rellenarSlotSegunda(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
@@ -230,7 +331,7 @@ async function rellenarSlotSegunda(matchId: number) {
     const cruceNum = parseInt(mReduccion[1]);
 
     const cuposDesdeClasif = await getCuposDesdeClasif(match.phaseId);
-    if (cruceNum > cuposDesdeClasif - 1) return; // Solo los directos van a segunda
+    if (cruceNum > cuposDesdeClasif - 1) return;
 
     const slotLabel = `Clasificado Clasif. #${cruceNum}`;
     const winnerId = match.result.winnerId;
@@ -252,7 +353,6 @@ async function rellenarSlotSegunda(matchId: number) {
   } catch (error) { console.error('Error rellenando slot de Segunda:', error); }
 }
 
-// ── ACTUALIZADA: slot del repechaje usa cuposDesdeClasif dinámico ─────
 async function rellenarSlotSegundaConRepechaje(winnerId: number, phaseId: number) {
   try {
     const cuposDesdeClasif = await getCuposDesdeClasif(phaseId);
@@ -275,7 +375,6 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number, phaseId: number
   } catch (error) { console.error('Error rellenando slot de Segunda con repechaje:', error); }
 }
 
-// ── ACTUALIZADA: cruces del repechaje usan cuposDesdeClasif dinámico ──
 async function rellenarRepechaje(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
@@ -454,11 +553,11 @@ router.get('/', async (req, res: Response) => {
   const { phaseId, status, tableId, venueId, circuitId, tournamentId } = req.query;
   const matches = await prisma.match.findMany({
     where: {
-      ...(phaseId     ? { phaseId: Number(phaseId) }   : {}),
-      ...(status      ? { status: status as any }       : {}),
-      ...(tableId     ? { tableId: Number(tableId) }    : {}),
-      ...(venueId     ? { table: { venueId: Number(venueId) } } : {}),
-      ...(circuitId   ? { phase: { circuitId: Number(circuitId) } } : {}),
+      ...(phaseId      ? { phaseId: Number(phaseId) }   : {}),
+      ...(status       ? { status: status as any }       : {}),
+      ...(tableId      ? { tableId: Number(tableId) }    : {}),
+      ...(venueId      ? { table: { venueId: Number(venueId) } } : {}),
+      ...(circuitId    ? { phase: { circuitId: Number(circuitId) } } : {}),
       ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
     include: {
@@ -601,6 +700,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const phaseType = existingMatch.phase?.type;
 
+  // ── LÓGICA DE PROGRESIÓN ──────────────────────────────────────────
   if (phaseType === 'clasificatorio' || phaseType === 'segunda') await generarSiguientePartidoSerie(matchId);
   if (phaseType === 'clasificatorio' && existingMatch.serieId?.startsWith('clasif-serie-') && posEnSerie === 4) await rellenarCrucesReduccion(existingMatch.phaseId);
   if (phaseType === 'segunda' && existingMatch.serieId?.startsWith('segunda-serie-') && posEnSerie === 4) await rellenarSlotsPrimera(existingMatch.phaseId);
@@ -617,6 +717,20 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     await rellenarSlotSegundaConRepechaje(winnerId, existingMatch.phaseId);
   }
 
+  // ── SISTEMA DE PUNTUACIÓN ─────────────────────────────────────────
+  // Series Clasificatorio y Segunda: puntos al terminar el 5° partido
+  if (esPartidoDeSerie && esUltimoPartidoSerie && existingMatch.serieId) {
+    await asignarPuntosSerie(existingMatch.phaseId, existingMatch.serieId);
+  }
+
+  // Cruces Primera y Máster: puntos al terminar cada cruce
+  // Reducción y repechaje: 0 puntos (asignarPuntosCruce lo ignora)
+  if (phaseType === 'primera' || phaseType === 'master' ||
+      (phaseType === 'clasificatorio' && existingMatch.serieId?.startsWith('clasif-reduccion-')) ||
+      (phaseType === 'clasificatorio' && existingMatch.serieId === 'clasif-repechaje')) {
+    await asignarPuntosCruce(matchId);
+  }
+
   // ── TRIGGER ACUMULADO ─────────────────────────────────────────────
   if (phaseType === 'master') {
     try {
@@ -630,6 +744,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     } catch (acumError) { console.error('Error calculando acumulado (no crítico):', acumError); }
   }
 
+  // ── REPORTES ──────────────────────────────────────────────────────
   try {
     if ((phaseType === 'clasificatorio' || phaseType === 'segunda') && esPartidoDeSerie && posEnSerie === 4 && existingMatch.serieId) {
       await generarReporteSerie(existingMatch.phaseId, existingMatch.serieId);
