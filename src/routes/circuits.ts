@@ -20,6 +20,10 @@ interface ConfigTorneo {
   cantPrimera:      number;
   cantSegunda:      number;
   cuposDesdeClasif: number;
+  tipo?:            'departamental' | 'nacional';
+  categoriaFederal?: 'primera' | 'segunda' | 'tercera';
+  ruleSetSeries?:   number;
+  ruleSetCruces?:   number;
 }
 
 function getConfigTorneo(circuit: any): ConfigTorneo {
@@ -29,7 +33,23 @@ function getConfigTorneo(circuit: any): ConfigTorneo {
     cantPrimera:      c.cantPrimera      ?? DEFAULT_CONFIG.cantPrimera,
     cantSegunda:      c.cantSegunda      ?? DEFAULT_CONFIG.cantSegunda,
     cuposDesdeClasif: c.cuposDesdeClasif ?? DEFAULT_CONFIG.cuposDesdeClasif,
+    tipo:             c.tipo             ?? 'departamental',
+    categoriaFederal: c.categoriaFederal ?? undefined,
+    ruleSetSeries:    c.ruleSetSeries    ?? RULESET_SERIES,
+    ruleSetCruces:    c.ruleSetCruces    ?? RULESET_CRUCES,
   };
+}
+
+function esNacional(config: ConfigTorneo): boolean {
+  return config.tipo === 'nacional';
+}
+
+// ── RuleSet por categoría y fase Nacional ─────────────────────────────
+function getRuleSetNacional(categoriaFederal: string | undefined, fase: 'series' | 'cruces'): number {
+  if (!categoriaFederal) return RULESET_SERIES;
+  if (categoriaFederal === 'primera') return RULESET_CRUCES; // 5 sets para todo
+  if (categoriaFederal === 'segunda') return fase === 'series' ? RULESET_SERIES : RULESET_CRUCES;
+  return RULESET_SERIES; // tercera: 3 sets para todo
 }
 
 async function getJugadoresOrdenados(circuit: any, circuitId: number, cfg?: ConfigTorneo) {
@@ -58,6 +78,19 @@ async function getJugadoresOrdenados(circuit: any, circuitId: number, cfg?: Conf
   const inscriptos = circuit.players
     .map((cp: any) => cp.player)
     .filter((p: any) => p.dni !== LIBRE_DNI);
+
+  // ── Nacional: todos van a clasificatorio (series), ordenados por ranking ─
+  if (esNacional(config)) {
+    if (rankings.length === 0) {
+      return { master: [], primera: [], segunda: [], clasif: inscriptos, getRankPos: () => 9999, rankings: [] };
+    }
+    const getRankPos = (playerId: number): number => {
+      const entry = rankings.find((r: any) => r.playerId === playerId);
+      return entry?.position ?? 9999;
+    };
+    const ordenados = [...inscriptos].sort((a: any, b: any) => getRankPos(a.id) - getRankPos(b.id));
+    return { master: [], primera: [], segunda: [], clasif: ordenados, getRankPos, rankings };
+  }
 
   // ── Fallback a categoría cuando no hay rankings ───────────────────
   if (rankings.length === 0) {
@@ -145,6 +178,104 @@ function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number
   return matches;
 }
 
+// ── Genera el skeleton del bracket doble eliminación 16 jugadores ─────
+// WB: R1(8) R2(4) SF(2) F(1)
+// LB: R1(4) R2(4) R3(2) R4(2) F(1)
+// GF: (1)
+// Total: 29 partidos con slots, se llenan cuando terminan las series
+function generarBracketNacionalSkeleton(phaseId: number, ruleSetCruces: number): any[] {
+  const matches: any[] = [];
+
+  // ── Winners Bracket R1 (rounds 101-108) ──────────────────────────
+  for (let i = 1; i <= 8; i++) {
+    matches.push(mkMatch(phaseId, null, null, 100 + i,
+      `Nac. Clasificado #${i}`,
+      `Nac. Clasificado #${17 - i}`,
+      `nac-wb-r1-${i}`, ruleSetCruces
+    ));
+  }
+
+  // ── Winners Bracket R2 (rounds 111-114) ──────────────────────────
+  for (let i = 1; i <= 4; i++) {
+    matches.push(mkMatch(phaseId, null, null, 110 + i,
+      `Gan. NAC-WB-R1-${(i - 1) * 2 + 1}`,
+      `Gan. NAC-WB-R1-${(i - 1) * 2 + 2}`,
+      `nac-wb-r2-${i}`, ruleSetCruces
+    ));
+  }
+
+  // ── Winners Bracket SF (rounds 121-122) ──────────────────────────
+  matches.push(mkMatch(phaseId, null, null, 121,
+    'Gan. NAC-WB-R2-1', 'Gan. NAC-WB-R2-2',
+    'nac-wb-sf-1', ruleSetCruces
+  ));
+  matches.push(mkMatch(phaseId, null, null, 122,
+    'Gan. NAC-WB-R2-3', 'Gan. NAC-WB-R2-4',
+    'nac-wb-sf-2', ruleSetCruces
+  ));
+
+  // ── Winners Bracket Final (round 131) ────────────────────────────
+  matches.push(mkMatch(phaseId, null, null, 131,
+    'Gan. NAC-WB-SF-1', 'Gan. NAC-WB-SF-2',
+    'nac-wb-final', ruleSetCruces
+  ));
+
+  // ── Losers Bracket R1 (rounds 201-204) ───────────────────────────
+  // Losers de WB-R1 pareados: 1&2, 3&4, 5&6, 7&8
+  for (let i = 1; i <= 4; i++) {
+    matches.push(mkMatch(phaseId, null, null, 200 + i,
+      `Per. NAC-WB-R1-${(i - 1) * 2 + 1}`,
+      `Per. NAC-WB-R1-${(i - 1) * 2 + 2}`,
+      `nac-lb-r1-${i}`, ruleSetCruces
+    ));
+  }
+
+  // ── Losers Bracket R2 (rounds 211-214) ───────────────────────────
+  // WB-R2 losers vs LB-R1 winners
+  for (let i = 1; i <= 4; i++) {
+    matches.push(mkMatch(phaseId, null, null, 210 + i,
+      `Per. NAC-WB-R2-${i}`,
+      `Gan. NAC-LB-R1-${i}`,
+      `nac-lb-r2-${i}`, ruleSetCruces
+    ));
+  }
+
+  // ── Losers Bracket R3 (rounds 221-222) ───────────────────────────
+  matches.push(mkMatch(phaseId, null, null, 221,
+    'Gan. NAC-LB-R2-1', 'Gan. NAC-LB-R2-2',
+    'nac-lb-r3-1', ruleSetCruces
+  ));
+  matches.push(mkMatch(phaseId, null, null, 222,
+    'Gan. NAC-LB-R2-3', 'Gan. NAC-LB-R2-4',
+    'nac-lb-r3-2', ruleSetCruces
+  ));
+
+  // ── Losers Bracket R4 (rounds 231-232) ───────────────────────────
+  // WB-SF losers vs LB-R3 winners
+  matches.push(mkMatch(phaseId, null, null, 231,
+    'Per. NAC-WB-SF-1', 'Gan. NAC-LB-R3-1',
+    'nac-lb-r4-1', ruleSetCruces
+  ));
+  matches.push(mkMatch(phaseId, null, null, 232,
+    'Per. NAC-WB-SF-2', 'Gan. NAC-LB-R3-2',
+    'nac-lb-r4-2', ruleSetCruces
+  ));
+
+  // ── Losers Bracket Final (round 241) ─────────────────────────────
+  matches.push(mkMatch(phaseId, null, null, 241,
+    'Gan. NAC-LB-R4-1', 'Gan. NAC-LB-R4-2',
+    'nac-lb-final', ruleSetCruces
+  ));
+
+  // ── Grand Final (round 251) ───────────────────────────────────────
+  matches.push(mkMatch(phaseId, null, null, 251,
+    'Gan. NAC-WB-FINAL', 'Gan. NAC-LB-FINAL',
+    'nac-grand-final', ruleSetCruces
+  ));
+
+  return matches; // 29 partidos
+}
+
 // ── GET /api/circuits ─────────────────────────────────────────────────
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -195,19 +326,32 @@ router.get('/:id/config-torneo', async (req: Request, res: Response) => {
 router.put('/:id/config-torneo', async (req: Request, res: Response) => {
   try {
     const circuitId = parseInt(req.params.id);
-    const { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif } = req.body;
+    const { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif, tipo, categoriaFederal } = req.body;
+
+    // Para Nacional no aplican las validaciones departamentales
+    if (tipo === 'nacional') {
+      const ruleSetSeries = getRuleSetNacional(categoriaFederal, 'series');
+      const ruleSetCruces = getRuleSetNacional(categoriaFederal, 'cruces');
+      const configData = { tipo: 'nacional', categoriaFederal, ruleSetSeries, ruleSetCruces, cantMaster: 0, cantPrimera: 0, cantSegunda: 0, cuposDesdeClasif: 0 };
+      const circuit = await prisma.circuit.update({
+        where: { id: circuitId },
+        data: { configTorneo: configData as any }
+      });
+      res.json({ ok: true, configTorneo: getConfigTorneo(circuit) });
+      return;
+    }
 
     if (cantMaster == null || cantPrimera == null || cantSegunda == null || cuposDesdeClasif == null) {
-      res.status(400).json({ error: 'Faltan parámetros: cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif' });
+      res.status(400).json({ error: 'Faltan parámetros' });
       return;
     }
 
     if ((cantSegunda + cuposDesdeClasif) % 4 !== 0) {
-      res.status(400).json({ error: `cantSegunda (${cantSegunda}) + cuposDesdeClasif (${cuposDesdeClasif}) = ${cantSegunda + cuposDesdeClasif}, que no es múltiplo de 4. Ajustá los valores.` });
+      res.status(400).json({ error: `cantSegunda (${cantSegunda}) + cuposDesdeClasif (${cuposDesdeClasif}) = ${cantSegunda + cuposDesdeClasif}, que no es múltiplo de 4.` });
       return;
     }
 
-    const configData = { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif };
+    const configData = { tipo: 'departamental', cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif };
     const circuit = await prisma.circuit.update({
       where: { id: circuitId },
       data: { configTorneo: configData as any }
@@ -256,8 +400,6 @@ router.delete('/:id/players/:playerId', async (req: Request, res: Response) => {
 });
 
 // ── POST /api/circuits/:id/seed-ranking ──────────────────────────────
-// Acepta cualquier prefijo de DNI departamental (MON, CAN, LAV, RIV, etc.)
-// Extrae el número del final del DNI como posición de ranking
 router.post('/:id/seed-ranking', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
   try {
@@ -305,13 +447,40 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     if (circuit.players.length === 0) { res.status(400).json({ error: 'Sin jugadores inscriptos' }); return; }
 
     const config = getConfigTorneo(circuit);
-    const { cuposDesdeClasif } = config;
-
     const librePlayer = await prisma.player.findFirst({ where: { dni: LIBRE_DNI } });
     const libreObj = librePlayer ?? { id: 0, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' };
     const { master, primera, segunda, clasif } = await getJugadoresOrdenados(circuit, circuitId, config);
-
     const pn = (p: any) => p.dni === LIBRE_DNI ? 'LIBRE' : `${p.lastName}${p.lastName ? ', ' : ''}${p.firstName}`;
+
+    // ── Preview Nacional ──────────────────────────────────────────────
+    if (esNacional(config)) {
+      const jugConLibre = completarConLibre(clasif, libreObj);
+      const numSeries = jugConLibre.length / 4;
+      const seriesClasif = armarSeriesEspejo(jugConLibre).map((serie, i) => ({
+        serie: i + 1,
+        jugadores: serie.map((p: any) => ({ id: p.id, nombre: pn(p), esLibre: p.dni === LIBRE_DNI }))
+      }));
+
+      return res.json({
+        config,
+        tipo: 'nacional',
+        categoriaFederal: config.categoriaFederal,
+        inscriptos: { total: clasif.length, clasificatorio: clasif.length },
+        clasificatorio: {
+          totalJugadores: jugConLibre.length,
+          totalSeries: numSeries,
+          totalClasificados: numSeries * 2,
+          series: seriesClasif,
+        },
+        bracket: {
+          descripcion: 'Doble eliminación 16 jugadores — 29 partidos',
+          totalPartidos: 29,
+        }
+      });
+    }
+
+    // ── Preview Departamental ─────────────────────────────────────────
+    const { cuposDesdeClasif } = config;
 
     const jugConLibre = completarConLibre(clasif, libreObj);
     const numSeries = jugConLibre.length / 4;
@@ -342,10 +511,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     for (let i = 0; i < numSeriesSegunda; i++) {
       const posiciones = [i, N2 - 1 - i, mitad2 - 1 - i, mitad2 + i];
       const jugadores = posiciones.map(pos => jugSegunda[pos]);
-      seriesSegunda.push({
-        serie: i + 1,
-        jugadores: jugadores.map((p: any) => ({ nombre: p.id ? pn(p) : (p.slot ?? 'LIBRE'), esSlot: !p.id }))
-      });
+      seriesSegunda.push({ serie: i + 1, jugadores: jugadores.map((p: any) => ({ nombre: p.id ? pn(p) : (p.slot ?? 'LIBRE'), esSlot: !p.id })) });
     }
 
     const slotsSegunda = Array.from({ length: numClasifSegunda }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }));
@@ -355,8 +521,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
 
     const crucesPrimera = [];
     for (let i = 0; i < Math.floor(totalPrimera / 2); i++) {
-      const jA = jugPrimera[i];
-      const jB = jugPrimera[totalPrimera - 1 - i];
+      const jA = jugPrimera[i]; const jB = jugPrimera[totalPrimera - 1 - i];
       crucesPrimera.push({ cruce: i + 1, jugadorA: jA.id ? pn(jA) : (jA.slot ?? '—'), jugadorB: jB.id ? pn(jB) : (jB.slot ?? '—'), esSlotA: !jA.id, esSlotB: !jB.id });
     }
 
@@ -366,17 +531,13 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
 
     const crucesMaster = [];
     for (let i = 0; i < NM / 2; i++) {
-      const jA = jugMaster[i];
-      const jB = jugMaster[NM - 1 - i];
+      const jA = jugMaster[i]; const jB = jugMaster[NM - 1 - i];
       crucesMaster.push({ cruce: i + 1, jugadorA: jA.id ? pn(jA) : (jA.slot ?? '—'), jugadorB: jB.id ? pn(jB) : (jB.slot ?? '—'), esSlotA: !jA.id, esSlotB: !jB.id });
     }
 
     res.json({
       config,
-      inscriptos: {
-        total: master.length + primera.length + segunda.length + clasif.length,
-        master: master.length, primera: primera.length, segunda: segunda.length, tercera: clasif.length
-      },
+      inscriptos: { total: master.length + primera.length + segunda.length + clasif.length, master: master.length, primera: primera.length, segunda: segunda.length, tercera: clasif.length },
       clasificatorio: { totalJugadores: jugConLibre.length, totalSeries: numSeries, totalClasificados: numClasificados, necesitaReduccion: numClasificados > cuposDesdeClasif, series: seriesClasif, crucesReduccion },
       segundaPreview: { totalJugadores: N2, totalSeries: numSeriesSegunda, totalClasificados: numClasifSegunda, series: seriesSegunda },
       primeraPreview: { totalJugadores: totalPrimera, totalCruces: crucesPrimera.length, totalClasificados: numClasifPrimera, cruces: crucesPrimera },
@@ -403,7 +564,6 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     if (circuit.phases.length === 0) { res.status(400).json({ error: 'El circuito no tiene fases creadas' }); return; }
 
     const config = getConfigTorneo(circuit);
-    const { cuposDesdeClasif } = config;
 
     const phaseIds = circuit.phases.map(p => p.id);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
@@ -415,13 +575,81 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     const libreObj = librePlayer ?? { id: libreId, dni: LIBRE_DNI, firstName: 'LIBRE', lastName: '' };
 
     const { master, primera, segunda, clasif } = await getJugadoresOrdenados(circuit, circuitId, config);
+    const matchesCreados: any[] = [];
+
+    // ══════════════════════════════════════════════════════════════════
+    // NACIONAL
+    // ══════════════════════════════════════════════════════════════════
+    if (esNacional(config)) {
+      const phaseClasif = circuit.phases.find(p => p.type === 'clasificatorio');
+      const phaseMaster = circuit.phases.find(p => p.type === 'master');
+
+      if (!phaseClasif) { res.status(400).json({ error: 'Falta la fase Clasificatorio' }); return; }
+      if (!phaseMaster) { res.status(400).json({ error: 'Falta la fase Master (bracket)' }); return; }
+
+      const ruleSetSeries = config.ruleSetSeries ?? getRuleSetNacional(config.categoriaFederal, 'series');
+      const ruleSetCruces = config.ruleSetCruces ?? getRuleSetNacional(config.categoriaFederal, 'cruces');
+
+      // ── 8 Series de 4 jugadores (32 jugadores seeded) ────────────
+      if (clasif.length > 0) {
+        const jugConLibre = completarConLibre(clasif, libreObj);
+        const series = armarSeriesEspejo(jugConLibre);
+
+        for (let i = 0; i < series.length; i++) {
+          const [A, B, C, D] = series[i];
+          const roundBase = i * 10 + 1;
+          const serieId = `nac-serie-${i + 1}`;
+          matchesCreados.push(mkMatch(phaseClasif.id, A.id, B.id, roundBase,     undefined, undefined, serieId, ruleSetSeries));
+          matchesCreados.push(mkMatch(phaseClasif.id, C.id, D.id, roundBase + 1, undefined, undefined, serieId, ruleSetSeries));
+        }
+      }
+
+      // ── Bracket 16 jugadores — skeleton con slots ─────────────────
+      const bracketMatches = generarBracketNacionalSkeleton(phaseMaster.id, ruleSetCruces);
+      matchesCreados.push(...bracketMatches);
+
+      if (matchesCreados.length > 0) {
+        await prisma.match.createMany({ data: matchesCreados });
+      }
+
+      // ── WOs contra LIBRE en series ────────────────────────────────
+      if (phaseClasif && libreId) {
+        const partidos = await prisma.match.findMany({
+          where: { phaseId: phaseClasif.id, OR: [{ playerAId: libreId }, { playerBId: libreId }] }
+        });
+        for (const partido of partidos) {
+          const winnerId = partido.playerAId === libreId ? partido.playerBId : partido.playerAId;
+          if (!winnerId) continue;
+          const isA = partido.playerAId === libreId;
+          await prisma.match.update({ where: { id: partido.id }, data: { status: 'wo', finishedAt: new Date() } });
+          await prisma.matchResult.create({
+            data: { matchId: partido.id, setsA: isA ? 0 : 2, setsB: isA ? 2 : 0, pointsA: isA ? 0 : 120, pointsB: isA ? 120 : 0, winnerId, isWO: true, woPlayerId: libreId }
+          });
+        }
+      }
+
+      return res.json({
+        message: 'Partidos Nacional generados correctamente',
+        config,
+        total: matchesCreados.length,
+        detalle: {
+          series: matchesCreados.filter(m => m.phaseId === phaseClasif?.id).length,
+          bracket: bracketMatches.length,
+        },
+        jugadores: { total: clasif.length }
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // DEPARTAMENTAL (lógica original)
+    // ══════════════════════════════════════════════════════════════════
+    const { cuposDesdeClasif } = config;
 
     const phaseClasif  = circuit.phases.find(p => p.type === 'clasificatorio');
     const phaseSegunda = circuit.phases.find(p => p.type === 'segunda');
     const fasePrimera  = circuit.phases.find(p => p.type === 'primera');
     const faseMaster   = circuit.phases.find(p => p.type === 'master');
 
-    const matchesCreados: any[] = [];
     let numClasifSegunda = 0;
     let numClasifPrimera = 0;
 
@@ -441,22 +669,14 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
 
       if (numClasificados > cuposDesdeClasif) {
         for (let i = 0; i < numSeries; i++) {
-          matchesCreados.push(mkMatch(
-            phaseClasif.id, null, null,
-            numSeries * 10 + i + 1,
-            `Clasificado #${i + 1}`,
-            `Clasificado #${numClasificados - i}`,
-            `clasif-reduccion-${i + 1}`,
-            RULESET_SERIES
+          matchesCreados.push(mkMatch(phaseClasif.id, null, null, numSeries * 10 + i + 1,
+            `Clasificado #${i + 1}`, `Clasificado #${numClasificados - i}`,
+            `clasif-reduccion-${i + 1}`, RULESET_SERIES
           ));
         }
-        matchesCreados.push(mkMatch(
-          phaseClasif.id, null, null,
-          numSeries * 10 + numSeries + 1,
-          `Ganador Cruce ${cuposDesdeClasif}`,
-          `Ganador Cruce ${cuposDesdeClasif + 1}`,
-          'clasif-repechaje',
-          RULESET_SERIES
+        matchesCreados.push(mkMatch(phaseClasif.id, null, null, numSeries * 10 + numSeries + 1,
+          `Ganador Cruce ${cuposDesdeClasif}`, `Ganador Cruce ${cuposDesdeClasif + 1}`,
+          'clasif-repechaje', RULESET_SERIES
         ));
       }
     }
@@ -487,8 +707,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       numClasifPrimera = Math.floor(total / 2);
 
       for (let i = 0; i < Math.floor(total / 2); i++) {
-        const jA = jugConSlots[i];
-        const jB = jugConSlots[total - 1 - i];
+        const jA = jugConSlots[i]; const jB = jugConSlots[total - 1 - i];
         matchesCreados.push(mkMatch(fasePrimera.id, jA.id ?? null, jB.id ?? null, i + 1, jA.slot ?? undefined, jB.slot ?? undefined, `primera-cruce-${i + 1}`, RULESET_CRUCES));
       }
     }
