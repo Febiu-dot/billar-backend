@@ -7,21 +7,33 @@ const router = Router();
 
 router.post('/login', async (req: Request, res: Response) => {
   const { username, password } = req.body;
+
   if (!username || !password)
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+
   try {
-    const user = await prisma.user.findUnique({
-      where: { username },
+    // Búsqueda case-insensitive + trim para evitar problemas de mayúsculas/espacios
+    const user = await prisma.user.findFirst({
+      where: {
+        username: {
+          equals: String(username).trim(),
+          mode: 'insensitive',
+        },
+      },
       include: { venue: true },
     });
+
     if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
-    const valid = await bcrypt.compare(password, user.password);
+
+    const valid = await bcrypt.compare(String(password).trim(), user.password);
     if (!valid) return res.status(401).json({ error: 'Credenciales inválidas' });
+
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, venueId: user.venueId },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '8h' }
     );
+
     res.json({
       token,
       user: {
