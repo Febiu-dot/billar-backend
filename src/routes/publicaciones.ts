@@ -57,6 +57,22 @@ router.get('/circuitos', async (_req, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// DELETE /api/publicaciones/reset — vaciar reportes y ranking acumulado
+router.delete('/reset', async (_req, res: Response) => {
+  try {
+    const [reportes, acumulado] = await Promise.all([
+      prisma.report.deleteMany({}),
+      prisma.rankingAcumulado.deleteMany({}),
+    ]);
+    res.json({
+      ok: true,
+      message: 'Publicaciones vaciadas correctamente',
+      reportes_borrados: reportes.count,
+      acumulado_borrado: acumulado.count,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/publicaciones/:circuitId/:tipoFase
 router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
   try {
