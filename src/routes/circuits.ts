@@ -777,6 +777,59 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
   }
 });
 
+// ── POST /api/circuits/:id/ranking-upload ────────────────────────────
+// Carga masiva de ranking desde Excel. Body: { rankings: [{dni, position}] }
+router.post('/:id/ranking-upload', async (req: Request, res: Response) => {
+  const circuitId = parseInt(req.params.id);
+  const { rankings } = req.body;
+
+  if (!Array.isArray(rankings) || rankings.length === 0) {
+    res.status(400).json({ error: 'Se requiere un array de rankings' });
+    return;
+  }
+
+  try {
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+
+    let cargados = 0;
+    const errores: string[] = [];
+
+    for (const item of rankings) {
+      if (!item.dni || item.position == null) {
+        errores.push(`Fila inválida: ${JSON.stringify(item)}`);
+        continue;
+      }
+
+      const player = await prisma.player.findFirst({
+        where: { dni: { equals: String(item.dni).trim(), mode: 'insensitive' } }
+      });
+
+      if (!player) {
+        errores.push(`DNI no encontrado: ${item.dni}`);
+        continue;
+      }
+
+      await prisma.rankingEntry.upsert({
+        where: { playerId_circuitId: { playerId: player.id, circuitId } },
+        update: { position: Number(item.position) },
+        create: {
+          playerId: player.id,
+          circuitId,
+          position: Number(item.position),
+          points: 0, matchesPlayed: 0, matchesWon: 0,
+          setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0,
+        }
+      });
+      cargados++;
+    }
+
+    res.json({ ok: true, cargados, errores, total: rankings.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── POST /api/circuits/:id/reset ─────────────────────────────────────
 // Borra todos los partidos y resetea puntos del ranking
 // Mantiene: jugadores inscriptos, fases, config, rankingEntry positions
