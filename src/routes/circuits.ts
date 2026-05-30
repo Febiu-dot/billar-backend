@@ -777,10 +777,10 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
   }
 });
 
-// ── DELETE /api/circuits/:id/reset ───────────────────────────────────
+// ── POST /api/circuits/:id/reset ─────────────────────────────────────
 // Borra todos los partidos y resetea puntos del ranking
 // Mantiene: jugadores inscriptos, fases, config, rankingEntry positions
-router.delete('/:id/reset', async (req: Request, res: Response) => {
+router.post('/:id/reset', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
   try {
     const circuit = await prisma.circuit.findUnique({
