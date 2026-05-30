@@ -57,18 +57,32 @@ router.get('/circuitos', async (_req, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE /api/publicaciones/reset — vaciar reportes y ranking acumulado
+// DELETE /api/publicaciones/reset — vaciar reportes, acumulado y rankings
 router.delete('/reset', async (_req, res: Response) => {
   try {
-    const [reportes, acumulado] = await Promise.all([
+    const [reportes, acumulado, rankings] = await Promise.all([
       prisma.report.deleteMany({}),
       prisma.rankingAcumulado.deleteMany({}),
+      // Resetear ranking entries: borrar posición y puntos
+      prisma.rankingEntry.updateMany({
+        data: {
+          position:      null,
+          points:        0,
+          matchesPlayed: 0,
+          matchesWon:    0,
+          setsWon:       0,
+          setsLost:      0,
+          pointsFor:     0,
+          pointsAgainst: 0,
+        }
+      }),
     ]);
     res.json({
       ok: true,
-      message: 'Publicaciones vaciadas correctamente',
-      reportes_borrados: reportes.count,
-      acumulado_borrado: acumulado.count,
+      message: 'Todo vaciado correctamente',
+      reportes_borrados:  reportes.count,
+      acumulado_borrado:  acumulado.count,
+      rankings_reseteados: rankings.count,
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -77,7 +91,7 @@ router.delete('/reset', async (_req, res: Response) => {
 router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
   try {
     const circuitId = parseInt(req.params.circuitId);
-    const tipoFase = req.params.tipoFase;
+    const tipoFase  = req.params.tipoFase;
 
     const circuit = await prisma.circuit.findUnique({
       where: { id: circuitId },
@@ -93,17 +107,37 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       formato: '',
     };
 
-    // ---- RANKING ----
-    if (tipoFase === 'ranking') {
-      const entries = await prisma.rankingEntry.findMany({
-        where: { circuitId },
+    // ── RANKING ──────────────────────────────────────────────────────
+    if (tipoFase === 'ranking' || tipoFase === 'ranking-final') {
+      let entries = await prisma.rankingEntry.findMany({
+        where: { circuitId, position: { not: null } },
         include: { player: { include: { category: true } } },
         orderBy: { position: 'asc' }
       });
+
+      // Si no hay ranking en este circuito, buscar el anterior del MISMO torneo
       if (entries.length === 0) {
-        res.status(404).json({ error: 'No hay ranking guardado para este circuito. Generalo desde la página Ranking Final.' });
+        const prevCircuit = await prisma.circuit.findFirst({
+          where: {
+            tournamentId: circuit.tournamentId,  // ← mismo torneo
+            order: circuit.order - 1,
+          }
+        });
+        if (prevCircuit) {
+          entries = await prisma.rankingEntry.findMany({
+            where: { circuitId: prevCircuit.id, position: { not: null } },
+            include: { player: { include: { category: true } } },
+            orderBy: { position: 'asc' }
+          });
+        }
+      }
+
+      if (entries.length === 0) {
+        res.status(404).json({ error: 'No hay ranking para este circuito. Cargalo desde "Carga de Ranking".' });
         return;
       }
+
+      const esRankingFinal = tipoFase === 'ranking-final';
       const jugadores = entries.map(e => ({
         posicion: e.position ?? 0,
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
@@ -113,14 +147,35 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         tantos: e.pointsFor,
         seccion: getSeccion(e.position),
       }));
-      return res.json({ ...base, tipo: 'ranking', fase: `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', jugadores });
+
+      return res.json({
+        ...base,
+        tipo: 'ranking',
+        fase: esRankingFinal
+          ? `RANKING FINAL — ${circuit.name.toUpperCase()}`
+          : `RANKING — ${circuit.name.toUpperCase()}`,
+        fechaPrincipal: '',
+        jugadores,
+      });
     }
 
-    // ---- FASES DE PARTIDOS ----
-    let rankings = await prisma.rankingEntry.findMany({ where: { circuitId }, orderBy: { position: 'asc' } });
+    // ── FASES DE PARTIDOS ─────────────────────────────────────────────
+    let rankings = await prisma.rankingEntry.findMany({
+      where: { circuitId, position: { not: null } },
+      orderBy: { position: 'asc' }
+    });
+
+    // Rankings del circuito anterior si no hay en este (mismo torneo)
     if (rankings.length === 0) {
-      const prev = await prisma.circuit.findFirst({ where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 } });
-      if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id }, orderBy: { position: 'asc' } });
+      const prev = await prisma.circuit.findFirst({
+        where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
+      });
+      if (prev) {
+        rankings = await prisma.rankingEntry.findMany({
+          where: { circuitId: prev.id, position: { not: null } },
+          orderBy: { position: 'asc' }
+        });
+      }
     }
 
     const phaseTypeMap: Record<string, string> = {
@@ -128,7 +183,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       segunda: 'segunda', primera: 'primera', master: 'master',
     };
     const phase = circuit.phases.find(p => p.type === phaseTypeMap[tipoFase]);
-    if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada` }); return; }
+    if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
     const matches = await prisma.match.findMany({
       where: { phaseId: phase.id },
@@ -140,6 +195,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       },
       orderBy: { round: 'asc' }
     });
+
+    if (matches.length === 0) {
+      res.status(404).json({ error: 'No hay partidos generados para esta fase. Generalos desde Fixture.' });
+      return;
+    }
 
     const formato = ['primera', 'master'].includes(phaseTypeMap[tipoFase]) ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
 
@@ -162,13 +222,17 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         const rb = Math.min(...pts.map(p => p.round));
         return {
           serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'),
-          p1: pts.find(p => p.round === rb) ? mkP(pts.find(p => p.round === rb)!) : null,
+          p1: pts.find(p => p.round === rb)     ? mkP(pts.find(p => p.round === rb)!)     : null,
           p2: pts.find(p => p.round === rb + 1) ? mkP(pts.find(p => p.round === rb + 1)!) : null,
         };
       }).sort((a, b) => a.numero - b.numero);
 
       const pf = sm.find(m => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: fechaLarga(pf), series });
+      return res.json({
+        ...base, tipo: 'series',
+        fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA',
+        formato, fechaPrincipal: fechaLarga(pf), series
+      });
     }
 
     // REDUCCIÓN
@@ -200,8 +264,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     };
 
     const cruces = matches.map(m => ({
-      round: m.round,
-      etapa: getEtapa(m.round),
+      round: m.round, etapa: getEtapa(m.round),
       jugadorA: jugadorInfo(m.playerA, m.slotA, rankings),
       jugadorB: jugadorInfo(m.playerB, m.slotB, rankings),
       sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null,
@@ -211,7 +274,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     }));
 
     const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
-    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', formato, fechaPrincipal: fechaLarga(pf), cruces });
+    res.json({
+      ...base, tipo: 'cruces',
+      fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER',
+      formato, fechaPrincipal: fechaLarga(pf), cruces
+    });
 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
