@@ -792,6 +792,179 @@ router.post('/trigger-master/:phaseId', authenticate, requireRole('admin'), asyn
 });
 
 // ── Trigger manual para rellenar octavos del bracket Nacional ─────────
+// ═══════════════════════════════════════════════════════════════════════
+// ENDPOINT NUEVO: generar bracket Nacional desde series NP-G1..NP-G8
+// Insertar en matches.ts ANTES del router.get('/', ...) general
+// ═══════════════════════════════════════════════════════════════════════
+
+// POST /api/matches/generar-bracket-nacional/:circuitId
+// Lee los ganadores de las 8 series (NP-G1..NP-G8),
+// crea los 15 partidos del bracket en la fase master,
+// y los seedea con seeding estándar (1v16, 8v9, 5v12, etc.)
+router.post('/generar-bracket-nacional/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const circuitId = parseInt(req.params.circuitId);
+  try {
+    // 1) Obtener el circuito con sus fases
+    const circuit = await prisma.circuit.findUnique({
+      where: { id: circuitId },
+      include: { phases: true }
+    });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+
+    const phaseClasif = circuit.phases.find((p: any) => p.type === 'clasificatorio');
+    const phaseMaster = circuit.phases.find((p: any) => p.type === 'master');
+    if (!phaseClasif) { res.status(400).json({ error: 'No se encontró la fase clasificatorio' }); return; }
+    if (!phaseMaster) { res.status(400).json({ error: 'No se encontró la fase master (cruces)' }); return; }
+
+    // 2) Leer todos los partidos de las series NP-G1..NP-G8
+    const partidos = await prisma.match.findMany({
+      where: {
+        phaseId: phaseClasif.id,
+        serieId: { in: ['NP-G1','NP-G2','NP-G3','NP-G4','NP-G5','NP-G6','NP-G7','NP-G8'] }
+      },
+      include: { result: true },
+      orderBy: { round: 'asc' }
+    });
+
+    // 3) Verificar que todos los partidos tienen resultado
+    const sinResultado = partidos.filter(p => !p.result?.winnerId);
+    if (sinResultado.length > 0) {
+      res.status(400).json({ error: `Faltan ${sinResultado.length} partidos por terminar en las series` });
+      return;
+    }
+
+    // 4) Obtener ganadores de cada serie (2 ganadores por serie = 16 total)
+    // Cada serie tiene 2 partidos: round=1 (seed1 vs seed4) y round=1 (seed2 vs seed3)
+    // El 1° de cada grupo es el ganador del partido seed1 vs seed4 (round más bajo, playerA es el seed1)
+    // El 2° es el ganador de seed2 vs seed3
+    interface GanadorSerie { playerId: number; puesto: number; serie: string; }
+    const ganadores: GanadorSerie[] = [];
+
+    const serieIds = ['NP-G1','NP-G2','NP-G3','NP-G4','NP-G5','NP-G6','NP-G7','NP-G8'];
+    for (const serieId of serieIds) {
+      const partidosSerie = partidos.filter(p => p.serieId === serieId).sort((a, b) => a.id - b.id);
+      if (partidosSerie.length < 2) {
+        res.status(400).json({ error: `Serie ${serieId} no tiene 2 partidos` });
+        return;
+      }
+      // Partido 1: seed1 (playerA) vs seed4 (playerB) — ganador es el 1° de la serie
+      const p1 = partidosSerie[0];
+      // Partido 2: seed2 (playerA) vs seed3 (playerB) — ganador es el 2° de la serie
+      const p2 = partidosSerie[1];
+
+      if (!p1.result?.winnerId || !p2.result?.winnerId) {
+        res.status(400).json({ error: `Serie ${serieId} tiene partidos sin resultado` });
+        return;
+      }
+      ganadores.push({ playerId: p1.result.winnerId, puesto: 1, serie: serieId });
+      ganadores.push({ playerId: p2.result.winnerId, puesto: 2, serie: serieId });
+    }
+
+    // 5) Rankear los 16 clasificados
+    // 1° de cada serie son seeds 1-8, 2° de cada serie son seeds 9-16
+    // Orden de seeds: primero todos los 1°, luego todos los 2°
+    // Dentro de cada grupo el orden es el de la serie (G1, G2, ... G8)
+    const primeros = ganadores.filter(g => g.puesto === 1); // seeds 1-8
+    const segundos = ganadores.filter(g => g.puesto === 2); // seeds 9-16
+    const clasificados = [...primeros, ...segundos]; // 16 clasificados ordenados por seed
+
+    // 6) Borrar partidos anteriores del bracket si existen
+    await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+    await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+    await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
+
+    // 7) Crear los 15 partidos del bracket con seeding estándar
+    // Seeding: garantiza que seeds 1 y 2 solo se cruzan en la final
+    // Octavos: 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
+    const cfg = (circuit as any).configTorneo as any;
+    const ruleSetCruces = cfg?.ruleSetCruces ?? 2; // RuleSet 2 = Cruces (mejor de 5)
+
+    const seedingOctavos: [number, number][] = [
+      [0, 15], [7, 8], [4, 11], [3, 12],
+      [3, 13], [5, 10], [6, 9], [1, 14],
+    ];
+
+    // Corregir índices (basado en 0)
+    const seedingCorregido: [number, number][] = [
+      [0, 15],  // oct-1: seed1 vs seed16
+      [7, 8],   // oct-2: seed8 vs seed9
+      [4, 11],  // oct-3: seed5 vs seed12
+      [3, 12],  // oct-4: seed4 vs seed13
+      [2, 13],  // oct-5: seed3 vs seed14
+      [5, 10],  // oct-6: seed6 vs seed11
+      [6, 9],   // oct-7: seed7 vs seed10
+      [1, 14],  // oct-8: seed2 vs seed15
+    ];
+
+    const matchesData: any[] = [];
+
+    // Octavos (rounds 101-108)
+    for (let i = 0; i < 8; i++) {
+      const [idxA, idxB] = seedingCorregido[i];
+      matchesData.push({
+        phaseId: phaseMaster.id,
+        playerAId: clasificados[idxA].playerId,
+        playerBId: clasificados[idxB].playerId,
+        slotA: null, slotB: null,
+        round: 101 + i,
+        status: 'pendiente',
+        serieId: `nac-oct-${i + 1}`,
+        ruleSetId: ruleSetCruces,
+      });
+    }
+
+    // Cuartos (rounds 111-114)
+    for (let i = 0; i < 4; i++) {
+      matchesData.push({
+        phaseId: phaseMaster.id,
+        playerAId: null, playerBId: null,
+        slotA: `Gan. NAC-OCT-${i * 2 + 1}`,
+        slotB: `Gan. NAC-OCT-${i * 2 + 2}`,
+        round: 111 + i,
+        status: 'pendiente',
+        serieId: `nac-cua-${i + 1}`,
+        ruleSetId: ruleSetCruces,
+      });
+    }
+
+    // Semis (rounds 121-122)
+    matchesData.push({
+      phaseId: phaseMaster.id,
+      playerAId: null, playerBId: null,
+      slotA: 'Gan. NAC-CUA-1', slotB: 'Gan. NAC-CUA-2',
+      round: 121, status: 'pendiente',
+      serieId: 'nac-semi-1', ruleSetId: ruleSetCruces,
+    });
+    matchesData.push({
+      phaseId: phaseMaster.id,
+      playerAId: null, playerBId: null,
+      slotA: 'Gan. NAC-CUA-3', slotB: 'Gan. NAC-CUA-4',
+      round: 122, status: 'pendiente',
+      serieId: 'nac-semi-2', ruleSetId: ruleSetCruces,
+    });
+
+    // Final (round 131)
+    matchesData.push({
+      phaseId: phaseMaster.id,
+      playerAId: null, playerBId: null,
+      slotA: 'Gan. NAC-SEMI-1', slotB: 'Gan. NAC-SEMI-2',
+      round: 131, status: 'pendiente',
+      serieId: 'nac-final', ruleSetId: ruleSetCruces,
+    });
+
+    await prisma.match.createMany({ data: matchesData });
+
+    res.json({
+      ok: true,
+      message: `Bracket Nacional generado: 8 octavos + 4 cuartos + 2 semis + 1 final = 15 partidos`,
+      total: matchesData.length,
+      clasificados: clasificados.map((c, i) => ({ seed: i + 1, playerId: c.playerId, serie: c.serie, puesto: c.puesto }))
+    });
+
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
 router.post('/trigger-nac-bracket/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     await rellenarBracketNacionalOctavos(parseInt(req.params.phaseId));
