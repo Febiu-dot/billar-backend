@@ -777,4 +777,50 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
   }
 });
 
+// ── DELETE /api/circuits/:id/reset ───────────────────────────────────
+// Borra todos los partidos y resetea puntos del ranking
+// Mantiene: jugadores inscriptos, fases, config, rankingEntry positions
+router.delete('/:id/reset', async (req: Request, res: Response) => {
+  const circuitId = parseInt(req.params.id);
+  try {
+    const circuit = await prisma.circuit.findUnique({
+      where: { id: circuitId },
+      include: { phases: true }
+    });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+
+    const phaseIds = circuit.phases.map((p: any) => p.id);
+
+    // Borrar en orden: SetResult → MatchResult → Match
+    if (phaseIds.length > 0) {
+      await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
+    }
+
+    // Resetear puntos del ranking (mantiene position e inscripciones)
+    await prisma.rankingEntry.updateMany({
+      where: { circuitId },
+      data: {
+        points:        0,
+        matchesPlayed: 0,
+        matchesWon:    0,
+        setsWon:       0,
+        setsLost:      0,
+        pointsFor:     0,
+        pointsAgainst: 0,
+      }
+    });
+
+    res.json({
+      ok: true,
+      message: `Circuito "${circuit.name}" limpiado correctamente`,
+      partidos_borrados: phaseIds.length > 0,
+      ranking_reseteado: true,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
