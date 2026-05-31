@@ -127,7 +127,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       }
       if (entries.length === 0) { res.status(404).json({ error: 'No hay ranking para este circuito. Cargalo desde "Carga de Ranking".' }); return; }
       const jugadores = entries.map(e => ({ posicion: e.position ?? 0, nombre: `${e.player.lastName}, ${e.player.firstName}`, club: abrev(e.player.club), puntos: e.points, setsGanados: e.setsWon, tantos: e.pointsFor, seccion: getSeccion(e.position) }));
-      return res.json({ ...base, tipo: 'ranking', fase: tipoFase === 'ranking-final' ? `RANKING FINAL — ${circuit.name.toUpperCase()}` : `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', jugadores });
+      const esNacional = /\bnacional\b/.test((circuit.tournament.name ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+      return res.json({ ...base, tipo: 'ranking', fase: tipoFase === 'ranking-final' ? `RANKING FINAL — ${circuit.name.toUpperCase()}` : `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', ...(esNacional ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}), jugadores });
     }
 
     // ── SERIES NACIONAL ───────────────────────────────────────────────
