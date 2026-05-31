@@ -793,6 +793,70 @@ router.post('/trigger-master/:phaseId', authenticate, requireRole('admin'), asyn
 });
 
 // ── Trigger manual para rellenar octavos del bracket Nacional ─────────
+// ── POST /matches/regenerar-bracket/:circuitId ───────────────────────
+// Crea los 15 partidos del bracket Y los seedea con el top 16 de las series
+// NO toca los partidos de series — solo regenera la fase Master
+router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const circuitId = parseInt(req.params.circuitId);
+  try {
+    const circuit = await prisma.circuit.findUnique({
+      where: { id: circuitId },
+      include: { phases: true }
+    });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+
+    const phaseMaster = circuit.phases.find((p: any) => p.type === 'master');
+    const phaseClasif = circuit.phases.find((p: any) => p.type === 'clasificatorio');
+    if (!phaseMaster) { res.status(400).json({ error: 'No existe la fase Master en este circuito' }); return; }
+    if (!phaseClasif) { res.status(400).json({ error: 'No existe la fase Clasificatorio en este circuito' }); return; }
+
+    // 1. Borrar solo la fase Master
+    await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+    await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+    await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
+
+    // 2. Crear los 15 partidos del bracket con seeding espejo
+    const cfg = (circuit as any).configTorneo as any;
+    const ruleSetCruces = cfg?.ruleSetCruces ?? 2;
+
+    // Octavos espejo: 1v16, 2v15, 3v14, 4v13, 5v12, 6v11, 7v10, 8v9
+    const octSeeds: [number, number][] = [
+      [1,16],[2,15],[3,14],[4,13],[5,12],[6,11],[7,10],[8,9]
+    ];
+    const bracketData: any[] = [];
+
+    for (let i = 0; i < 8; i++) {
+      const [s1, s2] = octSeeds[i];
+      bracketData.push({
+        phaseId: phaseMaster.id, playerAId: null, playerBId: null,
+        slotA: `Nac. Clasificado #${s1}`, slotB: `Nac. Clasificado #${s2}`,
+        round: 101 + i, status: 'pendiente',
+        serieId: `nac-oct-${i + 1}`, ruleSetId: ruleSetCruces
+      });
+    }
+    for (let i = 0; i < 4; i++) {
+      bracketData.push({
+        phaseId: phaseMaster.id, playerAId: null, playerBId: null,
+        slotA: `Gan. NAC-OCT-${i * 2 + 1}`, slotB: `Gan. NAC-OCT-${i * 2 + 2}`,
+        round: 111 + i, status: 'pendiente',
+        serieId: `nac-cua-${i + 1}`, ruleSetId: ruleSetCruces
+      });
+    }
+    bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-1', slotB: 'Gan. NAC-CUA-2', round: 121, status: 'pendiente', serieId: 'nac-semi-1', ruleSetId: ruleSetCruces });
+    bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-3', slotB: 'Gan. NAC-CUA-4', round: 122, status: 'pendiente', serieId: 'nac-semi-2', ruleSetId: ruleSetCruces });
+    bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-SEMI-1', slotB: 'Gan. NAC-SEMI-2', round: 131, status: 'pendiente', serieId: 'nac-final', ruleSetId: ruleSetCruces });
+
+    await prisma.match.createMany({ data: bracketData });
+
+    // 3. Seedear el bracket con el top 16 de las series
+    await rellenarBracketNacionalOctavos(phaseClasif.id);
+
+    res.json({ ok: true, message: 'Bracket regenerado y seeded con el top 16 de las series', partidos: bracketData.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post('/trigger-nac-bracket/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     await rellenarBracketNacionalOctavos(parseInt(req.params.phaseId));
