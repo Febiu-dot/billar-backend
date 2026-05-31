@@ -27,6 +27,21 @@ const fechaLarga = (dt?: any) => {
   return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
 };
 
+// ── Categoría federal del torneo nacional ─────────────────────────────
+// El schema no tiene un campo dedicado, así que se deriva del nombre del
+// torneo (ej: "Nacional de Primera 2026"). Devuelve 'primera' | 'segunda'
+// | 'tercera'. Fallback: 'tercera'. Acepta acentos y mayúsculas.
+const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' | 'tercera' => {
+  const n = (nombreTorneo ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // quita acentos
+  if (/\bprimera\b|\b1ra?\b|\b1°/.test(n)) return 'primera';
+  if (/\bsegunda\b|\b2da?\b|\b2°/.test(n)) return 'segunda';
+  if (/\btercera\b|\b3ra?\b|\b3°/.test(n)) return 'tercera';
+  return 'tercera';
+};
+
 const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
   player
     ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
@@ -196,6 +211,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         ...base,
         tipo: 'bracket-nacional',
         fase: `BRACKET — ${circuit.tournament.name.toUpperCase()}`,
+        categoriaFederal: categoriaFederal(circuit.tournament.name),
         formato: '',
         fechaPrincipal: fechaLarga(pf),
         campeon,
