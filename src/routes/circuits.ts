@@ -232,9 +232,10 @@ function generarBracketEliminacionSimple(phaseId: number, ruleSetCruces: number)
   const matches: any[] = [];
 
   // ── Octavos (rounds 101-108) ──────────────────────────────────────
+  // Espejo puro: 1v16, 2v15, 3v14, 4v13, 5v12, 6v11, 7v10, 8v9
   const octavosSeeds: [number, number][] = [
-    [1, 16], [8, 9], [5, 12], [4, 13],
-    [3, 14], [6, 11], [7, 10], [2, 15],
+    [1, 16], [2, 15], [3, 14], [4, 13],
+    [5, 12], [6, 11], [7, 10], [8,  9],
   ];
   for (let i = 0; i < 8; i++) {
     const [s1, s2] = octavosSeeds[i];
