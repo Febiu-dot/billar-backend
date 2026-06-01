@@ -27,15 +27,18 @@ const fechaLarga = (dt?: any) => {
   return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
 };
 
+// ── Detecta si el torneo es nacional ──────────────────────────────────
+const esNacionalTorneo = (nombreTorneo?: string | null): boolean =>
+  /\bnacional\b/.test(
+    (nombreTorneo ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  );
+
 // ── Categoría federal del torneo nacional ─────────────────────────────
-// El schema no tiene un campo dedicado, así que se deriva del nombre del
-// torneo (ej: "Nacional de Primera 2026"). Devuelve 'primera' | 'segunda'
-// | 'tercera'. Fallback: 'tercera'. Acepta acentos y mayúsculas.
 const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' | 'tercera' => {
   const n = (nombreTorneo ?? '')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // quita acentos
+    .replace(/[\u0300-\u036f]/g, '');
   if (/\bprimera\b|\b1ra?\b|\b1°/.test(n)) return 'primera';
   if (/\bsegunda\b|\b2da?\b|\b2°/.test(n)) return 'segunda';
   if (/\btercera\b|\b3ra?\b|\b3°/.test(n)) return 'tercera';
@@ -113,6 +116,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
 
     const base = { tipoFase, torneo: circuit.tournament.name, circuito: circuit.name, temporada: String(circuit.tournament.year), formato: '' };
+    const esNacional = esNacionalTorneo(circuit.tournament.name);
 
     // ── RANKING / RANKING FINAL ───────────────────────────────────────
     if (tipoFase === 'ranking' || tipoFase === 'ranking-final') {
@@ -121,14 +125,50 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         include: { player: { include: { category: true } } },
         orderBy: { position: 'asc' }
       });
-      if (entries.length === 0) {
-        const prev = await prisma.circuit.findFirst({ where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 } });
-        if (prev) entries = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, include: { player: { include: { category: true } } }, orderBy: { position: 'asc' } });
+
+      // Fallback al circuito anterior SOLO para torneos departamentales.
+      // Para nacionales: cada circuito tiene su propio ranking independiente.
+      // Si no hay datos → error claro.
+      if (entries.length === 0 && !esNacional) {
+        const prev = await prisma.circuit.findFirst({
+          where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
+        });
+        if (prev) entries = await prisma.rankingEntry.findMany({
+          where: { circuitId: prev.id, position: { not: null } },
+          include: { player: { include: { category: true } } },
+          orderBy: { position: 'asc' }
+        });
       }
-      if (entries.length === 0) { res.status(404).json({ error: 'No hay ranking para este circuito. Cargalo desde "Carga de Ranking".' }); return; }
-      const jugadores = entries.map(e => ({ posicion: e.position ?? 0, nombre: `${e.player.lastName}, ${e.player.firstName}`, club: abrev(e.player.club), puntos: e.points, setsGanados: e.setsWon, tantos: e.pointsFor, seccion: getSeccion(e.position) }));
-      const esNacional = /\bnacional\b/.test((circuit.tournament.name ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-      return res.json({ ...base, tipo: 'ranking', fase: tipoFase === 'ranking-final' ? `RANKING FINAL — ${circuit.name.toUpperCase()}` : `RANKING — ${circuit.name.toUpperCase()}`, fechaPrincipal: '', ...(esNacional ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}), jugadores });
+
+      if (entries.length === 0) {
+        res.status(404).json({
+          error: esNacional
+            ? `No hay ranking para ${circuit.name}. El circuito aún no tiene datos cargados.`
+            : 'No hay ranking para este circuito. Cargalo desde "Carga de Ranking".'
+        });
+        return;
+      }
+
+      const jugadores = entries.map(e => ({
+        posicion: e.position ?? 0,
+        nombre: `${e.player.lastName}, ${e.player.firstName}`,
+        club: abrev(e.player.club),
+        puntos: e.points,
+        setsGanados: e.setsWon,
+        tantos: e.pointsFor,
+        seccion: getSeccion(e.position)
+      }));
+
+      return res.json({
+        ...base,
+        tipo: 'ranking',
+        fase: tipoFase === 'ranking-final'
+          ? `RANKING FINAL — ${circuit.name.toUpperCase()}`
+          : `RANKING — ${circuit.name.toUpperCase()}`,
+        fechaPrincipal: '',
+        ...(esNacional ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}),
+        jugadores
+      });
     }
 
     // ── SERIES NACIONAL ───────────────────────────────────────────────
@@ -200,7 +240,6 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const getM = (sid: string) => mkBracketMatch(matches.find(m => m.serieId === sid));
       const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
 
-      // Determinar campeón
       const finalMatch = matches.find(m => m.serieId === 'nac-final');
       let campeon: any = null;
       if (finalMatch?.result?.winnerId) {
