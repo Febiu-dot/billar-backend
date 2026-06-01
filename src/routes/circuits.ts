@@ -223,7 +223,7 @@ function generarSeriesNacional(
 }
 
 // ── Bracket Nacional: eliminación simple 16 jugadores — 15 partidos ──
-// Seeding estándar: el #1 y el #2 solo se cruzan en la final
+// Seeding PROTEGIDO: el #1 y el #2 solo se cruzan en la final
 // Octavos:  1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
 // Cuartos:  W(1v16) vs W(8v9) | W(5v12) vs W(4v13) | W(3v14) vs W(6v11) | W(7v10) vs W(2v15)
 // Semis:    W(Q1) vs W(Q2)    | W(Q3) vs W(Q4)
@@ -232,10 +232,10 @@ function generarBracketEliminacionSimple(phaseId: number, ruleSetCruces: number)
   const matches: any[] = [];
 
   // ── Octavos (rounds 101-108) ──────────────────────────────────────
-  // Espejo puro: 1v16, 2v15, 3v14, 4v13, 5v12, 6v11, 7v10, 8v9
+  // Protegido: 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
   const octavosSeeds: [number, number][] = [
-    [1, 16], [2, 15], [3, 14], [4, 13],
-    [5, 12], [6, 11], [7, 10], [8,  9],
+    [1, 16], [8,  9], [5, 12], [4, 13],
+    [3, 14], [6, 11], [7, 10], [2, 15],
   ];
   for (let i = 0; i < 8; i++) {
     const [s1, s2] = octavosSeeds[i];
@@ -487,7 +487,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
           series:            seriesClasif,
         },
         bracket: {
-          descripcion:    'Eliminación simple 16 jugadores — seeding estándar (1 y 2 solo se cruzan en final)',
+          descripcion:    'Eliminación simple 16 jugadores — seeding protegido (1 y 2 solo se cruzan en final)',
           totalPartidos:  totalPartidosBracket,
           octavos: [
             '#1 vs #16', '#8 vs #9', '#5 vs #12', '#4 vs #13',
