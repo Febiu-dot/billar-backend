@@ -128,7 +128,7 @@ async function asignarPuntosCruce(matchId: number) {
 
 // ════════════════════════════════════════════════════════════════════════
 // BRACKET NACIONAL — Eliminación Simple 16 jugadores — 15 partidos
-// Octavos:  1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
+// Octavos:  1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15  (PROTEGIDO)
 // Cuartos:  oct1+2 | oct3+4 | oct5+6 | oct7+8
 // Semis:    cua1+2 | cua3+4
 // Final:    semi1 vs semi2
@@ -271,7 +271,7 @@ async function propagarSerieNacional(matchId: number) {
 
 // ── Rellena los octavos del bracket con los 16 clasificados ──────────
 // Se llama cuando TODAS las 8 series nacionales terminan (P5 completo)
-// Seeding estándar: 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
+// Seeding PROTEGIDO: 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
 // Garantiza que #1 y #2 solo se crucen en la final
 async function rellenarBracketNacionalOctavos(clasificatorioPhaseId: number) {
   try {
@@ -357,20 +357,18 @@ async function rellenarBracketNacionalOctavos(clasificatorioPhaseId: number) {
       return;
     }
 
-    // Seeding estándar: garantiza que #1 y #2 solo se crucen en la final
-    // Half 1 (semi-1): seeds 1,8,9,16 + 4,5,12,13
-    // Half 2 (semi-2): seeds 3,6,11,14 + 2,7,10,15
+    // Seeding PROTEGIDO: garantiza que #1 y #2 solo se crucen en la final
+    // Octavos: 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
     // [idxAlto, idxBajo] usando índices 0-based en clasificados (0=rank1, 15=rank16)
-    // Espejo puro: 1v16, 2v15, 3v14, 4v13, 5v12, 6v11, 7v10, 8v9
     const seedingMap: [number, number][] = [
       [0, 15],  // nac-oct-1: #1 vs #16
-      [1, 14],  // nac-oct-2: #2 vs #15
-      [2, 13],  // nac-oct-3: #3 vs #14
+      [7,  8],  // nac-oct-2: #8 vs #9
+      [4, 11],  // nac-oct-3: #5 vs #12
       [3, 12],  // nac-oct-4: #4 vs #13
-      [4, 11],  // nac-oct-5: #5 vs #12
+      [2, 13],  // nac-oct-5: #3 vs #14
       [5, 10],  // nac-oct-6: #6 vs #11
       [6,  9],  // nac-oct-7: #7 vs #10
-      [7,  8],  // nac-oct-8: #8 vs #9
+      [1, 14],  // nac-oct-8: #2 vs #15
     ];
 
     for (let i = 0; i < 8; i++) {
@@ -829,13 +827,14 @@ router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'),
     await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
-    // 3. Crear 15 partidos con seeding espejo y jugadores ya asignados en octavos
+    // 3. Crear 15 partidos con seeding protegido y jugadores ya asignados en octavos
     const cfg = (circuit as any).configTorneo as any;
     const ruleSetCruces = cfg?.ruleSetCruces ?? 2;
-    const espejo: [number, number][] = [[0,15],[1,14],[2,13],[3,12],[4,11],[5,10],[6,9],[7,8]];
+    // Protegido (índices 0-based en top16): 1v16, 8v9, 5v12, 4v13, 3v14, 6v11, 7v10, 2v15
+    const protegido: [number, number][] = [[0,15],[7,8],[4,11],[3,12],[2,13],[5,10],[6,9],[1,14]];
     const bracketData: any[] = [];
     for (let i = 0; i < 8; i++) {
-      const [a, b] = espejo[i];
+      const [a, b] = protegido[i];
       bracketData.push({
         phaseId: phaseMaster.id,
         playerAId: top16[a].playerId, playerBId: top16[b].playerId,
