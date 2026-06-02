@@ -736,11 +736,11 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   const posEnSerie     = existingMatch.round - roundBase;
   const esUltimoPartido = posEnSerie === 4;
 
-  if (!esPartidoDeSerie && !esPartidoNacionalSerie || esUltimoPartido) {
-    if (updatedMatch.tableId) {
-      const freedTable = await prisma.table.update({ where: { id: updatedMatch.tableId }, data: { status: 'libre' }, include: { venue: true } });
-      emitTableUpdate(io, freedTable);
-    }
+  // Liberar mesa siempre al terminar un partido
+  // (para series, el juez reasigna la mesa en el siguiente partido)
+  if (updatedMatch.tableId) {
+    const freedTable = await prisma.table.update({ where: { id: updatedMatch.tableId }, data: { status: 'libre' }, include: { venue: true } });
+    emitTableUpdate(io, freedTable);
   }
   emitMatchUpdate(io, updatedMatch);
 
