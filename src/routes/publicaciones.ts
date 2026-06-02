@@ -177,7 +177,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (!phase) { res.status(404).json({ error: 'Fase Clasificatorio no encontrada en este circuito' }); return; }
 
       const matches = await prisma.match.findMany({
-        where: { phaseId: phase.id, serieId: { startsWith: 'nac-serie-' } },
+        where: { phaseId: phase.id, serieId: { not: null } },
         include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true },
         orderBy: { round: 'asc' }
       });
