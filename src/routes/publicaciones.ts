@@ -13,8 +13,14 @@ const CLUB_ABREV: Record<string, string> = {
 const abrev = (club?: string | null) =>
   club ? (CLUB_ABREV[club.toUpperCase()] ?? club.slice(0, 3).toUpperCase()) : '';
 
-const hora = (dt?: any) =>
-  dt ? new Date(dt).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+const hora = (dt?: any) => {
+  if (!dt) return '';
+  // Railway corre en UTC; Uruguay es UTC-3. Corregir manualmente.
+  const d = new Date(dt);
+  const uyMs = d.getTime() - (d.getTimezoneOffset() + 180) * 60000;
+  const uyDate = new Date(uyMs);
+  return uyDate.toISOString().slice(11, 16);
+};
 
 const fecha = (dt?: any) =>
   dt ? new Date(dt).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
