@@ -189,7 +189,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       });
       if (matches.length === 0) { res.status(404).json({ error: 'No hay partidos de series nacionales generados' }); return; }
 
-      const rankings = await prisma.rankingEntry.findMany({ where: { circuitId, position: { not: null } }, orderBy: { position: 'asc' } });
+      const rankings = await prisma.rankingEntry.findMany({
+        where: { circuitId, position: { not: null } },
+        orderBy: { position: 'asc' },
+        include: { player: true },
+      });
 
       const seriesMap: Record<string, any[]> = {};
       for (const m of matches) { if (!m.serieId) continue; if (!seriesMap[m.serieId]) seriesMap[m.serieId] = []; seriesMap[m.serieId].push(m); }
@@ -228,7 +232,13 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       }).sort((a, b) => a.numero - b.numero);
 
       const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'series-nacional', categoriaFederal: categoriaFederal(circuit.tournament.name), fase: `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series });
+      const top16 = rankings.slice(0, 16).map((r: any) => ({
+        posicion: r.position,
+        nombre: r.player ? `${r.player.lastName}, ${r.player.firstName}` : '—',
+        club: r.player ? abrev((r.player as any).club) : null,
+        puntos: r.points,
+      }));
+      return res.json({ ...base, tipo: 'series-nacional', categoriaFederal: categoriaFederal(circuit.tournament.name), fase: `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series, top16 });
     }
 
     // ── BRACKET NACIONAL ──────────────────────────────────────────────
