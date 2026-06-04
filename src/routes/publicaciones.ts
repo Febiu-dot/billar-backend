@@ -228,7 +228,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       }).sort((a, b) => a.numero - b.numero);
 
       const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'series-nacional', fase: `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series });
+      return res.json({ ...base, tipo: 'series-nacional', categoriaFederal: categoriaFederal(circuit.tournament.name), fase: `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series });
     }
 
     // ── BRACKET NACIONAL ──────────────────────────────────────────────
