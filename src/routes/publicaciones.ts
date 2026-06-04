@@ -178,7 +178,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     }
 
     // ── SERIES NACIONAL ───────────────────────────────────────────────
-    if (tipoFase === 'series-nacional') {
+    if (tipoFase === 'series-nacional' || tipoFase === 'inicial-nacional') {
       const phase = circuit.phases.find(p => p.type === 'clasificatorio');
       if (!phase) { res.status(404).json({ error: 'Fase Clasificatorio no encontrada en este circuito' }); return; }
 
@@ -238,7 +238,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         club: r.player ? abrev((r.player as any).club) : null,
         puntos: r.points,
       }));
-      return res.json({ ...base, tipo: 'series-nacional', categoriaFederal: categoriaFederal(circuit.tournament.name), fase: `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series, top16 });
+      const tipoResp = tipoFase === 'inicial-nacional' ? 'inicial-nacional' : 'series-nacional';
+      return res.json({ ...base, tipo: tipoResp, categoriaFederal: categoriaFederal(circuit.tournament.name), fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series, top16 });
     }
 
     // ── BRACKET NACIONAL ──────────────────────────────────────────────
