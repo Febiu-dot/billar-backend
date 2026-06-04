@@ -278,6 +278,64 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       });
     }
 
+    // ── CRUCES NACIONAL ──────────────────────────────────────────────
+    if (tipoFase === 'cruces-nacional') {
+      const phase = circuit.phases.find(p => p.type === 'master');
+      if (!phase) { res.status(404).json({ error: 'Fase Master no encontrada' }); return; }
+
+      const matches = await prisma.match.findMany({
+        where: { phaseId: phase.id },
+        include: { playerA: true, playerB: true, table: { include: { venue: true } }, result: true },
+        orderBy: { round: 'asc' },
+      });
+      if (matches.length === 0) { res.status(404).json({ error: 'No hay partidos de cruces generados' }); return; }
+
+      const mkP = (m: any) => {
+        if (!m) return null;
+        const winA = m.result?.winnerId === m.playerAId;
+        const winB = m.result?.winnerId === m.playerBId;
+        return {
+          serieId: m.serieId,
+          jugadorA: m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev((m.playerA as any).club) } : null,
+          jugadorB: m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev((m.playerB as any).club) } : null,
+          slotA: m.slotA, slotB: m.slotB,
+          hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt),
+          sede: m.table?.venue?.name ?? null, mesa: m.table?.number ?? null,
+          resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null,
+          winnerId: m.result?.winnerId ?? null,
+          playerAId: m.playerAId, playerBId: m.playerBId,
+          winA, winB,
+          status: m.status,
+        };
+      };
+
+      const getM = (sid: string) => mkP(matches.find(m => m.serieId === sid));
+      const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
+
+      const octavos  = [1,2,3,4,5,6,7,8].map(i => getM(`nac-oct-${i}`));
+      const cuartos  = [1,2,3,4].map(i => getM(`nac-cua-${i}`));
+      const semis    = [1,2].map(i => getM(`nac-semi-${i}`));
+      const finalM   = getM('nac-final');
+
+      const finalMatch = matches.find(m => m.serieId === 'nac-final');
+      let campeon: any = null;
+      if (finalMatch?.result?.winnerId) {
+        const w = finalMatch.result.winnerId === finalMatch.playerAId ? finalMatch.playerA : finalMatch.playerB;
+        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club) };
+      }
+
+      return res.json({
+        ...base,
+        tipo: 'cruces-nacional',
+        categoriaFederal: categoriaFederal(circuit.tournament.name),
+        fase: `ETAPA DE CRUCES — ${circuit.tournament.name.toUpperCase()}`,
+        fechaPrincipal: fechaLarga(pf),
+        formato: '',
+        octavos, cuartos, semis, final: finalM, campeon,
+      });
+    }
+
+
     // ── FASES DE PARTIDOS (departamental) ─────────────────────────────
     let rankings = await prisma.rankingEntry.findMany({ where: { circuitId, position: { not: null } }, orderBy: { position: 'asc' } });
     if (rankings.length === 0) {
