@@ -822,6 +822,14 @@ router.post('/:id/ranking-upload', async (req: Request, res: Response) => {
           setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0,
         }
       });
+
+      // Inscribir automáticamente en el circuito si no está inscripto
+      await prisma.circuitPlayer.upsert({
+        where: { circuitId_playerId: { circuitId, playerId: player.id } },
+        update: {},
+        create: { circuitId, playerId: player.id },
+      });
+
       cargados++;
     }
 
