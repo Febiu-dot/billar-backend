@@ -434,49 +434,89 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       if (s) s.puntos += pts;
     };
 
-    const serieMatches: Record<string, any[]> = {};
-    for (const match of allMatches) {
-      if (!match.serieId) continue;
-      if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
-      if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
-      serieMatches[match.serieId].push(match);
-    }
+    // Detectar si el circuito es nacional (tiene partidos con serieId nac-serie-*)
+    const esNacional = allMatches.some((m: any) => m.serieId?.startsWith('nac-serie-'));
 
-    for (const matches of Object.values(serieMatches)) {
-      const roundBase = Math.min(...matches.map((m: any) => m.round));
-      const p3 = matches.find((m: any) => m.round === roundBase + 2);
-      const p4 = matches.find((m: any) => m.round === roundBase + 3);
-      const p5 = matches.find((m: any) => m.round === roundBase + 4);
-      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
-      if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
-      if (p5?.result?.winnerId) {
-        const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
-        addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4);
+    if (esNacional) {
+      // ── NACIONAL: series nac-serie-1..8 (P1..P5) ────────────────────
+      const nacSerieMatches: Record<string, any[]> = {};
+      for (const match of allMatches) {
+        if (!match.serieId?.startsWith('nac-serie-')) continue;
+        if (!nacSerieMatches[match.serieId]) nacSerieMatches[match.serieId] = [];
+        nacSerieMatches[match.serieId].push(match);
       }
-      for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
-    }
+      for (const matches of Object.values(nacSerieMatches)) {
+        const roundBase = Math.min(...matches.map((m: any) => m.round));
+        const p3 = matches.find((m: any) => m.round === roundBase + 2);
+        const p4 = matches.find((m: any) => m.round === roundBase + 3);
+        const p5 = matches.find((m: any) => m.round === roundBase + 4);
+        if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+        if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+        if (p5?.result?.winnerId) {
+          const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+          addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4);
+        }
+        for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
+      }
 
-    for (const match of allMatches) {
-      if (!match.serieId) continue;
-      if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
-      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
-    }
+      // ── NACIONAL: bracket master (nac-oct, nac-cua, nac-semi, nac-final) ──
+      for (const match of allMatches) {
+        if (match.phase.type !== 'master') continue;
+        if (!match.serieId?.startsWith('nac-')) continue;
+        if (!match.result?.winnerId) continue;
+        const isFinal = match.serieId === 'nac-final';
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) {
+          addPts(match.result.winnerId, isFinal ? 7 : 5);
+          addPts(loserId, isFinal ? 2 : 1);
+        }
+        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+      }
+    } else {
+      // ── DEPARTAMENTAL: clasif-serie-, segunda-serie- ──────────────────
+      const serieMatches: Record<string, any[]> = {};
+      for (const match of allMatches) {
+        if (!match.serieId) continue;
+        if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
+        if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
+        serieMatches[match.serieId].push(match);
+      }
+      for (const matches of Object.values(serieMatches)) {
+        const roundBase = Math.min(...matches.map((m: any) => m.round));
+        const p3 = matches.find((m: any) => m.round === roundBase + 2);
+        const p4 = matches.find((m: any) => m.round === roundBase + 3);
+        const p5 = matches.find((m: any) => m.round === roundBase + 4);
+        if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+        if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+        if (p5?.result?.winnerId) {
+          const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+          addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4);
+        }
+        for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
+      }
 
-    for (const match of allMatches) {
-      if (match.phase.type !== 'primera') continue;
-      if (!match.result?.winnerId) continue;
-      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      if (!match.result.isWO) { addPts(match.result.winnerId, 5); addPts(loserId, 1); }
-      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
-    }
+      for (const match of allMatches) {
+        if (!match.serieId) continue;
+        if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
+        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+      }
 
-    for (const match of allMatches) {
-      if (match.phase.type !== 'master') continue;
-      if (!match.result?.winnerId) continue;
-      const isFinal = match.serieId === 'master-final';
-      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      if (!match.result.isWO) { addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1); }
-      addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+      for (const match of allMatches) {
+        if (match.phase.type !== 'primera') continue;
+        if (!match.result?.winnerId) continue;
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) { addPts(match.result.winnerId, 5); addPts(loserId, 1); }
+        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+      }
+
+      for (const match of allMatches) {
+        if (match.phase.type !== 'master') continue;
+        if (!match.result?.winnerId) continue;
+        const isFinal = match.serieId === 'master-final';
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) { addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1); }
+        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+      }
     }
 
     const ranked = players
