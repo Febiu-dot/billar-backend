@@ -586,4 +586,51 @@ router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (
   }
 });
 
+
+// ── Recalcular stats de ranking desde partidos ya jugados ──────────────
+router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const circuitId = Number(req.params.circuitId);
+  try {
+    // Reset stats (no puntos)
+    await prisma.rankingEntry.updateMany({
+      where: { circuitId },
+      data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
+    });
+
+    // Buscar todos los partidos finalizados del circuito
+    const matches = await prisma.match.findMany({
+      where: { phase: { circuitId }, status: { in: ['finalizado', 'wo'] } },
+      include: { result: true }
+    });
+
+    for (const m of matches) {
+      if (!m.result || !m.playerAId || !m.playerBId) continue;
+      const { setsA, setsB, pointsA, pointsB, winnerId } = m.result;
+      const wonA = winnerId === m.playerAId ? 1 : 0;
+      const wonB = winnerId === m.playerBId ? 1 : 0;
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerAId, circuitId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonA }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } }
+      });
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerBId, circuitId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } }
+      });
+    }
+
+    // Recalcular posiciones
+    const entries = await prisma.rankingEntry.findMany({
+      where: { circuitId },
+      orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }]
+    });
+    for (let i = 0; i < entries.length; i++) {
+      await prisma.rankingEntry.update({ where: { id: entries[i].id }, data: { position: i + 1 } });
+    }
+
+    res.json({ ok: true, partidos: matches.length, jugadores: entries.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
