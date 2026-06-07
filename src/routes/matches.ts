@@ -721,6 +721,25 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     where: { id: matchId }, data: { status: isWO ? 'wo' : 'finalizado', finishedAt: new Date() },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
+  // ── Actualizar stats del ranking (sets, tantos, partidos) ──
+  const { circuitId: circId } = await getCircuitInfo(existingMatch.phaseId);
+  if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId) {
+    const setsWonA = finalSetsA; const setsWonB = finalSetsB;
+    const setsLostA = finalSetsB; const setsLostB = finalSetsA;
+    const ptsForA = finalPtsA; const ptsForB = finalPtsB;
+    const ptsAgainstA = finalPtsB; const ptsAgainstB = finalPtsA;
+    const wonA = winnerId === existingMatch.playerAId ? 1 : 0;
+    const wonB = winnerId === existingMatch.playerBId ? 1 : 0;
+    await prisma.rankingEntry.updateMany({
+      where: { playerId: existingMatch.playerAId, circuitId: circId },
+      data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonA }, setsWon: { increment: setsWonA }, setsLost: { increment: setsLostA }, pointsFor: { increment: ptsForA }, pointsAgainst: { increment: ptsAgainstA } }
+    });
+    await prisma.rankingEntry.updateMany({
+      where: { playerId: existingMatch.playerBId, circuitId: circId },
+      data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsWonB }, setsLost: { increment: setsLostB }, pointsFor: { increment: ptsForB }, pointsAgainst: { increment: ptsAgainstB } }
+    });
+  }
+
   const phaseType = existingMatch.phase?.type;
   const serieId   = existingMatch.serieId ?? '';
 
