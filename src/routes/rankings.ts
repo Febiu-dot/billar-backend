@@ -43,7 +43,7 @@ router.get('/', async (req, res: Response) => {
       player: { include: { category: true } },
       circuit: { include: { tournament: true } },
     },
-    orderBy: [{ points: 'desc' }, { matchesWon: 'desc' }],
+    orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }],
   });
   const withAverage = rankings.map((r, i) => ({
     ...r,
@@ -59,7 +59,7 @@ router.get('/circuit/:circuitId', async (req, res: Response) => {
   const rankings = await prisma.rankingEntry.findMany({
     where: { circuitId },
     include: { player: { include: { category: true } } },
-    orderBy: [{ points: 'desc' }, { matchesWon: 'desc' }],
+    orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }],
   });
   const withAverage = rankings.map((r, i) => ({
     ...r,
