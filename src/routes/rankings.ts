@@ -560,12 +560,27 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
 
 
 // ── DELETE /api/rankings/limpiar/:circuitId ──────────────────────────
-// Borra todas las filas de RankingEntry del circuito. No toca partidos ni inscripciones.
+// Borra RankingEntry, CircuitPlayer y partidos del circuito.
 router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     const circuitId = parseInt(req.params.circuitId);
-    const deleted = await prisma.rankingEntry.deleteMany({ where: { circuitId } });
-    res.json({ ok: true, message: `Ranking del circuito ${circuitId} eliminado`, filas: deleted.count });
+
+    // Borrar partidos (SetResult -> MatchResult -> Match)
+    const phases = await prisma.phase.findMany({ where: { circuitId } });
+    const phaseIds = phases.map((p: any) => p.id);
+    if (phaseIds.length > 0) {
+      await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
+    }
+
+    // Borrar ranking
+    const ranking = await prisma.rankingEntry.deleteMany({ where: { circuitId } });
+
+    // Borrar inscripciones
+    const inscripciones = await prisma.circuitPlayer.deleteMany({ where: { circuitId } });
+
+    res.json({ ok: true, message: 'Circuito ' + circuitId + ' limpiado completamente', ranking: ranking.count, inscripciones: inscripciones.count });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
