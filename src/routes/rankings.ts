@@ -558,17 +558,4 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
   }
 });
 
-
-// ── DELETE /api/rankings/limpiar/:circuitId ──────────────────────────
-// Borra todas las filas de RankingEntry del circuito. No toca partidos ni inscripciones.
-router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try {
-    const circuitId = parseInt(req.params.circuitId);
-    const deleted = await prisma.rankingEntry.deleteMany({ where: { circuitId } });
-    res.json({ ok: true, message: `Ranking del circuito ${circuitId} eliminado`, filas: deleted.count });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 export default router;
