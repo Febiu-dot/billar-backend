@@ -885,4 +885,120 @@ router.post('/:id/reset', async (req: Request, res: Response) => {
   }
 });
 
+
+// ── POST /api/circuits/:id/init-from-circuit/:sourceCircuitId ────────
+// Inicializa el Circuito 2 desde el ranking final del Circuito 1.
+// Copia los 32 jugadores, calcula el ranking oficial del C1 y lo escribe
+// en el C2 como posiciones de siembra (puntos=0). También corrige configTorneo.
+router.post("/:id/init-from-circuit/:sourceCircuitId", async (req: Request, res: Response) => {
+  const targetCircuitId = parseInt(req.params.id);
+  const sourceCircuitId = parseInt(req.params.sourceCircuitId);
+
+  try {
+    const sourceCircuit = await prisma.circuit.findUnique({
+      where: { id: sourceCircuitId },
+      include: { players: { include: { player: true } } }
+    });
+    if (!sourceCircuit) { res.status(404).json({ error: "Circuito origen no encontrado" }); return; }
+
+    const targetCircuit = await prisma.circuit.findUnique({
+      where: { id: targetCircuitId }
+    });
+    if (!targetCircuit) { res.status(404).json({ error: "Circuito destino no encontrado" }); return; }
+
+    // 1. Corregir configTorneo del circuito destino si está null
+    const sourceConfig = (sourceCircuit.configTorneo as any) ?? {};
+    if (!targetCircuit.configTorneo) {
+      await prisma.circuit.update({
+        where: { id: targetCircuitId },
+        data: {
+          configTorneo: {
+            tipo: sourceConfig.tipo ?? "nacional",
+            categoriaFederal: sourceConfig.categoriaFederal ?? "primera",
+            ruleSetSeries: sourceConfig.ruleSetSeries ?? 2,
+            ruleSetCruces: sourceConfig.ruleSetCruces ?? 2,
+            cantMaster: 0,
+            cantPrimera: 0,
+            cantSegunda: 0,
+            cuposDesdeClasif: 0,
+          }
+        }
+      });
+    }
+
+    // 2. Obtener jugadores del circuito origen (excluye LIBRE)
+    const jugadores = sourceCircuit.players
+      .map((cp: any) => cp.player)
+      .filter((p: any) => p.dni !== LIBRE_DNI);
+
+    // 3. Calcular ranking oficial del circuito origen:
+    //    criterios: puntos DESC, setsWon DESC, pointsFor DESC, pointsAgainst ASC
+    const entries = await prisma.rankingEntry.findMany({
+      where: { circuitId: sourceCircuitId }
+    });
+
+    const sorted = [...entries].sort((a: any, b: any) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
+      if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
+      return a.pointsAgainst - b.pointsAgainst;
+    });
+
+    // Mapa playerId -> posicion de siembra (1-based)
+    const posicionMap = new Map<number, number>();
+    sorted.forEach((e: any, idx: number) => {
+      posicionMap.set(e.playerId, idx + 1);
+    });
+
+    // 4. Inscribir jugadores en circuito destino y crear RankingEntry con posicion
+    let inscriptos = 0;
+    let rankingsCreados = 0;
+
+    for (const jugador of jugadores) {
+      await prisma.circuitPlayer.upsert({
+        where: { circuitId_playerId: { circuitId: targetCircuitId, playerId: jugador.id } },
+        update: {},
+        create: { circuitId: targetCircuitId, playerId: jugador.id }
+      });
+      inscriptos++;
+
+      const posicion = posicionMap.get(jugador.id) ?? 9999;
+      await prisma.rankingEntry.upsert({
+        where: { playerId_circuitId: { playerId: jugador.id, circuitId: targetCircuitId } },
+        update: { position: posicion },
+        create: {
+          playerId: jugador.id,
+          circuitId: targetCircuitId,
+          position: posicion,
+          points: 0,
+          matchesPlayed: 0,
+          matchesWon: 0,
+          setsWon: 0,
+          setsLost: 0,
+          pointsFor: 0,
+          pointsAgainst: 0,
+        }
+      });
+      rankingsCreados++;
+    }
+
+    res.json({
+      ok: true,
+      message: "Circuito 2 inicializado correctamente desde el ranking del Circuito 1",
+      inscriptos,
+      rankingsCreados,
+      rankingOrden: sorted.map((e: any, idx: number) => ({
+        posicion: idx + 1,
+        playerId: e.playerId,
+        puntos: e.points,
+        setsGanados: e.setsWon,
+        tantosAFavor: e.pointsFor,
+      }))
+    });
+
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
