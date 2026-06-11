@@ -517,14 +517,16 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       if (s) s.puntos += pts;
     };
 
-    // Detectar si el circuito es nacional
-    const esNacional = allMatches.some((m: any) => m.serieId?.startsWith('nac-serie-'));
+    // Detectar si el circuito es nacional (serieIds: nac-serie-X o NP-G1..NP-G8)
+    const esNacionalSerie = (id: string | null) =>
+      !!id && (id.startsWith('nac-serie-') || /^[A-Z]+-G\d+$/.test(id));
+    const esNacional = allMatches.some((m: any) => esNacionalSerie(m.serieId));
 
     if (esNacional) {
-      // ── NACIONAL: series nac-serie-1..8 (P1..P5) ────────────────────
+      // ── NACIONAL: series nac-serie-X o NP-G1..NP-G8 (P1..P5) ───────
       const nacSerieMatches: Record<string, any[]> = {};
       for (const match of allMatches) {
-        if (!match.serieId?.startsWith('nac-serie-')) continue;
+        if (!esNacionalSerie(match.serieId)) continue;
         if (!nacSerieMatches[match.serieId]) nacSerieMatches[match.serieId] = [];
         nacSerieMatches[match.serieId].push(match);
       }
