@@ -1,417 +1,740 @@
-import { useEffect, useState } from 'react';
-import { api } from '../services/api';
-import { useAuth } from '../context/AuthContext';
+import { Router, Response } from 'express';
+import prisma from '../services/prisma';
+import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
-interface Tournament { id: number; name: string; }
-interface Circuit    { id: number; name: string; tournamentId: number; order: number; }
+const router = Router();
 
-interface RankingEntry {
-  posicion:   number;
-  playerId:   number;
-  firstName:  string;
-  lastName:   string;
-  club:       string;
-  categoria:  string;
-  puntos:     number;
-  setsGanados: number;
-  tantos:     number;
-  promedio:   number;
+// ── Helper: obtiene phaseIds de un circuito ───────────────────────────
+async function getPhasesDeCircuito(circuitId: number) {
+  const phases = await prisma.phase.findMany({
+    where: { circuitId },
+    orderBy: { order: 'asc' }
+  });
+  return {
+    clasificatorio: phases.find(p => p.type === 'clasificatorio')?.id ?? null,
+    segunda:        phases.find(p => p.type === 'segunda')?.id ?? null,
+    primera:        phases.find(p => p.type === 'primera')?.id ?? null,
+    master:         phases.find(p => p.type === 'master')?.id ?? null,
+  };
 }
 
-const CAT_COLORS: Record<string, string> = {
-  master:  'bg-yellow-900/40 text-yellow-400 border border-yellow-700/30',
-  primera: 'bg-blue-900/40 text-blue-400 border border-blue-700/30',
-  segunda: 'bg-green-900/40 text-green-400 border border-green-700/30',
-  tercera: 'bg-gray-800/40 text-gray-400 border border-gray-700/30',
-};
+// ── Helper: calcula stats de partidos de un circuito ─────────────────
+async function calcularStatsCircuito(phaseIds: { clasificatorio: number | null; segunda: number | null; primera: number | null; master: number | null }) {
+  const phaseIdList = Object.values(phaseIds).filter(Boolean) as number[];
+  if (phaseIdList.length === 0) return [];
 
-const CAT_LABEL: Record<string, string> = {
-  master:  'Máster',
-  primera: 'Primera',
-  segunda: 'Segunda',
-  tercera: 'Tercera',
-};
+  return prisma.match.findMany({
+    where: {
+      phaseId: { in: phaseIdList },
+      status: { in: ['finalizado', 'wo'] },
+    },
+    include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
+  });
+}
 
-export default function RankingFinalPage() {
-  const { user } = useAuth();
+// ── Helper: función de ordenamiento Alternativa 4 ─────────────────────
+// 1. Puntos (más es mejor)
+// 2. % sets ganados = setsWon / (setsWon + setsLost) — evita ventaja por más partidos
+// 3. % tantos a favor = pointsFor / (pointsFor + pointsAgainst)
+// 4. promedio tantos por set (tantos / setsJugados) — como último desempate
+function sortAlternativa4(
+  a: { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra?: number },
+  b: { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra?: number }
+): number {
+  if (b.puntos !== a.puntos) return b.puntos - a.puntos;
 
-  const [tournaments, setTournaments]               = useState<Tournament[]>([]);
-  const [circuits, setCircuits]                     = useState<Circuit[]>([]);
-  const [selectedTournament, setSelectedTournament] = useState('');
-  const [selectedCircuit, setSelectedCircuit]       = useState('');
-  const [tournamentName, setTournamentName]         = useState('');
-  const [circuitName, setCircuitName]               = useState('');
-  const [esNacional, setEsNacional]                 = useState(false);
+  const pctSetsA = a.setsJugados > 0 ? a.setsGanados / a.setsJugados : 0;
+  const pctSetsB = b.setsJugados > 0 ? b.setsGanados / b.setsJugados : 0;
+  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
 
-  const [ranking, setRanking]             = useState<RankingEntry[]>([]);
-  const [loading, setLoading]             = useState(false);
-  const [filtro, setFiltro]               = useState<string>('general');
-  const [busqueda, setBusqueda]           = useState('');
-  const [guardando, setGuardando]         = useState(false);
-  const [guardadoMsg, setGuardadoMsg]     = useState('');
-  const [generandoBracket, setGenerandoBracket] = useState(false);
-  const [bracketMsg, setBracketMsg]       = useState('');
-  const [iniciandoC2, setIniciandoC2]     = useState(false);
-  const [iniciarC2Msg, setIniciarC2Msg]   = useState('');
-  const [allCircuits, setAllCircuits]     = useState<Circuit[]>([]);
-  const [recalculando, setRecalculando]   = useState(false);
-  const [recalcularMsg, setRecalcularMsg] = useState('');
+  const totalTantosA = a.tantos + (a.tantosContra ?? 0);
+  const totalTantosB = b.tantos + (b.tantosContra ?? 0);
+  const pctTantosA = totalTantosA > 0 ? a.tantos / totalTantosA : 0;
+  const pctTantosB = totalTantosB > 0 ? b.tantos / totalTantosB : 0;
+  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
 
-  useEffect(() => {
-    api.get('/tournaments').then(r => setTournaments(r.data));
-    api.get('/circuits').then(r => {
-      setCircuits(r.data);
-      setAllCircuits(r.data);
-    });
-  }, []);
+  const promA = a.setsJugados > 0 ? a.tantos / a.setsJugados : 0;
+  const promB = b.setsJugados > 0 ? b.tantos / b.setsJugados : 0;
+  return promB - promA;
+}
 
-  const circuitsFiltrados = selectedTournament
-    ? circuits.filter(c => c.tournamentId === Number(selectedTournament)).sort((a, b) => a.order - b.order)
-    : [];
+// ── Helper: sort Alternativa 4 para RankingEntry (datos de DB) ────────
+function sortRankingEntry(
+  a: { points: number; setsWon: number; setsLost: number; pointsFor: number; pointsAgainst: number },
+  b: { points: number; setsWon: number; setsLost: number; pointsFor: number; pointsAgainst: number }
+): number {
+  if (b.points !== a.points) return b.points - a.points;
 
-  const handleTournamentChange = (tournamentId: string) => {
-    setSelectedTournament(tournamentId);
-    setSelectedCircuit('');
-    setRanking([]);
-    setGuardadoMsg(''); setBracketMsg(''); setRecalcularMsg('');
-    const t = tournaments.find(t => t.id === Number(tournamentId));
-    setTournamentName(t?.name ?? '');
-  };
+  const setsJugadosA = a.setsWon + a.setsLost;
+  const setsJugadosB = b.setsWon + b.setsLost;
+  const pctSetsA = setsJugadosA > 0 ? a.setsWon / setsJugadosA : 0;
+  const pctSetsB = setsJugadosB > 0 ? b.setsWon / setsJugadosB : 0;
+  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
 
-  const cargarRanking = (circuitId: string) => {
-    setLoading(true);
-    api.get(`/rankings/final?circuitId=${circuitId}`)
-      .then(r => { setRanking(r.data); setFiltro('general'); })
-      .catch(() => setRanking([]))
-      .finally(() => setLoading(false));
-  };
+  const totalTantosA = a.pointsFor + a.pointsAgainst;
+  const totalTantosB = b.pointsFor + b.pointsAgainst;
+  const pctTantosA = totalTantosA > 0 ? a.pointsFor / totalTantosA : 0;
+  const pctTantosB = totalTantosB > 0 ? b.pointsFor / totalTantosB : 0;
+  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
 
-  const handleCircuitChange = async (circuitId: string) => {
-    setSelectedCircuit(circuitId);
-    setGuardadoMsg(''); setBracketMsg(''); setIniciarC2Msg(''); setRecalcularMsg('');
-    const c = circuits.find(c => c.id === Number(circuitId));
-    setCircuitName(c?.name ?? '');
-    if (!circuitId) { setRanking([]); return; }
+  const promA = setsJugadosA > 0 ? a.pointsFor / setsJugadosA : 0;
+  const promB = setsJugadosB > 0 ? b.pointsFor / setsJugadosB : 0;
+  return promB - promA;
+}
 
-    try {
-      const cfgRes = await api.get(`/circuits/${circuitId}/config-torneo`);
-      setEsNacional(cfgRes.data?.tipo === 'nacional');
-    } catch { setEsNacional(false); }
+// -------------------------------------------------------
+// GET /api/rankings — Rankings por circuito
+// -------------------------------------------------------
+router.get('/', async (req, res: Response) => {
+  const { circuitId } = req.query;
+  const rankings = await prisma.rankingEntry.findMany({
+    where: circuitId ? { circuitId: Number(circuitId) } : undefined,
+    include: {
+      player: { include: { category: true } },
+      circuit: { include: { tournament: true } },
+    },
+  });
 
-    cargarRanking(circuitId);
-  };
+  const sorted = [...rankings].sort(sortRankingEntry);
 
-  const handleRecalcular = async () => {
-    if (!selectedCircuit) return;
-    if (!confirm(`¿Recalcular el ranking del ${circuitName} con el nuevo sistema de desempate?\n\nEsto aplica el criterio de porcentaje de sets y tantos en lugar de acumulados absolutos.`)) return;
-    setRecalculando(true); setRecalcularMsg('');
-    try {
-      const res = await api.post(`/rankings/recalcular-stats/${selectedCircuit}`);
-      setRecalcularMsg(`✅ Recalculado — ${res.data.jugadores} jugadores`);
-      cargarRanking(selectedCircuit);
-    } catch (e: any) {
-      setRecalcularMsg(`❌ ${e?.response?.data?.error ?? 'Error al recalcular'}`);
-    } finally { setRecalculando(false); }
-  };
+  const withAverage = sorted.map((r, i) => ({
+    ...r,
+    position: i + 1,
+    setsAverage:   r.setsLost > 0   ? parseFloat((r.setsWon / r.setsLost).toFixed(2))     : r.setsWon > 0   ? 99.99 : 0,
+    pointsAverage: r.pointsAgainst > 0 ? parseFloat((r.pointsFor / r.pointsAgainst).toFixed(2)) : r.pointsFor > 0 ? 99.99 : 0,
+  }));
+  res.json(withAverage);
+});
 
-  const handleGuardar = async () => {
-    if (!selectedCircuit) return;
-    if (!confirm(`¿Guardar este ranking del ${circuitName} como base para el siguiente circuito?`)) return;
-    setGuardando(true); setGuardadoMsg('');
-    try {
-      const res = await api.post(`/rankings/guardar-final/${selectedCircuit}`);
-      setGuardadoMsg(`✅ ${res.data.message}`);
-    } catch (e: any) {
-      setGuardadoMsg(`❌ ${e?.response?.data?.error ?? 'Error al guardar'}`);
-    } finally { setGuardando(false); }
-  };
+router.get('/circuit/:circuitId', async (req, res: Response) => {
+  const circuitId = Number(req.params.circuitId);
+  const rankings = await prisma.rankingEntry.findMany({
+    where: { circuitId },
+    include: { player: { include: { category: true } } },
+  });
 
-  const handleGenerarBracket = async () => {
-    if (!selectedCircuit) return;
-    if (!confirm(`¿Generar el bracket de cruces con los top 16 de este ranking?\n\nSe usarán los 16 mejor rankeados como semillas del bracket.\nEsto reemplaza cualquier bracket anterior.`)) return;
-    setGenerandoBracket(true); setBracketMsg('');
-    try {
-      const res = await api.post(`/matches/regenerar-bracket/${selectedCircuit}`);
-      setBracketMsg(`✅ ${res.data.message}`);
-      if (res.data.seeding) {
-        const seeds = res.data.seeding.map((s: any) => `#${s.seed} ${s.nombre}`).join(', ');
-        console.log('Seeding bracket:', seeds);
-      }
-    } catch (e: any) {
-      setBracketMsg(`❌ ${e?.response?.data?.error ?? 'Error al generar bracket'}`)
-    } finally { setGenerandoBracket(false); }
-  };
+  const sorted = [...rankings].sort(sortRankingEntry);
 
-  const handleIniciarC2 = async () => {
-    if (!selectedCircuit || !selectedTournament) return;
-    const currentCircuit = allCircuits.find(c => c.id === Number(selectedCircuit));
-    if (!currentCircuit) return;
-    const nextCircuit = allCircuits.find(c =>
-      c.tournamentId === currentCircuit.tournamentId &&
-      c.order === currentCircuit.order + 1
-    );
-    if (!nextCircuit) {
-      setIniciarC2Msg('❌ No se encontró el Circuito 2 para este torneo.');
+  const withAverage = sorted.map((r, i) => ({
+    ...r,
+    position: i + 1,
+    setsAverage:   r.setsLost > 0   ? parseFloat((r.setsWon / r.setsLost).toFixed(2))     : r.setsWon > 0   ? 99.99 : 0,
+    pointsAverage: r.pointsAgainst > 0 ? parseFloat((r.pointsFor / r.pointsAgainst).toFixed(2)) : r.pointsFor > 0 ? 99.99 : 0,
+  }));
+  res.json(withAverage);
+});
+
+// -------------------------------------------------------
+// GET /api/rankings/torneo?circuitId=X
+// -------------------------------------------------------
+router.get('/torneo', async (req, res: Response) => {
+  try {
+    const circuitId = req.query.circuitId ? Number(req.query.circuitId) : null;
+    if (!circuitId) {
+      res.status(400).json({ error: 'circuitId es requerido' });
       return;
     }
-    const msg = '¿Iniciar ' + nextCircuit.name + ' con el ranking del ' + currentCircuit.name + '?\n\nInscribirá los 32 jugadores con posiciones de siembra (puntos en 0).\nEl Circuito 1 NO se modifica.';
-    if (!confirm(msg)) return;
-    setIniciandoC2(true); setIniciarC2Msg('');
-    try {
-      const res = await api.post('/circuits/' + nextCircuit.id + '/init-from-circuit/' + selectedCircuit);
-      setIniciarC2Msg('✅ ' + res.data.message + ' — ' + res.data.inscriptos + ' jugadores inscriptos en ' + nextCircuit.name);
-    } catch (e: any) {
-      setIniciarC2Msg('❌ ' + (e?.response?.data?.error ?? 'Error al iniciar Circuito 2'));
-    } finally { setIniciandoC2(false); }
-  };
 
-  const filtrado = ranking
-    .filter(e => filtro === 'general' || e.categoria === filtro)
-    .filter(e =>
-      busqueda === '' ||
-      `${e.lastName} ${e.firstName}`.toLowerCase().includes(busqueda.toLowerCase()) ||
-      e.club.toLowerCase().includes(busqueda.toLowerCase())
-    );
+    const FASES = await getPhasesDeCircuito(circuitId);
 
-  const counts = {
-    general: ranking.length,
-    master:  ranking.filter(e => e.categoria === 'master').length,
-    primera: ranking.filter(e => e.categoria === 'primera').length,
-    segunda: ranking.filter(e => e.categoria === 'segunda').length,
-    tercera: ranking.filter(e => e.categoria === 'tercera').length,
-  };
+    const configs = await prisma.faseConfig.findMany({
+      where: { phaseId: { in: Object.values(FASES).filter(Boolean) as number[] } }
+    });
+    const getPublicado = (phaseId: number | null) => {
+      if (!phaseId) return false;
+      const config = configs.find(c => c.phaseId === phaseId);
+      return (config?.configuracion as any)?.rankingPublicado ?? false;
+    };
 
-  const corteBracket = esNacional ? 16 : null;
+    // ── Clasificatorio ────────────────────────────────────────────────
+    const clasificadosClasif: any[] = [];
+    if (FASES.clasificatorio) {
+      const circuit = await prisma.circuit.findUnique({
+        where: { id: circuitId },
+        include: { phases: true }
+      });
+      const config = (circuit as any)?.configTorneo as any;
+      const cuposDesdeClasif = config?.cuposDesdeClasif ?? 16;
 
-  return (
-    <div className="min-h-screen bg-carbon-100">
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      const crucesClasif = await prisma.match.findMany({
+        where: {
+          phaseId: FASES.clasificatorio,
+          serieId: { in: [...Array.from({ length: cuposDesdeClasif + 1 }, (_, i) => `clasif-reduccion-${i + 1}`), 'clasif-repechaje'] }
+        },
+        include: { result: true, playerA: true, playerB: true }
+      });
 
-        <div className="text-center mb-6">
-          <h1 className="font-display text-5xl text-gold mb-1">RANKING DEL CIRCUITO</h1>
-          <p className="text-chalk/50 text-sm">
-            {tournamentName && circuitName ? `${tournamentName} — ${circuitName}` : 'Seleccioná un torneo y circuito'}
-          </p>
-        </div>
+      for (let i = 1; i <= cuposDesdeClasif - 1; i++) {
+        const cruce = crucesClasif.find(c => c.serieId === `clasif-reduccion-${i}`);
+        if (cruce?.result?.winnerId) {
+          const jugador = cruce.playerA?.id === cruce.result.winnerId ? cruce.playerA : cruce.playerB;
+          clasificadosClasif.push({ posicion: i, jugador, fuente: `Cruce ${i}` });
+        }
+      }
+      const repechaje = crucesClasif.find(c => c.serieId === 'clasif-repechaje');
+      if (repechaje?.result?.winnerId) {
+        const jugador = repechaje.playerA?.id === repechaje.result.winnerId ? repechaje.playerA : repechaje.playerB;
+        clasificadosClasif.push({ posicion: cuposDesdeClasif, jugador, fuente: 'Repechaje' });
+      }
+    }
 
-        {/* Selectores */}
-        <div className="flex flex-wrap gap-3 justify-center mb-6">
-          <select className="input w-56" value={selectedTournament}
-            onChange={e => handleTournamentChange(e.target.value)}>
-            <option value="">Seleccioná un torneo</option>
-            {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          <select className="input w-56" value={selectedCircuit}
-            onChange={e => handleCircuitChange(e.target.value)} disabled={!selectedTournament}>
-            <option value="">Seleccioná un circuito</option>
-            {circuitsFiltrados.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
+    // ── Segunda ───────────────────────────────────────────────────────
+    const clasificadosSegunda: any[] = [];
+    if (FASES.segunda) {
+      const matchesSegunda = await prisma.match.findMany({
+        where: { phaseId: FASES.segunda },
+        include: { result: true, playerA: true, playerB: true },
+        orderBy: { round: 'asc' }
+      });
 
-        {!selectedCircuit && !loading && (
-          <div className="text-center py-16 text-chalk/30">
-            <p className="text-5xl mb-4">🏆</p>
-            <p className="text-lg font-display">Seleccioná un torneo y circuito</p>
-          </div>
-        )}
+      const seriesSegundaMap: Record<string, any[]> = {};
+      for (const m of matchesSegunda) {
+        if (!m.serieId) continue;
+        if (!seriesSegundaMap[m.serieId]) seriesSegundaMap[m.serieId] = [];
+        seriesSegundaMap[m.serieId].push(m);
+      }
 
-        {loading && (
-          <div className="text-center py-16">
-            <span className="text-gold font-display text-2xl">Calculando ranking...</span>
-          </div>
-        )}
+      const seriesOrdenadas = Object.keys(seriesSegundaMap).sort((a, b) => {
+        const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0');
+        const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0');
+        return numA - numB;
+      });
 
-        {!loading && selectedCircuit && ranking.length > 0 && (
-          <>
-            {/* Badge Nacional */}
-            {esNacional && (
-              <div className="flex justify-center mb-4">
-                <span className="bg-blue-900/30 border border-blue-700/40 text-blue-400 text-xs px-3 py-1 rounded-lg font-mono">
-                  🏆 Nacional — Top 16 clasifican al bracket
-                </span>
-              </div>
-            )}
+      let posSegunda = 1;
+      for (const serieId of seriesOrdenadas) {
+        const partidos = seriesSegundaMap[serieId];
+        const roundBase = Math.min(...partidos.map(p => p.round));
+        const p3 = partidos.find(p => p.round === roundBase + 2);
+        const p5 = partidos.find(p => p.round === roundBase + 4);
+        if (p3?.result?.winnerId) {
+          const jugador = p3.playerA?.id === p3.result.winnerId ? p3.playerA : p3.playerB;
+          clasificadosSegunda.push({ posicion: posSegunda++, jugador, fuente: `${serieId} — 1°` });
+        }
+        if (p5?.result?.winnerId) {
+          const jugador = p5.playerA?.id === p5.result.winnerId ? p5.playerA : p5.playerB;
+          clasificadosSegunda.push({ posicion: posSegunda++, jugador, fuente: `${serieId} — 2°` });
+        }
+      }
+    }
 
-            {/* Acciones admin */}
-            {user?.role === 'admin' && (
-              <div className="flex flex-col items-center gap-3 mb-6">
+    // ── Primera ───────────────────────────────────────────────────────
+    const clasificadosPrimera: any[] = [];
+    if (FASES.primera) {
+      const matchesPrimera = await prisma.match.findMany({
+        where: { phaseId: FASES.primera },
+        include: { result: true, playerA: true, playerB: true },
+        orderBy: { round: 'asc' }
+      });
+      let posPrimera = 1;
+      for (const m of matchesPrimera) {
+        if (m.result?.winnerId) {
+          const jugador = m.playerA?.id === m.result.winnerId ? m.playerA : m.playerB;
+          clasificadosPrimera.push({ posicion: posPrimera++, jugador, fuente: `Cruce ${m.round}` });
+        }
+      }
+    }
 
-                {/* Botón Recalcular ranking */}
-                <div className="flex flex-col items-center gap-1 w-full max-w-sm">
-                  <button
-                    className="btn-secondary px-6 w-full"
-                    style={{ background: 'linear-gradient(90deg,#1a3a1a,#2d5a2d)', borderColor: '#4ade80' }}
-                    disabled={recalculando}
-                    onClick={handleRecalcular}
-                  >
-                    {recalculando ? 'Recalculando...' : '🔄 Recalcular ranking (nuevo criterio)'}
-                  </button>
-                  {recalcularMsg && (
-                    <span className={`text-sm ${recalcularMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                      {recalcularMsg}
-                    </span>
-                  )}
-                  <p className="text-chalk/30 text-xs text-center">
-                    Aplica el desempate por % de sets y tantos (Alternativa 4)
-                  </p>
-                </div>
+    // ── Máster ────────────────────────────────────────────────────────
+    const clasificadosMaster: any[] = [];
+    if (FASES.master) {
+      const matchesMaster = await prisma.match.findMany({
+        where: { phaseId: FASES.master },
+        include: { result: true, playerA: true, playerB: true },
+        orderBy: { round: 'desc' }
+      });
+      const finalMaster = matchesMaster[0];
+      if (finalMaster?.result?.winnerId) {
+        const campeon    = finalMaster.playerA?.id === finalMaster.result.winnerId ? finalMaster.playerA : finalMaster.playerB;
+        const subcampeon = finalMaster.playerA?.id === finalMaster.result.winnerId ? finalMaster.playerB : finalMaster.playerA;
+        if (campeon)    clasificadosMaster.push({ posicion: 1, jugador: campeon,    fuente: 'Campeón' });
+        if (subcampeon) clasificadosMaster.push({ posicion: 2, jugador: subcampeon, fuente: 'Finalista' });
+      }
+    }
 
-                {/* Botón generar bracket — solo para Nacional */}
-                {esNacional && (
-                  <div className="flex flex-col items-center gap-1 w-full max-w-sm">
-                    <button className="btn-primary px-6 w-full" disabled={generandoBracket} onClick={handleGenerarBracket}>
-                      {generandoBracket ? 'Generando...' : '🏆 Generar bracket de cruces (top 16)'}
-                    </button>
-                    {bracketMsg && (
-                      <span className={`text-sm ${bracketMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                        {bracketMsg}
-                      </span>
-                    )}
-                    <p className="text-chalk/30 text-xs text-center">
-                      Crea los 15 partidos del bracket con los top 16 del ranking
-                    </p>
-                  </div>
-                )}
+    res.json({
+      phaseIds: FASES,
+      clasificatorio: { publicado: getPublicado(FASES.clasificatorio), clasificados: clasificadosClasif },
+      segunda:        { publicado: getPublicado(FASES.segunda),        clasificados: clasificadosSegunda },
+      primera:        { publicado: getPublicado(FASES.primera),        clasificados: clasificadosPrimera },
+      master:         { publicado: getPublicado(FASES.master),         clasificados: clasificadosMaster },
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-                {/* Botón Iniciar Circuito 2 — solo para Nacional */}
-                {esNacional && (
-                  <div className="flex flex-col items-center gap-1 w-full max-w-sm">
-                    <button className="btn-primary px-6 w-full" style={{background:'linear-gradient(90deg,#014f86,#0277bd)'}} disabled={iniciandoC2} onClick={handleIniciarC2}>
-                      {iniciandoC2 ? 'Iniciando...' : '🚀 Iniciar Circuito 2 con este ranking'}
-                    </button>
-                    {iniciarC2Msg && (
-                      <span className={`text-sm ${iniciarC2Msg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                        {iniciarC2Msg}
-                      </span>
-                    )}
-                    <p className="text-chalk/30 text-xs text-center">
-                      Inscribe los 32 jugadores en el Circuito 2 con las posiciones de siembra del Circuito 1 (puntos en 0)
-                    </p>
-                  </div>
-                )}
+// -------------------------------------------------------
+// PUT /api/rankings/torneo/:phaseId/publicar
+// -------------------------------------------------------
+router.put('/torneo/:phaseId/publicar', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const phaseId = parseInt(req.params.phaseId);
+    const { publicado } = req.body;
+    const config = await prisma.faseConfig.findUnique({ where: { phaseId } });
+    const configuracionActual = (config?.configuracion as any) ?? {};
+    await prisma.faseConfig.upsert({
+      where: { phaseId },
+      create: { phaseId, duracionSerie: 45, configuracion: { ...configuracionActual, rankingPublicado: publicado } },
+      update: { configuracion: { ...configuracionActual, rankingPublicado: publicado }, updatedAt: new Date() }
+    });
+    res.json({ phaseId, publicado });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-                {/* Botón siguiente circuito */}
-                <div className="flex flex-col items-center gap-1 w-full max-w-sm">
-                  <button className="btn-secondary px-6 w-full" disabled={guardando} onClick={handleGuardar}>
-                    {guardando ? 'Guardando...' : '💾 Usar como base para el siguiente circuito'}
-                  </button>
-                  {guardadoMsg && (
-                    <span className={`text-sm ${guardadoMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
-                      {guardadoMsg}
-                    </span>
-                  )}
-                  <p className="text-chalk/30 text-xs">Presioná este botón antes de generar los partidos del siguiente circuito</p>
-                </div>
+// -------------------------------------------------------
+// GET /api/rankings/final?circuitId=X
+// -------------------------------------------------------
+router.get('/final', async (req, res: Response) => {
+  try {
+    const circuitId = req.query.circuitId ? Number(req.query.circuitId) : null;
+    if (!circuitId) {
+      res.status(400).json({ error: 'circuitId es requerido' });
+      return;
+    }
 
-              </div>
-            )}
+    const FASES = await getPhasesDeCircuito(circuitId);
+    const phaseIdList = Object.values(FASES).filter(Boolean) as number[];
 
-            {/* Filtros por categoría — solo para no nacionales */}
-            {!esNacional && (
-              <div className="flex gap-2 flex-wrap justify-center mb-4">
-                {(['general', 'master', 'primera', 'segunda', 'tercera'] as const).map(cat => (
-                  <button key={cat} onClick={() => setFiltro(cat)}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                      filtro === cat
-                        ? cat === 'general' ? 'bg-gold/20 text-gold border-gold/40' : CAT_COLORS[cat]
-                        : 'border-felt-light/20 text-chalk/40 hover:border-chalk/30'
-                    }`}>
-                    {cat === 'general' ? 'General' : CAT_LABEL[cat]}
-                    <span className="ml-1.5 opacity-60">({counts[cat]})</span>
-                  </button>
-                ))}
-              </div>
-            )}
+    // Jugadores inscriptos en este circuito
+    const circuitPlayers = await prisma.circuitPlayer.findMany({
+      where: { circuitId },
+      include: { player: { include: { category: true } } }
+    });
+    const players = circuitPlayers
+      .map(cp => cp.player)
+      .filter(p => p.dni !== 'FEBIU000' && p.active);
 
-            {/* Buscador */}
-            <div className="mb-4">
-              <input type="text" placeholder="Buscar jugador o club..."
-                className="input w-full max-w-sm mx-auto block"
-                value={busqueda} onChange={e => setBusqueda(e.target.value)} />
-            </div>
+    const allMatches = await prisma.match.findMany({
+      where: {
+        phaseId: { in: phaseIdList },
+        status: { in: ['finalizado', 'wo'] },
+      },
+      include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
+    });
 
-            {/* Tabla */}
-            <div className="card p-0 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-felt-light/10 text-chalk/40 text-xs uppercase tracking-widest">
-                    <th className="text-center px-3 py-3 w-12">#</th>
-                    <th className="text-left px-4 py-3">Jugador</th>
-                    <th className="text-left px-4 py-3 hidden sm:table-cell">Club</th>
-                    <th className="text-center px-3 py-3 hidden md:table-cell">Categoría</th>
-                    <th className="text-center px-3 py-3">Pts</th>
-                    <th className="text-center px-3 py-3 hidden sm:table-cell">Sets</th>
-                    <th className="text-center px-3 py-3 hidden md:table-cell">Tantos</th>
-                    <th className="text-center px-3 py-3 hidden lg:table-cell">Prom.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtrado.map((entry) => (
-                    <>
-                      {corteBracket && filtro === 'general' && entry.posicion === corteBracket + 1 && (
-                        <tr key={`corte-${entry.posicion}`}>
-                          <td colSpan={8} className="px-4 py-2">
-                            <div className="flex items-center gap-3">
-                              <div className="flex-1 h-px bg-gold/40"></div>
-                              <span className="text-gold/70 text-xs font-mono uppercase tracking-widest font-bold whitespace-nowrap">
-                                ▲ Top {corteBracket} clasificados al bracket
-                              </span>
-                              <div className="flex-1 h-px bg-gold/40"></div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                      <tr key={entry.playerId}
-                        className={`border-b border-felt-light/5 transition-colors ${
-                          corteBracket && entry.posicion <= corteBracket ? 'bg-blue-900/10' :
-                          entry.posicion <= 8  ? 'bg-yellow-900/5' :
-                          entry.posicion <= 32 ? 'bg-blue-900/5'   :
-                          entry.posicion <= 64 ? 'bg-green-900/5'  : ''
-                        }`}>
-                        <td className="text-center px-3 py-2.5">
-                          <span className={`font-mono font-bold text-sm ${
-                            corteBracket && entry.posicion <= corteBracket ? 'text-blue-400' :
-                            entry.posicion <= 8  ? 'text-yellow-400' :
-                            entry.posicion <= 32 ? 'text-blue-400'   :
-                            entry.posicion <= 64 ? 'text-green-400'  : 'text-chalk/40'
-                          }`}>{entry.posicion}</span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className="text-chalk font-semibold">{entry.lastName}, {entry.firstName}</span>
-                        </td>
-                        <td className="px-4 py-2.5 hidden sm:table-cell text-chalk/50 text-xs">{entry.club || '—'}</td>
-                        <td className="px-3 py-2.5 hidden md:table-cell text-center">
-                          <span className={`text-xs px-2 py-0.5 rounded ${CAT_COLORS[entry.categoria] ?? ''}`}>
-                            {CAT_LABEL[entry.categoria] ?? entry.categoria}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className="text-gold font-bold font-mono">{entry.puntos}</span>
-                        </td>
-                        <td className="px-3 py-2.5 text-center hidden sm:table-cell text-chalk/70 font-mono">{entry.setsGanados}</td>
-                        <td className="px-3 py-2.5 text-center hidden md:table-cell text-chalk/70 font-mono">{entry.tantos}</td>
-                        <td className="px-3 py-2.5 text-center hidden lg:table-cell text-chalk/50 font-mono text-xs">{entry.promedio.toFixed(2)}</td>
-                      </tr>
-                    </>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra: number; }
+    const stats = new Map<number, PlayerStats>();
+    for (const player of players) {
+      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 });
+    }
 
-            <p className="text-center text-chalk/20 text-xs mt-4">
-              {filtrado.length} jugadores · ordenados por puntos → % sets → % tantos → promedio
-            </p>
-          </>
-        )}
+    const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (!s || !match.result) return;
+      if (match.sets && match.sets.length > 0) {
+        let setsWon = 0, tantos = 0, tantosContra = 0;
+        for (const set of match.sets) {
+          const ptsFor     = isPlayerA ? set.pointsA : set.pointsB;
+          const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
+          tantos += ptsFor;
+          tantosContra += ptsAgainst;
+          if (ptsFor > ptsAgainst) setsWon++;
+        }
+        s.setsGanados += setsWon;
+        s.setsJugados += match.sets.length;
+        s.tantos += tantos;
+        s.tantosContra += tantosContra;
+      } else {
+        const setsFor     = isPlayerA ? match.result.setsA    : match.result.setsB;
+        const setsAgainst = isPlayerA ? match.result.setsB    : match.result.setsA;
+        const tantosFor   = isPlayerA ? match.result.pointsA  : match.result.pointsB;
+        const tantosContra = isPlayerA ? match.result.pointsB : match.result.pointsA;
+        s.setsGanados += setsFor;
+        s.setsJugados += setsFor + setsAgainst;
+        s.tantos += tantosFor;
+        s.tantosContra += tantosContra ?? 0;
+      }
+    };
 
-        {!loading && selectedCircuit && ranking.length === 0 && (
-          <div className="text-center py-16 text-chalk/30">
-            <p className="text-5xl mb-4">🎱</p>
-            <p className="text-lg font-display">Sin datos para este circuito</p>
-            <p className="text-sm mt-2">El circuito aún no tiene partidos finalizados.</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+    const addPts = (playerId: number | null | undefined, pts: number) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (s) s.puntos += pts;
+    };
+
+    // ── Series Clasificatorio y Segunda ───────────────────────────────
+    const serieMatches: Record<string, any[]> = {};
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
+      if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
+      serieMatches[match.serieId].push(match);
+    }
+
+    for (const matches of Object.values(serieMatches)) {
+      const roundBase = Math.min(...matches.map((m: any) => m.round));
+      const p3 = matches.find((m: any) => m.round === roundBase + 2);
+      const p4 = matches.find((m: any) => m.round === roundBase + 3);
+      const p5 = matches.find((m: any) => m.round === roundBase + 4);
+      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+      if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+      if (p5?.result?.winnerId) {
+        const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+        addPts(p5.result.winnerId, 6);
+        addPts(p5LoserId, 4);
+      }
+      for (const match of matches) {
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+    }
+
+    // ── Reducción y Repechaje: 0 puntos ───────────────────────────────
+    for (const match of allMatches) {
+      if (!match.serieId) continue;
+      if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // ── Cruces Primera: 5/1 ───────────────────────────────────────────
+    for (const match of allMatches) {
+      if (match.phase.type !== 'primera') continue;
+      if (!match.result?.winnerId) continue;
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      if (!match.result.isWO) {
+        addPts(match.result.winnerId, 5);
+        addPts(loserId, 1);
+      }
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // ── Cruces Máster: 5/1, Final: 7/2 ───────────────────────────────
+    for (const match of allMatches) {
+      if (match.phase.type !== 'master') continue;
+      if (!match.result?.winnerId) continue;
+      const isFinal = match.serieId === 'master-final';
+      const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+      if (!match.result.isWO) {
+        addPts(match.result.winnerId, isFinal ? 7 : 5);
+        addPts(loserId, isFinal ? 2 : 1);
+      }
+      addSetsAndTantos(match.playerAId, match, true);
+      addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    const ranking = players
+      .map(player => {
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
+        const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
+        const pctSets   = s.setsJugados > 0 ? parseFloat((s.setsGanados / s.setsJugados * 100).toFixed(1)) : 0;
+        const pctTantos = (s.tantos + s.tantosContra) > 0 ? parseFloat((s.tantos / (s.tantos + s.tantosContra) * 100).toFixed(1)) : 0;
+        return {
+          playerId: player.id,
+          firstName: player.firstName,
+          lastName: player.lastName,
+          club: player.club ?? '',
+          categoria: player.category.name,
+          puntos: s.puntos,
+          setsGanados: s.setsGanados,
+          setsJugados: s.setsJugados,
+          tantos: s.tantos,
+          tantosContra: s.tantosContra,
+          promedio,
+          pctSets,
+          pctTantos,
+        };
+      })
+      .sort((a, b) => sortAlternativa4(
+        { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
+        { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
+      ))
+      .map((player, index) => ({ ...player, posicion: index + 1 }));
+
+    res.json(ranking);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// -------------------------------------------------------
+// POST /api/rankings/guardar-final/:circuitId
+// -------------------------------------------------------
+router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const FASES = await getPhasesDeCircuito(circuitId);
+    const phaseIdList = Object.values(FASES).filter(Boolean) as number[];
+
+    const circuitPlayers = await prisma.circuitPlayer.findMany({
+      where: { circuitId },
+      include: { player: { include: { category: true } } }
+    });
+    const players = circuitPlayers
+      .map(cp => cp.player)
+      .filter(p => p.dni !== 'FEBIU000' && p.active);
+
+    const allMatches = await prisma.match.findMany({
+      where: {
+        phaseId: { in: phaseIdList },
+        status: { in: ['finalizado', 'wo'] },
+      },
+      include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
+    });
+
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra: number; }
+    const stats = new Map<number, PlayerStats>();
+    for (const player of players) {
+      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 });
+    }
+
+    const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (!s || !match.result) return;
+      if (match.sets && match.sets.length > 0) {
+        let setsWon = 0, tantos = 0, tantosContra = 0;
+        for (const set of match.sets) {
+          const ptsFor     = isPlayerA ? set.pointsA : set.pointsB;
+          const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
+          tantos += ptsFor;
+          tantosContra += ptsAgainst;
+          if (ptsFor > ptsAgainst) setsWon++;
+        }
+        s.setsGanados += setsWon;
+        s.setsJugados += match.sets.length;
+        s.tantos += tantos;
+        s.tantosContra += tantosContra;
+      } else {
+        const setsFor      = isPlayerA ? match.result.setsA   : match.result.setsB;
+        const setsAgainst  = isPlayerA ? match.result.setsB   : match.result.setsA;
+        const tantosFor    = isPlayerA ? match.result.pointsA : match.result.pointsB;
+        const tantosContra = isPlayerA ? match.result.pointsB : match.result.pointsA;
+        s.setsGanados += setsFor;
+        s.setsJugados += setsFor + setsAgainst;
+        s.tantos += tantosFor;
+        s.tantosContra += tantosContra ?? 0;
+      }
+    };
+
+    const addPts = (playerId: number | null | undefined, pts: number) => {
+      if (!playerId) return;
+      const s = stats.get(playerId);
+      if (s) s.puntos += pts;
+    };
+
+    // Detectar si el circuito es nacional (serieIds: nac-serie-X o NP-G1..NP-G8)
+    const esNacionalSerie = (id: string | null) =>
+      !!id && (id.startsWith('nac-serie-') || /^[A-Z]+-G\d+$/.test(id));
+    const esNacional = allMatches.some((m: any) => esNacionalSerie(m.serieId));
+
+    if (esNacional) {
+      // ── NACIONAL: series nac-serie-X o NP-G1..NP-G8 (P1..P5) ───────
+      const nacSerieMatches: Record<string, any[]> = {};
+      for (const match of allMatches) {
+        if (!match.serieId || !esNacionalSerie(match.serieId)) continue;
+        const sid = match.serieId as string;
+        if (!nacSerieMatches[sid]) nacSerieMatches[sid] = [];
+        nacSerieMatches[sid].push(match);
+      }
+      for (const matches of Object.values(nacSerieMatches)) {
+        const roundBase = Math.min(...matches.map((m: any) => m.round));
+        const p3 = matches.find((m: any) => m.round === roundBase + 2);
+        const p4 = matches.find((m: any) => m.round === roundBase + 3);
+        const p5 = matches.find((m: any) => m.round === roundBase + 4);
+        if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+        if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+        if (p5?.result?.winnerId) {
+          const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+          addPts(p5.result.winnerId, 6);
+          addPts(p5LoserId, 4);
+        }
+        for (const match of matches) {
+          addSetsAndTantos(match.playerAId, match, true);
+          addSetsAndTantos(match.playerBId, match, false);
+        }
+      }
+
+      // ── NACIONAL: bracket master ──────────────────────────────────────
+      for (const match of allMatches) {
+        if (match.phase.type !== 'master') continue;
+        if (!match.serieId?.startsWith('nac-')) continue;
+        if (!match.result?.winnerId) continue;
+        const isFinal = match.serieId === 'nac-final';
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) {
+          addPts(match.result.winnerId, isFinal ? 7 : 5);
+          addPts(loserId, isFinal ? 2 : 1);
+        }
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+    } else {
+      // ── DEPARTAMENTAL: clasif-serie-, segunda-serie- ──────────────────
+      const serieMatches: Record<string, any[]> = {};
+      for (const match of allMatches) {
+        if (!match.serieId) continue;
+        if (!match.serieId.startsWith('clasif-serie-') && !match.serieId.startsWith('segunda-serie-')) continue;
+        if (!serieMatches[match.serieId]) serieMatches[match.serieId] = [];
+        serieMatches[match.serieId].push(match);
+      }
+      for (const matches of Object.values(serieMatches)) {
+        const roundBase = Math.min(...matches.map((m: any) => m.round));
+        const p3 = matches.find((m: any) => m.round === roundBase + 2);
+        const p4 = matches.find((m: any) => m.round === roundBase + 3);
+        const p5 = matches.find((m: any) => m.round === roundBase + 4);
+        if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
+        if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
+        if (p5?.result?.winnerId) {
+          const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
+          addPts(p5.result.winnerId, 6);
+          addPts(p5LoserId, 4);
+        }
+        for (const match of matches) {
+          addSetsAndTantos(match.playerAId, match, true);
+          addSetsAndTantos(match.playerBId, match, false);
+        }
+      }
+
+      for (const match of allMatches) {
+        if (!match.serieId) continue;
+        if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+
+      for (const match of allMatches) {
+        if (match.phase.type !== 'primera') continue;
+        if (!match.result?.winnerId) continue;
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) { addPts(match.result.winnerId, 5); addPts(loserId, 1); }
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+
+      for (const match of allMatches) {
+        if (match.phase.type !== 'master') continue;
+        if (!match.result?.winnerId) continue;
+        const isFinal = match.serieId === 'master-final';
+        const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
+        if (!match.result.isWO) { addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1); }
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
+      }
+    }
+
+    const ranked = players
+      .map(player => {
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
+        return {
+          playerId: player.id,
+          puntos: s.puntos,
+          setsGanados: s.setsGanados,
+          setsJugados: s.setsJugados,
+          tantos: s.tantos,
+          tantosContra: s.tantosContra,
+        };
+      })
+      .sort((a, b) => sortAlternativa4(
+        { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
+        { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
+      ));
+
+    let guardados = 0;
+    for (let i = 0; i < ranked.length; i++) {
+      const entry = ranked[i];
+      await prisma.rankingEntry.upsert({
+        where: { playerId_circuitId: { playerId: entry.playerId, circuitId } },
+        create: {
+          playerId: entry.playerId, circuitId, position: i + 1,
+          points: entry.puntos, matchesPlayed: 0, matchesWon: 0,
+          setsWon: entry.setsGanados, setsLost: entry.setsJugados - entry.setsGanados,
+          pointsFor: entry.tantos, pointsAgainst: entry.tantosContra,
+        },
+        update: {
+          position: i + 1, points: entry.puntos,
+          setsWon: entry.setsGanados, setsLost: entry.setsJugados - entry.setsGanados,
+          pointsFor: entry.tantos, pointsAgainst: entry.tantosContra,
+        }
+      });
+      guardados++;
+    }
+
+    res.json({ message: `Ranking guardado correctamente — ${guardados} jugadores`, circuitId });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ── DELETE /api/rankings/limpiar/:circuitId ──────────────────────────
+// Borra RankingEntry, CircuitPlayer y partidos del circuito.
+router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+
+    // Borrar partidos (SetResult -> MatchResult -> Match)
+    const phases = await prisma.phase.findMany({ where: { circuitId } });
+    const phaseIds = phases.map((p: any) => p.id);
+    if (phaseIds.length > 0) {
+      await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
+      await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
+    }
+
+    // Borrar ranking
+    const ranking = await prisma.rankingEntry.deleteMany({ where: { circuitId } });
+
+    // Borrar inscripciones
+    const inscripciones = await prisma.circuitPlayer.deleteMany({ where: { circuitId } });
+
+    res.json({ ok: true, message: 'Circuito ' + circuitId + ' limpiado completamente', ranking: ranking.count, inscripciones: inscripciones.count });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ── Recalcular stats de ranking desde partidos ya jugados ──────────────
+router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const circuitId = Number(req.params.circuitId);
+  try {
+    // Reset stats (no puntos)
+    await prisma.rankingEntry.updateMany({
+      where: { circuitId },
+      data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
+    });
+
+    // Buscar todos los partidos finalizados del circuito
+    const matches = await prisma.match.findMany({
+      where: { phase: { circuitId }, status: { in: ['finalizado', 'wo'] } },
+      include: { result: true }
+    });
+
+    for (const m of matches) {
+      if (!m.result || !m.playerAId || !m.playerBId) continue;
+      const { setsA, setsB, pointsA, pointsB, winnerId } = m.result;
+      const wonA = winnerId === m.playerAId ? 1 : 0;
+      const wonB = winnerId === m.playerBId ? 1 : 0;
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerAId, circuitId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonA }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } }
+      });
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerBId, circuitId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } }
+      });
+    }
+
+    // Recalcular posiciones con Alternativa 4
+    const entries = await prisma.rankingEntry.findMany({
+      where: { circuitId }
+    });
+
+    const sorted = [...entries].sort(sortRankingEntry);
+
+    for (let i = 0; i < sorted.length; i++) {
+      await prisma.rankingEntry.update({ where: { id: sorted[i].id }, data: { position: i + 1 } });
+    }
+
+    res.json({ ok: true, partidos: matches.length, jugadores: entries.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;
