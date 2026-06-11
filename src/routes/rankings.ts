@@ -526,9 +526,10 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       // ── NACIONAL: series nac-serie-X o NP-G1..NP-G8 (P1..P5) ───────
       const nacSerieMatches: Record<string, any[]> = {};
       for (const match of allMatches) {
-        if (!esNacionalSerie(match.serieId)) continue;
-        if (!nacSerieMatches[match.serieId]) nacSerieMatches[match.serieId] = [];
-        nacSerieMatches[match.serieId].push(match);
+        if (!match.serieId || !esNacionalSerie(match.serieId)) continue;
+        const sid = match.serieId as string;
+        if (!nacSerieMatches[sid]) nacSerieMatches[sid] = [];
+        nacSerieMatches[sid].push(match);
       }
       for (const matches of Object.values(nacSerieMatches)) {
         const roundBase = Math.min(...matches.map((m: any) => m.round));
