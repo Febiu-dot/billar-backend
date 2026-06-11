@@ -32,6 +32,56 @@ async function calcularStatsCircuito(phaseIds: { clasificatorio: number | null; 
   });
 }
 
+// ── Helper: función de ordenamiento Alternativa 4 ─────────────────────
+// 1. Puntos (más es mejor)
+// 2. % sets ganados = setsWon / (setsWon + setsLost) — evita ventaja por más partidos
+// 3. % tantos a favor = pointsFor / (pointsFor + pointsAgainst)
+// 4. promedio tantos por set (tantos / setsJugados) — como último desempate
+function sortAlternativa4(
+  a: { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra?: number },
+  b: { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra?: number }
+): number {
+  if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+
+  const pctSetsA = a.setsJugados > 0 ? a.setsGanados / a.setsJugados : 0;
+  const pctSetsB = b.setsJugados > 0 ? b.setsGanados / b.setsJugados : 0;
+  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
+
+  const totalTantosA = a.tantos + (a.tantosContra ?? 0);
+  const totalTantosB = b.tantos + (b.tantosContra ?? 0);
+  const pctTantosA = totalTantosA > 0 ? a.tantos / totalTantosA : 0;
+  const pctTantosB = totalTantosB > 0 ? b.tantos / totalTantosB : 0;
+  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
+
+  const promA = a.setsJugados > 0 ? a.tantos / a.setsJugados : 0;
+  const promB = b.setsJugados > 0 ? b.tantos / b.setsJugados : 0;
+  return promB - promA;
+}
+
+// ── Helper: sort Alternativa 4 para RankingEntry (datos de DB) ────────
+function sortRankingEntry(
+  a: { points: number; setsWon: number; setsLost: number; pointsFor: number; pointsAgainst: number },
+  b: { points: number; setsWon: number; setsLost: number; pointsFor: number; pointsAgainst: number }
+): number {
+  if (b.points !== a.points) return b.points - a.points;
+
+  const setsJugadosA = a.setsWon + a.setsLost;
+  const setsJugadosB = b.setsWon + b.setsLost;
+  const pctSetsA = setsJugadosA > 0 ? a.setsWon / setsJugadosA : 0;
+  const pctSetsB = setsJugadosB > 0 ? b.setsWon / setsJugadosB : 0;
+  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
+
+  const totalTantosA = a.pointsFor + a.pointsAgainst;
+  const totalTantosB = b.pointsFor + b.pointsAgainst;
+  const pctTantosA = totalTantosA > 0 ? a.pointsFor / totalTantosA : 0;
+  const pctTantosB = totalTantosB > 0 ? b.pointsFor / totalTantosB : 0;
+  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
+
+  const promA = setsJugadosA > 0 ? a.pointsFor / setsJugadosA : 0;
+  const promB = setsJugadosB > 0 ? b.pointsFor / setsJugadosB : 0;
+  return promB - promA;
+}
+
 // -------------------------------------------------------
 // GET /api/rankings — Rankings por circuito
 // -------------------------------------------------------
@@ -43,9 +93,11 @@ router.get('/', async (req, res: Response) => {
       player: { include: { category: true } },
       circuit: { include: { tournament: true } },
     },
-    orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }],
   });
-  const withAverage = rankings.map((r, i) => ({
+
+  const sorted = [...rankings].sort(sortRankingEntry);
+
+  const withAverage = sorted.map((r, i) => ({
     ...r,
     position: i + 1,
     setsAverage:   r.setsLost > 0   ? parseFloat((r.setsWon / r.setsLost).toFixed(2))     : r.setsWon > 0   ? 99.99 : 0,
@@ -59,9 +111,11 @@ router.get('/circuit/:circuitId', async (req, res: Response) => {
   const rankings = await prisma.rankingEntry.findMany({
     where: { circuitId },
     include: { player: { include: { category: true } } },
-    orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }],
   });
-  const withAverage = rankings.map((r, i) => ({
+
+  const sorted = [...rankings].sort(sortRankingEntry);
+
+  const withAverage = sorted.map((r, i) => ({
     ...r,
     position: i + 1,
     setsAverage:   r.setsLost > 0   ? parseFloat((r.setsWon / r.setsLost).toFixed(2))     : r.setsWon > 0   ? 99.99 : 0,
@@ -260,10 +314,10 @@ router.get('/final', async (req, res: Response) => {
       include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
     });
 
-    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; }
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra: number; }
     const stats = new Map<number, PlayerStats>();
     for (const player of players) {
-      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 });
+      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 });
     }
 
     const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
@@ -271,19 +325,27 @@ router.get('/final', async (req, res: Response) => {
       const s = stats.get(playerId);
       if (!s || !match.result) return;
       if (match.sets && match.sets.length > 0) {
-        let setsWon = 0, tantos = 0;
+        let setsWon = 0, tantos = 0, tantosContra = 0;
         for (const set of match.sets) {
           const ptsFor     = isPlayerA ? set.pointsA : set.pointsB;
           const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
           tantos += ptsFor;
+          tantosContra += ptsAgainst;
           if (ptsFor > ptsAgainst) setsWon++;
         }
-        s.setsGanados += setsWon; s.setsJugados += match.sets.length; s.tantos += tantos;
+        s.setsGanados += setsWon;
+        s.setsJugados += match.sets.length;
+        s.tantos += tantos;
+        s.tantosContra += tantosContra;
       } else {
-        const setsFor    = isPlayerA ? match.result.setsA    : match.result.setsB;
-        const setsAgainst = isPlayerA ? match.result.setsB   : match.result.setsA;
-        const tantosFor  = isPlayerA ? match.result.pointsA  : match.result.pointsB;
-        s.setsGanados += setsFor; s.setsJugados += setsFor + setsAgainst; s.tantos += tantosFor;
+        const setsFor     = isPlayerA ? match.result.setsA    : match.result.setsB;
+        const setsAgainst = isPlayerA ? match.result.setsB    : match.result.setsA;
+        const tantosFor   = isPlayerA ? match.result.pointsA  : match.result.pointsB;
+        const tantosContra = isPlayerA ? match.result.pointsB : match.result.pointsA;
+        s.setsGanados += setsFor;
+        s.setsJugados += setsFor + setsAgainst;
+        s.tantos += tantosFor;
+        s.tantosContra += tantosContra ?? 0;
       }
     };
 
@@ -321,7 +383,6 @@ router.get('/final', async (req, res: Response) => {
     }
 
     // ── Reducción y Repechaje: 0 puntos ───────────────────────────────
-    // (no se asignan puntos, solo sets/tantos para desempate)
     for (const match of allMatches) {
       if (!match.serieId) continue;
       if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
@@ -358,16 +419,30 @@ router.get('/final', async (req, res: Response) => {
 
     const ranking = players
       .map(player => {
-        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 };
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
         const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
-        return { playerId: player.id, firstName: player.firstName, lastName: player.lastName, club: player.club ?? '', categoria: player.category.name, puntos: s.puntos, setsGanados: s.setsGanados, tantos: s.tantos, promedio };
+        const pctSets   = s.setsJugados > 0 ? parseFloat((s.setsGanados / s.setsJugados * 100).toFixed(1)) : 0;
+        const pctTantos = (s.tantos + s.tantosContra) > 0 ? parseFloat((s.tantos / (s.tantos + s.tantosContra) * 100).toFixed(1)) : 0;
+        return {
+          playerId: player.id,
+          firstName: player.firstName,
+          lastName: player.lastName,
+          club: player.club ?? '',
+          categoria: player.category.name,
+          puntos: s.puntos,
+          setsGanados: s.setsGanados,
+          setsJugados: s.setsJugados,
+          tantos: s.tantos,
+          tantosContra: s.tantosContra,
+          promedio,
+          pctSets,
+          pctTantos,
+        };
       })
-      .sort((a, b) => {
-        if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-        if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
-        if (b.tantos !== a.tantos) return b.tantos - a.tantos;
-        return b.promedio - a.promedio;
-      })
+      .sort((a, b) => sortAlternativa4(
+        { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
+        { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
+      ))
       .map((player, index) => ({ ...player, posicion: index + 1 }));
 
     res.json(ranking);
@@ -401,10 +476,10 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true }
     });
 
-    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; }
+    interface PlayerStats { puntos: number; setsGanados: number; setsJugados: number; tantos: number; tantosContra: number; }
     const stats = new Map<number, PlayerStats>();
     for (const player of players) {
-      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 });
+      stats.set(player.id, { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 });
     }
 
     const addSetsAndTantos = (playerId: number | null | undefined, match: any, isPlayerA: boolean) => {
@@ -412,19 +487,27 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       const s = stats.get(playerId);
       if (!s || !match.result) return;
       if (match.sets && match.sets.length > 0) {
-        let setsWon = 0, tantos = 0;
+        let setsWon = 0, tantos = 0, tantosContra = 0;
         for (const set of match.sets) {
-          const ptsFor = isPlayerA ? set.pointsA : set.pointsB;
+          const ptsFor     = isPlayerA ? set.pointsA : set.pointsB;
           const ptsAgainst = isPlayerA ? set.pointsB : set.pointsA;
           tantos += ptsFor;
+          tantosContra += ptsAgainst;
           if (ptsFor > ptsAgainst) setsWon++;
         }
-        s.setsGanados += setsWon; s.setsJugados += match.sets.length; s.tantos += tantos;
+        s.setsGanados += setsWon;
+        s.setsJugados += match.sets.length;
+        s.tantos += tantos;
+        s.tantosContra += tantosContra;
       } else {
-        const setsFor    = isPlayerA ? match.result.setsA   : match.result.setsB;
-        const setsAgainst = isPlayerA ? match.result.setsB  : match.result.setsA;
-        const tantosFor  = isPlayerA ? match.result.pointsA : match.result.pointsB;
-        s.setsGanados += setsFor; s.setsJugados += setsFor + setsAgainst; s.tantos += tantosFor;
+        const setsFor      = isPlayerA ? match.result.setsA   : match.result.setsB;
+        const setsAgainst  = isPlayerA ? match.result.setsB   : match.result.setsA;
+        const tantosFor    = isPlayerA ? match.result.pointsA : match.result.pointsB;
+        const tantosContra = isPlayerA ? match.result.pointsB : match.result.pointsA;
+        s.setsGanados += setsFor;
+        s.setsJugados += setsFor + setsAgainst;
+        s.tantos += tantosFor;
+        s.tantosContra += tantosContra ?? 0;
       }
     };
 
@@ -434,7 +517,7 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       if (s) s.puntos += pts;
     };
 
-    // Detectar si el circuito es nacional (tiene partidos con serieId nac-serie-*)
+    // Detectar si el circuito es nacional
     const esNacional = allMatches.some((m: any) => m.serieId?.startsWith('nac-serie-'));
 
     if (esNacional) {
@@ -454,12 +537,16 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
         if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
         if (p5?.result?.winnerId) {
           const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
-          addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4);
+          addPts(p5.result.winnerId, 6);
+          addPts(p5LoserId, 4);
         }
-        for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
+        for (const match of matches) {
+          addSetsAndTantos(match.playerAId, match, true);
+          addSetsAndTantos(match.playerBId, match, false);
+        }
       }
 
-      // ── NACIONAL: bracket master (nac-oct, nac-cua, nac-semi, nac-final) ──
+      // ── NACIONAL: bracket master ──────────────────────────────────────
       for (const match of allMatches) {
         if (match.phase.type !== 'master') continue;
         if (!match.serieId?.startsWith('nac-')) continue;
@@ -470,7 +557,8 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
           addPts(match.result.winnerId, isFinal ? 7 : 5);
           addPts(loserId, isFinal ? 2 : 1);
         }
-        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
       }
     } else {
       // ── DEPARTAMENTAL: clasif-serie-, segunda-serie- ──────────────────
@@ -490,15 +578,20 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
         if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
         if (p5?.result?.winnerId) {
           const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
-          addPts(p5.result.winnerId, 6); addPts(p5LoserId, 4);
+          addPts(p5.result.winnerId, 6);
+          addPts(p5LoserId, 4);
         }
-        for (const match of matches) { addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false); }
+        for (const match of matches) {
+          addSetsAndTantos(match.playerAId, match, true);
+          addSetsAndTantos(match.playerBId, match, false);
+        }
       }
 
       for (const match of allMatches) {
         if (!match.serieId) continue;
         if (!match.serieId.includes('reduccion') && !match.serieId.includes('repechaje')) continue;
-        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
       }
 
       for (const match of allMatches) {
@@ -506,7 +599,8 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
         if (!match.result?.winnerId) continue;
         const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
         if (!match.result.isWO) { addPts(match.result.winnerId, 5); addPts(loserId, 1); }
-        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
       }
 
       for (const match of allMatches) {
@@ -515,22 +609,27 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
         const isFinal = match.serieId === 'master-final';
         const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
         if (!match.result.isWO) { addPts(match.result.winnerId, isFinal ? 7 : 5); addPts(loserId, isFinal ? 2 : 1); }
-        addSetsAndTantos(match.playerAId, match, true); addSetsAndTantos(match.playerBId, match, false);
+        addSetsAndTantos(match.playerAId, match, true);
+        addSetsAndTantos(match.playerBId, match, false);
       }
     }
 
     const ranked = players
       .map(player => {
-        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0 };
-        const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
-        return { playerId: player.id, puntos: s.puntos, setsGanados: s.setsGanados, setsJugados: s.setsJugados, tantos: s.tantos, promedio };
+        const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
+        return {
+          playerId: player.id,
+          puntos: s.puntos,
+          setsGanados: s.setsGanados,
+          setsJugados: s.setsJugados,
+          tantos: s.tantos,
+          tantosContra: s.tantosContra,
+        };
       })
-      .sort((a, b) => {
-        if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-        if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados;
-        if (b.tantos !== a.tantos) return b.tantos - a.tantos;
-        return b.promedio - a.promedio;
-      });
+      .sort((a, b) => sortAlternativa4(
+        { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
+        { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
+      ));
 
     let guardados = 0;
     for (let i = 0; i < ranked.length; i++) {
@@ -541,12 +640,12 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
           playerId: entry.playerId, circuitId, position: i + 1,
           points: entry.puntos, matchesPlayed: 0, matchesWon: 0,
           setsWon: entry.setsGanados, setsLost: entry.setsJugados - entry.setsGanados,
-          pointsFor: entry.tantos, pointsAgainst: 0,
+          pointsFor: entry.tantos, pointsAgainst: entry.tantosContra,
         },
         update: {
           position: i + 1, points: entry.puntos,
           setsWon: entry.setsGanados, setsLost: entry.setsJugados - entry.setsGanados,
-          pointsFor: entry.tantos,
+          pointsFor: entry.tantos, pointsAgainst: entry.tantosContra,
         }
       });
       guardados++;
@@ -618,13 +717,15 @@ router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), 
       });
     }
 
-    // Recalcular posiciones
+    // Recalcular posiciones con Alternativa 4
     const entries = await prisma.rankingEntry.findMany({
-      where: { circuitId },
-      orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }]
+      where: { circuitId }
     });
-    for (let i = 0; i < entries.length; i++) {
-      await prisma.rankingEntry.update({ where: { id: entries[i].id }, data: { position: i + 1 } });
+
+    const sorted = [...entries].sort(sortRankingEntry);
+
+    for (let i = 0; i < sorted.length; i++) {
+      await prisma.rankingEntry.update({ where: { id: sorted[i].id }, data: { position: i + 1 } });
     }
 
     res.json({ ok: true, partidos: matches.length, jugadores: entries.length });
