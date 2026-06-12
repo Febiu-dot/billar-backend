@@ -524,18 +524,11 @@ router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'),
     const phaseMaster = circuit.phases.find((p: any) => p.type === 'master');
     if (!phaseMaster) { res.status(400).json({ error: 'No existe la fase Master en este circuito' }); return; }
     const rankingEntries = await prisma.rankingEntry.findMany({
-      where: { circuitId }, include: { player: true },
-      orderBy: [{ points: 'desc' }, { setsWon: 'desc' }, { pointsFor: 'desc' }, { pointsAgainst: 'asc' }]
+      where: { circuitId, position: { not: null } }, include: { player: true },
+      orderBy: { position: 'asc' }
     });
-    const conPuntos = rankingEntries.filter(e => e.points > 0);
-    let top16: typeof rankingEntries;
-    if (conPuntos.length >= 16) {
-      top16 = conPuntos.slice(0, 16);
-    } else {
-      const porPosicion = rankingEntries.filter(e => e.position !== null).sort((a, b) => (a.position ?? 999) - (b.position ?? 999));
-      if (porPosicion.length < 16) { res.status(400).json({ error: `Solo ${porPosicion.length} jugadores en el ranking. Se necesitan 16.` }); return; }
-      top16 = porPosicion.slice(0, 16);
-    }
+    if (rankingEntries.length < 16) { res.status(400).json({ error: `Solo ${rankingEntries.length} jugadores en el ranking. Se necesitan 16.` }); return; }
+    const top16 = rankingEntries.slice(0, 16);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
