@@ -294,6 +294,47 @@ router.get('/final', async (req, res: Response) => {
       return;
     }
 
+    // ── Nacional: leer directamente de RankingEntry (ya calculado) ──────
+    const circuit = await prisma.circuit.findUnique({
+      where: { id: circuitId },
+      select: { configTorneo: true }
+    });
+    const configTorneo = circuit?.configTorneo as any;
+    if (configTorneo?.tipo === 'nacional') {
+      const entries = await prisma.rankingEntry.findMany({
+        where: { circuitId, position: { not: null } },
+        include: { player: { include: { category: true } } },
+        orderBy: { position: 'asc' }
+      });
+      const ranking = entries
+        .filter((e: any) => e.player.dni !== 'FEBIU000' && e.player.active)
+        .map((e: any) => {
+          const setsJugados = e.setsWon + e.setsLost;
+          const promedio = setsJugados > 0 ? parseFloat((e.pointsFor / setsJugados).toFixed(2)) : 0;
+          const pctSets   = setsJugados > 0 ? parseFloat((e.setsWon / setsJugados * 100).toFixed(1)) : 0;
+          const totalTantos = e.pointsFor + e.pointsAgainst;
+          const pctTantos = totalTantos > 0 ? parseFloat((e.pointsFor / totalTantos * 100).toFixed(1)) : 0;
+          return {
+            posicion:    e.position,
+            playerId:    e.playerId,
+            firstName:   e.player.firstName,
+            lastName:    e.player.lastName,
+            club:        e.player.club ?? '',
+            categoria:   e.player.category.name,
+            puntos:      e.points,
+            setsGanados: e.setsWon,
+            setsJugados,
+            tantos:      e.pointsFor,
+            tantosContra: e.pointsAgainst,
+            promedio,
+            pctSets,
+            pctTantos,
+          };
+        });
+      res.json(ranking);
+      return;
+    }
+
     const FASES = await getPhasesDeCircuito(circuitId);
     const phaseIdList = Object.values(FASES).filter(Boolean) as number[];
 
