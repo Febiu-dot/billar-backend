@@ -598,7 +598,7 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
         const isFinal = match.serieId === 'nac-final';
         const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
         if (!match.result.isWO) {
-          addPts(match.result.winnerId, isFinal ? 7 : 5);
+          addPts(match.result.winnerId, isFinal ? 5 : 3);
           addPts(loserId, isFinal ? 2 : 1);
         }
         addSetsAndTantos(match.playerAId, match, true);
