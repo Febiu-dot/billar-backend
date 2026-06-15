@@ -67,10 +67,20 @@ export async function calcularYGuardarAcumulado(tournamentId: number): Promise<v
   }
 
   const sorted: PlayerAcum[] = Object.values(playerMap).sort((a: PlayerAcum, b: PlayerAcum) => {
-    if (b.points    !== a.points)    return b.points    - a.points;
-    if (b.setsWon   !== a.setsWon)   return b.setsWon   - a.setsWon;
-    if (b.pointsFor !== a.pointsFor) return b.pointsFor - a.pointsFor;
-    return a.pointsAgainst - b.pointsAgainst;
+    if (b.points !== a.points) return b.points - a.points;
+    const setsJugA = a.setsWon + a.setsLost;
+    const setsJugB = b.setsWon + b.setsLost;
+    const pctSetsA = setsJugA > 0 ? a.setsWon / setsJugA : 0;
+    const pctSetsB = setsJugB > 0 ? b.setsWon / setsJugB : 0;
+    if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
+    const totalTantosA = a.pointsFor + a.pointsAgainst;
+    const totalTantosB = b.pointsFor + b.pointsAgainst;
+    const pctTantosA = totalTantosA > 0 ? a.pointsFor / totalTantosA : 0;
+    const pctTantosB = totalTantosB > 0 ? b.pointsFor / totalTantosB : 0;
+    if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
+    const promA = setsJugA > 0 ? a.pointsFor / setsJugA : 0;
+    const promB = setsJugB > 0 ? b.pointsFor / setsJugB : 0;
+    return promB - promA;
   });
 
   const lastCircuit = completedCircuits[completedCircuits.length - 1];
