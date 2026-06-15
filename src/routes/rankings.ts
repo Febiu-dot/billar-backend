@@ -734,15 +734,23 @@ router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (
 router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const circuitId = Number(req.params.circuitId);
   try {
+    // Detectar si el circuito es nacional
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+    const esNacional = (circuit?.configTorneo as any)?.tipo === 'nacional';
+
     // Reset stats (no puntos)
     await prisma.rankingEntry.updateMany({
       where: { circuitId },
       data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
     });
 
-    // Buscar todos los partidos finalizados del circuito
+    // Buscar partidos finalizados — para nacionales solo series (nac-serie-*)
     const matches = await prisma.match.findMany({
-      where: { phase: { circuitId }, status: { in: ['finalizado', 'wo'] } },
+      where: {
+        phase: { circuitId },
+        status: { in: ['finalizado', 'wo'] },
+        ...(esNacional ? { serieId: { startsWith: 'nac-serie-' } } : {})
+      },
       include: { result: true }
     });
 
