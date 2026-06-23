@@ -43,18 +43,14 @@ function sortAlternativa4(
 ): number {
   if (b.puntos !== a.puntos) return b.puntos - a.puntos;
 
-  const pctSetsA = a.setsJugados > 0 ? a.setsGanados / a.setsJugados : 0;
-  const pctSetsB = b.setsJugados > 0 ? b.setsGanados / b.setsJugados : 0;
-  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
+  // Diferencia de sets (ganados - perdidos)
+  const difSetsA = a.setsGanados - (a.setsJugados - a.setsGanados);
+  const difSetsB = b.setsGanados - (b.setsJugados - b.setsGanados);
+  if (difSetsB !== difSetsA) return difSetsB - difSetsA;
 
-  const totalTantosA = a.tantos + (a.tantosContra ?? 0);
-  const totalTantosB = b.tantos + (b.tantosContra ?? 0);
-  const pctTantosA = totalTantosA > 0 ? a.tantos / totalTantosA : 0;
-  const pctTantosB = totalTantosB > 0 ? b.tantos / totalTantosB : 0;
-  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
-
-  const promA = a.setsJugados > 0 ? a.tantos / a.setsJugados : 0;
-  const promB = b.setsJugados > 0 ? b.tantos / b.setsJugados : 0;
+  // Promedio de tantos (tantos a favor / tantos en contra)
+  const promA = (a.tantosContra ?? 0) > 0 ? a.tantos / (a.tantosContra ?? 1) : a.tantos > 0 ? 99999 : 0;
+  const promB = (b.tantosContra ?? 0) > 0 ? b.tantos / (b.tantosContra ?? 1) : b.tantos > 0 ? 99999 : 0;
   return promB - promA;
 }
 
@@ -65,20 +61,14 @@ function sortRankingEntry(
 ): number {
   if (b.points !== a.points) return b.points - a.points;
 
-  const setsJugadosA = a.setsWon + a.setsLost;
-  const setsJugadosB = b.setsWon + b.setsLost;
-  const pctSetsA = setsJugadosA > 0 ? a.setsWon / setsJugadosA : 0;
-  const pctSetsB = setsJugadosB > 0 ? b.setsWon / setsJugadosB : 0;
-  if (Math.abs(pctSetsB - pctSetsA) > 0.0001) return pctSetsB - pctSetsA;
+  // Diferencia de sets (ganados - perdidos)
+  const difSetsA = a.setsWon - a.setsLost;
+  const difSetsB = b.setsWon - b.setsLost;
+  if (difSetsB !== difSetsA) return difSetsB - difSetsA;
 
-  const totalTantosA = a.pointsFor + a.pointsAgainst;
-  const totalTantosB = b.pointsFor + b.pointsAgainst;
-  const pctTantosA = totalTantosA > 0 ? a.pointsFor / totalTantosA : 0;
-  const pctTantosB = totalTantosB > 0 ? b.pointsFor / totalTantosB : 0;
-  if (Math.abs(pctTantosB - pctTantosA) > 0.0001) return pctTantosB - pctTantosA;
-
-  const promA = setsJugadosA > 0 ? a.pointsFor / setsJugadosA : 0;
-  const promB = setsJugadosB > 0 ? b.pointsFor / setsJugadosB : 0;
+  // Promedio de tantos (tantos a favor / tantos en contra)
+  const promA = a.pointsAgainst > 0 ? a.pointsFor / a.pointsAgainst : a.pointsFor > 0 ? 99999 : 0;
+  const promB = b.pointsAgainst > 0 ? b.pointsFor / b.pointsAgainst : b.pointsFor > 0 ? 99999 : 0;
   return promB - promA;
 }
 
