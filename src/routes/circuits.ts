@@ -20,7 +20,7 @@ interface ConfigTorneo {
   cantPrimera:      number;
   cantSegunda:      number;
   cuposDesdeClasif: number;
-  tipo?:            'departamental' | 'nacional';
+  tipo?:            'departamental' | 'nacional' | 'panamericano';
   categoriaFederal?: 'primera' | 'segunda' | 'tercera';
   ruleSetSeries?:   number;
   ruleSetCruces?:   number;
@@ -42,8 +42,11 @@ function getConfigTorneo(circuit: any): ConfigTorneo {
   };
 }
 
+// Nacional y Panamericano comparten 100% la lógica deportiva
+// (series + bracket, mismas reglas y puntos). Solo difieren en el rótulo
+// y en que el Panamericano es regional (los jugadores tienen país).
 function esNacional(config: ConfigTorneo): boolean {
-  return config.tipo === 'nacional';
+  return config.tipo === 'nacional' || config.tipo === 'panamericano';
 }
 
 // ── RuleSet por categoría y fase Nacional ─────────────────────────────
@@ -317,12 +320,12 @@ router.put('/:id/config-torneo', async (req: Request, res: Response) => {
     const circuitId = parseInt(req.params.id);
     const { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif, tipo, categoriaFederal, formato } = req.body;
 
-    if (tipo === 'nacional') {
+    if (tipo === 'nacional' || tipo === 'panamericano') {
       const ruleSetSeries = getRuleSetNacional(categoriaFederal, 'series');
       const ruleSetCruces = getRuleSetNacional(categoriaFederal, 'cruces');
       const fmt = formato === '16' ? '16' : '32';
       const configData = {
-        tipo: 'nacional', categoriaFederal,
+        tipo, categoriaFederal,
         ruleSetSeries, ruleSetCruces,
         formato: fmt,
         cantMaster: 0, cantPrimera: 0, cantSegunda: 0, cuposDesdeClasif: 0
@@ -461,7 +464,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
 
       return res.json({
         config,
-        tipo: 'nacional',
+        tipo: config.tipo,
         formato: es16 ? '16' : '32',
         categoriaFederal: config.categoriaFederal,
         inscriptos: { total: clasif.length, clasificatorio: clasif.length },
