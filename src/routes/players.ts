@@ -41,7 +41,7 @@ router.get('/:id', async (req, res: Response) => {
 });
 
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId, club, departamentoId } = req.body;
+  const { firstName, lastName, dni, categoryId, club, pais, departamentoId } = req.body;
   const player = await prisma.player.create({
     data: {
       firstName,
@@ -49,6 +49,7 @@ router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, re
       dni,
       categoryId,
       club,
+      pais: pais || 'Uruguay',
       departamentoId: departamentoId ? Number(departamentoId) : undefined,
     },
     include: { category: true, departamento: true },
@@ -65,6 +66,7 @@ router.post('/bulk', authenticate, requireRole('admin'), async (req: AuthRequest
       dni?: string;
       categoryId: number;
       club?: string;
+      pais?: string;
       departamentoId?: number;
     }[];
   };
@@ -86,6 +88,7 @@ router.post('/bulk', authenticate, requireRole('admin'), async (req: AuthRequest
           dni: p.dni || undefined,
           categoryId: Number(p.categoryId),
           club: p.club || undefined,
+          pais: p.pais || 'Uruguay',
           departamentoId: p.departamentoId ? Number(p.departamentoId) : undefined,
         },
         include: { category: true, departamento: true },
@@ -104,7 +107,7 @@ router.post('/bulk', authenticate, requireRole('admin'), async (req: AuthRequest
 });
 
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { firstName, lastName, dni, categoryId, active, club, departamentoId } = req.body;
+  const { firstName, lastName, dni, categoryId, active, club, pais, departamentoId } = req.body;
   const player = await prisma.player.update({
     where: { id: Number(req.params.id) },
     data: {
@@ -114,6 +117,7 @@ router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, 
       categoryId,
       active,
       club,
+      pais,
       departamentoId: departamentoId ? Number(departamentoId) : null,
     },
     include: { category: true, departamento: true },
