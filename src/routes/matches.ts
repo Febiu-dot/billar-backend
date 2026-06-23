@@ -23,12 +23,12 @@ interface ClasificadoStats {
   tantosEnContra: number;
 }
 
-async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cuposDesdeClasif: number; esNacional: boolean }> {
+async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cuposDesdeClasif: number; esNacional: boolean; formato: string }> {
   try {
     const phase = await prisma.phase.findUnique({ where: { id: phaseId }, include: { circuit: true } });
     const config = (phase?.circuit as any)?.configTorneo as any;
-    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional' };
-  } catch { return { circuitId: 0, cuposDesdeClasif: 16, esNacional: false }; }
+    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional', formato: config?.formato ?? '32' };
+  } catch { return { circuitId: 0, cuposDesdeClasif: 16, esNacional: false, formato: '32' }; }
 }
 
 async function sumarPuntosRanking(playerId: number, circuitId: number, puntos: number) {
@@ -231,6 +231,78 @@ async function rellenarBracketNacionalOctavos(clasificatorioPhaseId: number) {
       await checkAndEmitMatch(bracketMatch.id);
     }
   } catch (error) { console.error('Error rellenando bracket Nacional octavos:', error); }
+}
+
+// ── FORMATO 16: 4 series → 8 clasificados → bracket arranca en CUARTOS ──
+// Seeding protegido de 8: cua-1 = 1v8, cua-2 = 4v5, cua-3 = 3v6, cua-4 = 2v7
+// (los seeds #1 y #2 solo pueden cruzarse en la final)
+async function rellenarBracketR16Cuartos(clasificatorioPhaseId: number) {
+  try {
+    const todasLasSeries = await prisma.match.findMany({
+      where: { phaseId: clasificatorioPhaseId, serieId: { not: null } },
+      include: { result: true },
+      orderBy: { round: 'asc' }
+    });
+
+    const seriesMap: Record<string, any[]> = {};
+    for (const m of todasLasSeries) {
+      if (!m.serieId) continue;
+      if (!seriesMap[m.serieId]) seriesMap[m.serieId] = [];
+      seriesMap[m.serieId].push(m);
+    }
+
+    const serieIds = Object.keys(seriesMap);
+    if (serieIds.length < 4) return;
+
+    for (const serieId of serieIds) {
+      const partidos = seriesMap[serieId];
+      const roundBase = Math.min(...partidos.map(p => p.round));
+      const p5 = partidos.find(p => p.round === roundBase + 4);
+      if (!p5 || !p5.result?.winnerId) return;
+    }
+
+    const clasificatorioPhase = await prisma.phase.findUnique({ where: { id: clasificatorioPhaseId }, include: { circuit: { include: { phases: true } } } });
+    const masterPhase = clasificatorioPhase?.circuit?.phases.find((p: any) => p.type === 'master');
+    if (!masterPhase) return;
+
+    interface Clasificado { playerId: number; puntos: number; setsGanados: number; tantos: number; }
+    const clasificados: Clasificado[] = [];
+
+    for (const serieId of serieIds) {
+      const partidos = seriesMap[serieId];
+      const roundBase = Math.min(...partidos.map(p => p.round));
+      const jugadoresIds: Set<number> = new Set();
+      for (const p of partidos) { if (p.playerAId) jugadoresIds.add(p.playerAId); if (p.playerBId) jugadoresIds.add(p.playerBId); }
+      const statsJugador: Record<number, PlayerStats> = {};
+      for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
+      for (const partido of partidos) {
+        if (!partido.result) continue;
+        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
+        const pA = partido.playerAId; const pB = partido.playerBId;
+        if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += setsA; statsJugador[pA].ptsFor += pointsA; statsJugador[pA].ptsAgainst += pointsB; }
+        if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += setsB; statsJugador[pB].ptsFor += pointsB; statsJugador[pB].ptsAgainst += pointsA; }
+      }
+      const p3 = partidos.find(p => p.round === roundBase + 2);
+      const p5 = partidos.find(p => p.round === roundBase + 4);
+      if (p3?.result?.winnerId) { const s = statsJugador[p3.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 }; clasificados.push({ playerId: p3.result.winnerId, puntos: 8, setsGanados: s.sets, tantos: s.ptsFor }); }
+      if (p5?.result?.winnerId) { const s = statsJugador[p5.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 }; clasificados.push({ playerId: p5.result.winnerId, puntos: 6, setsGanados: s.sets, tantos: s.ptsFor }); }
+    }
+
+    clasificados.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; return b.tantos - a.tantos; });
+    if (clasificados.length < 8) { console.error(`Solo ${clasificados.length} clasificados, se necesitan 8`); return; }
+
+    // cua-1 = seed1 vs seed8 | cua-2 = seed4 vs seed5 | cua-3 = seed3 vs seed6 | cua-4 = seed2 vs seed7
+    const seedingMap: [number, number][] = [[0,7],[3,4],[2,5],[1,6]];
+    for (let i = 0; i < 4; i++) {
+      const [idxAlto, idxBajo] = seedingMap[i];
+      const seedAlto = clasificados[idxAlto]; const seedBajo = clasificados[idxBajo];
+      if (!seedAlto || !seedBajo) continue;
+      const bracketMatch = await prisma.match.findFirst({ where: { phaseId: masterPhase.id, serieId: `nac-cua-${i + 1}` } });
+      if (!bracketMatch) continue;
+      await prisma.match.update({ where: { id: bracketMatch.id }, data: { playerAId: seedAlto.playerId, playerBId: seedBajo.playerId, slotA: null, slotB: null, status: 'pendiente' } });
+      await checkAndEmitMatch(bracketMatch.id);
+    }
+  } catch (error) { console.error('Error rellenando bracket R16 cuartos:', error); }
 }
 
 async function getCuposDesdeClasif(phaseId: number): Promise<number> {
@@ -523,17 +595,41 @@ router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'),
     if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
     const phaseMaster = circuit.phases.find((p: any) => p.type === 'master');
     if (!phaseMaster) { res.status(400).json({ error: 'No existe la fase Master en este circuito' }); return; }
+    const cfg = (circuit as any).configTorneo as any;
+    const formato = cfg?.formato ?? '32';
+    const ruleSetCruces = cfg?.ruleSetCruces ?? 2;
     const rankingEntries = await prisma.rankingEntry.findMany({
       where: { circuitId, position: { not: null } }, include: { player: true },
       orderBy: { position: 'asc' }
     });
+
+    // ── FORMATO 16: bracket de 8 que arranca en cuartos ────────────────
+    if (formato === '16') {
+      if (rankingEntries.length < 8) { res.status(400).json({ error: `Solo ${rankingEntries.length} jugadores en el ranking. Se necesitan 8.` }); return; }
+      const top8 = rankingEntries.slice(0, 8);
+      await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+      await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
+      await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
+      const protegido8: [number, number][] = [[0,7],[3,4],[2,5],[1,6]];
+      const bracketData: any[] = [];
+      for (let i = 0; i < 4; i++) {
+        const [a, b] = protegido8[i];
+        bracketData.push({ phaseId: phaseMaster.id, playerAId: top8[a].playerId, playerBId: top8[b].playerId, slotA: null, slotB: null, round: 111 + i, status: 'pendiente', serieId: `nac-cua-${i + 1}`, ruleSetId: ruleSetCruces });
+      }
+      bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-1', slotB: 'Gan. NAC-CUA-2', round: 121, status: 'pendiente', serieId: 'nac-semi-1', ruleSetId: ruleSetCruces });
+      bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-3', slotB: 'Gan. NAC-CUA-4', round: 122, status: 'pendiente', serieId: 'nac-semi-2', ruleSetId: ruleSetCruces });
+      bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-SEMI-1', slotB: 'Gan. NAC-SEMI-2', round: 131, status: 'pendiente', serieId: 'nac-final', ruleSetId: ruleSetCruces });
+      await prisma.match.createMany({ data: bracketData });
+      res.json({ ok: true, message: `Bracket de 8 generado con el top 8 del ranking`, partidos: bracketData.length, seeding: top8.map((e, i) => ({ seed: i+1, nombre: `${e.player.lastName}, ${e.player.firstName}`, puntos: e.points })) });
+      return;
+    }
+
+    // ── FORMATO 32 (nacional estándar): bracket de 16 ──────────────────
     if (rankingEntries.length < 16) { res.status(400).json({ error: `Solo ${rankingEntries.length} jugadores en el ranking. Se necesitan 16.` }); return; }
     const top16 = rankingEntries.slice(0, 16);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: phaseMaster.id } } });
     await prisma.match.deleteMany({ where: { phaseId: phaseMaster.id } });
-    const cfg = (circuit as any).configTorneo as any;
-    const ruleSetCruces = cfg?.ruleSetCruces ?? 2;
     const protegido: [number, number][] = [[0,15],[7,8],[4,11],[3,12],[2,13],[5,10],[6,9],[1,14]];
     const bracketData: any[] = [];
     for (let i = 0; i < 8; i++) {
@@ -556,9 +652,12 @@ router.post('/trigger-nac-bracket/:phaseId', authenticate, requireRole('admin'),
   catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
+router.post('/trigger-r16-bracket/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try { await rellenarBracketR16Cuartos(parseInt(req.params.phaseId)); res.json({ message: 'Bracket R16 cuartos rellenado correctamente' }); }
+  catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
 // ── Endpoint de recálculo de puntos de series nacionales ──────────────
-// POST /matches/recalcular-puntos-series/:circuitId
-// Recalcula puntos para series ya jugadas (fix para circuitos históricos)
 router.post('/recalcular-puntos-series/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const circuitId = parseInt(req.params.circuitId);
   try {
@@ -567,13 +666,11 @@ router.post('/recalcular-puntos-series/:circuitId', authenticate, requireRole('a
     const phaseClasif = circuit.phases.find((p: any) => p.type === 'clasificatorio');
     if (!phaseClasif) { res.status(400).json({ error: 'No existe la fase clasificatorio' }); return; }
 
-    // Reset puntos de series (no de cruces) para este circuito
     await prisma.rankingEntry.updateMany({
       where: { circuitId },
       data: { points: 0, matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
     });
 
-    // Obtener todas las series con P5 finalizado
     const allMatches = await prisma.match.findMany({
       where: { phaseId: phaseClasif.id, serieId: { not: null } },
       include: { result: true },
@@ -714,11 +811,9 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     where: { id: matchId }, data: { status: isWO ? 'wo' : 'finalizado', finishedAt: new Date() },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
-  // ── Actualizar stats del ranking (sets, tantos, partidos) ──
   const { circuitId: circId } = await getCircuitInfo(existingMatch.phaseId);
   const eraFinalizado = existingMatch.status === 'finalizado' || existingMatch.status === 'wo';
   if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId && !eraFinalizado) {
-    // Solo incrementar stats si el partido NO estaba ya finalizado (primera vez que se carga)
     const setsWonA = finalSetsA; const setsWonB = finalSetsB;
     const setsLostA = finalSetsB; const setsLostB = finalSetsA;
     const ptsForA = finalPtsA; const ptsForB = finalPtsB;
@@ -734,7 +829,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
       data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsWonB }, setsLost: { increment: setsLostB }, pointsFor: { increment: ptsForB }, pointsAgainst: { increment: ptsAgainstB } }
     });
   }
-  // Si era finalizado (edición), recalcular stats desde cero para evitar doble conteo
   if (circId && eraFinalizado) {
     const circuit = await prisma.circuit.findUnique({ where: { id: circId }, select: { configTorneo: true } });
     const esNac = (circuit?.configTorneo as any)?.tipo === 'nacional';
@@ -768,8 +862,8 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const phaseType = existingMatch.phase?.type;
   const serieId   = existingMatch.serieId ?? '';
+  const { formato: formatoTorneo } = await getCircuitInfo(existingMatch.phaseId);
 
-  // ── FIX: detección ampliada para serieIds nacionales tipo NP-G1, NP-G2, etc. ──
   const esNacionalSerie   = serieId.startsWith('nac-serie-') || /^[A-Z]+-G\d+$/.test(serieId);
   const esNacionalBracket = serieId.startsWith('nac-') && !esNacionalSerie;
   const esPartidoDeSerie = serieId !== '' &&
@@ -781,8 +875,6 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   const posEnSerie     = existingMatch.round - roundBase;
   const esUltimoPartido = posEnSerie === 4;
 
-  // Liberar mesa siempre al terminar un partido
-  // (para series, el juez reasigna la mesa en el siguiente partido)
   if (updatedMatch.tableId) {
     const freedTable = await prisma.table.update({ where: { id: updatedMatch.tableId }, data: { status: 'libre' }, include: { venue: true } });
     emitTableUpdate(io, freedTable);
@@ -800,7 +892,10 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     if (mCruce) { await rellenarRepechaje(matchId); await rellenarSlotSegunda(matchId); }
   }
   if (phaseType === 'clasificatorio' && serieId === 'clasif-repechaje' && winnerId !== null) { await rellenarSlotSegundaConRepechaje(winnerId, existingMatch.phaseId); }
-  if (esPartidoNacionalSerie && posEnSerie === 4) { await rellenarBracketNacionalOctavos(existingMatch.phaseId); }
+  if (esPartidoNacionalSerie && posEnSerie === 4) {
+    if (formatoTorneo === '16') { await rellenarBracketR16Cuartos(existingMatch.phaseId); }
+    else { await rellenarBracketNacionalOctavos(existingMatch.phaseId); }
+  }
   if (phaseType === 'master' && esNacionalBracket) { await avanzarBracketNacional(matchId); }
 
   if ((esPartidoDeSerie || esPartidoNacionalSerie) && esUltimoPartido) { await asignarPuntosSerie(existingMatch.phaseId, serieId); }
