@@ -716,7 +716,9 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   });
   // ── Actualizar stats del ranking (sets, tantos, partidos) ──
   const { circuitId: circId } = await getCircuitInfo(existingMatch.phaseId);
-  if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId) {
+  const eraFinalizado = existingMatch.status === 'finalizado' || existingMatch.status === 'wo';
+  if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId && !eraFinalizado) {
+    // Solo incrementar stats si el partido NO estaba ya finalizado (primera vez que se carga)
     const setsWonA = finalSetsA; const setsWonB = finalSetsB;
     const setsLostA = finalSetsB; const setsLostB = finalSetsA;
     const ptsForA = finalPtsA; const ptsForB = finalPtsB;
@@ -731,6 +733,37 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
       where: { playerId: existingMatch.playerBId, circuitId: circId },
       data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsWonB }, setsLost: { increment: setsLostB }, pointsFor: { increment: ptsForB }, pointsAgainst: { increment: ptsAgainstB } }
     });
+  }
+  // Si era finalizado (edición), recalcular stats desde cero para evitar doble conteo
+  if (circId && eraFinalizado) {
+    const circuit = await prisma.circuit.findUnique({ where: { id: circId }, select: { configTorneo: true } });
+    const esNac = (circuit?.configTorneo as any)?.tipo === 'nacional';
+    await prisma.rankingEntry.updateMany({
+      where: { circuitId: circId },
+      data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
+    });
+    const allMatches = await prisma.match.findMany({
+      where: {
+        phase: { circuitId: circId },
+        status: { in: ['finalizado', 'wo'] },
+        ...(esNac ? { serieId: { startsWith: 'nac-serie-' } } : {})
+      },
+      include: { result: true }
+    });
+    for (const m of allMatches) {
+      if (!m.result || !m.playerAId || !m.playerBId) continue;
+      const { setsA, setsB, pointsA, pointsB, winnerId: wId } = m.result;
+      const wA = wId === m.playerAId ? 1 : 0;
+      const wB = wId === m.playerBId ? 1 : 0;
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerAId, circuitId: circId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wA }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } }
+      });
+      await prisma.rankingEntry.updateMany({
+        where: { playerId: m.playerBId, circuitId: circId },
+        data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wB }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } }
+      });
+    }
   }
 
   const phaseType = existingMatch.phase?.type;
