@@ -27,7 +27,7 @@ async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cup
   try {
     const phase = await prisma.phase.findUnique({ where: { id: phaseId }, include: { circuit: true } });
     const config = (phase?.circuit as any)?.configTorneo as any;
-    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional', formato: config?.formato ?? '32' };
+    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional' || config?.tipo === 'panamericano', formato: config?.formato ?? '32' };
   } catch { return { circuitId: 0, cuposDesdeClasif: 16, esNacional: false, formato: '32' }; }
 }
 
@@ -831,7 +831,8 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   }
   if (circId && eraFinalizado) {
     const circuit = await prisma.circuit.findUnique({ where: { id: circId }, select: { configTorneo: true } });
-    const esNac = (circuit?.configTorneo as any)?.tipo === 'nacional';
+    const tipoTorneo = (circuit?.configTorneo as any)?.tipo;
+    const esNac = tipoTorneo === 'nacional' || tipoTorneo === 'panamericano';
     await prisma.rankingEntry.updateMany({
       where: { circuitId: circId },
       data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
