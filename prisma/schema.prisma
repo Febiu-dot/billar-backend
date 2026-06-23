@@ -101,6 +101,7 @@ model Player {
   categoryId     Int
   category       Category           @relation(fields: [categoryId], references: [id])
   club           String?
+  pais           String?            @default("Uruguay")
   departamentoId Int?
   departamento   Departamento?      @relation(fields: [departamentoId], references: [id])
   active         Boolean            @default(true)
