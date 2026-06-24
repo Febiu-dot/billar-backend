@@ -9,13 +9,20 @@ const CLUB_ABREV: Record<string, string> = {
   'SPORTING UNION': 'SPO', 'CENTENARIO': 'CEN',
   'CASA DEL BILLAR': 'CDB', 'PIEDRA HONDA': 'PH',
 };
-
 const abrev = (club?: string | null) =>
   club ? (CLUB_ABREV[club.toUpperCase()] ?? club.slice(0, 3).toUpperCase()) : '';
 
+// ← NUEVO: mapa país → apócope
+const PAIS_APOCOPE: Record<string, string> = {
+  'Uruguay': 'URU', 'Argentina': 'ARG', 'Brasil': 'BRA', 'Brazil': 'BRA',
+  'Paraguay': 'PAR', 'Chile': 'CHI', 'Bolivia': 'BOL', 'Peru': 'PER',
+  'Perú': 'PER', 'Colombia': 'COL', 'Venezuela': 'VEN', 'Ecuador': 'ECU',
+};
+const apocPais = (pais?: string | null): string =>
+  pais ? (PAIS_APOCOPE[pais] ?? pais.slice(0, 3).toUpperCase()) : 'URU';
+
 const hora = (dt?: any) => {
   if (!dt) return '';
-  // Railway corre en UTC; Uruguay es UTC-3. Corregir manualmente.
   const d = new Date(dt);
   const uyMs = d.getTime() - (d.getTimezoneOffset() + 180) * 60000;
   const uyDate = new Date(uyMs);
@@ -33,13 +40,11 @@ const fechaLarga = (dt?: any) => {
   return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
 };
 
-// ── Detecta si el torneo es nacional ──────────────────────────────────
 const esNacionalTorneo = (nombreTorneo?: string | null): boolean =>
   /\bnacional\b/.test(
     (nombreTorneo ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   );
 
-// ── Categoría federal del torneo nacional ─────────────────────────────
 const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' | 'tercera' => {
   const n = (nombreTorneo ?? '')
     .toLowerCase()
@@ -51,10 +56,11 @@ const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' |
   return 'tercera';
 };
 
+// ← NUEVO: jugadorInfo incluye pais
 const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
   player
-    ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
-    : { nombre: slot ?? '—', club: '', ranking: null, categoria: null, esSlot: true };
+    ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), pais: player.pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
+    : { nombre: slot ?? '—', club: '', pais: 'Uruguay', ranking: null, categoria: null, esSlot: true };
 
 const getSeccion = (pos: number | null): string => {
   const p = pos ?? 999;
@@ -64,7 +70,6 @@ const getSeccion = (pos: number | null): string => {
   return 'TERCERA';
 };
 
-// ── Helper: datos de un partido para bracket ──────────────────────────
 const mkBracketMatch = (m: any) => {
   if (!m) return null;
   const pA = m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev(m.playerA.club) } : null;
@@ -124,6 +129,10 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     const base = { tipoFase, torneo: circuit.tournament.name, circuito: circuit.name, temporada: String(circuit.tournament.year), formato: '' };
     const esNacional = esNacionalTorneo(circuit.tournament.name);
 
+    // ← NUEVO: detectar panamericano por configTorneo.tipo
+    const configTorneoCircuito = (circuit.configTorneo as any) ?? {};
+    const esPanamericano = configTorneoCircuito.tipo === 'panamericano';
+
     // ── RANKING / RANKING FINAL ───────────────────────────────────────
     if (tipoFase === 'ranking' || tipoFase === 'ranking-final') {
       let entries = await prisma.rankingEntry.findMany({
@@ -132,9 +141,6 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         orderBy: { position: 'asc' }
       });
 
-      // Fallback al circuito anterior SOLO para torneos departamentales.
-      // Para nacionales: cada circuito tiene su propio ranking independiente.
-      // Si no hay datos → error claro.
       if (entries.length === 0 && !esNacional) {
         const prev = await prisma.circuit.findFirst({
           where: { tournamentId: circuit.tournamentId, order: circuit.order - 1 }
@@ -172,7 +178,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
           ? `RANKING FINAL — ${circuit.name.toUpperCase()}`
           : `RANKING — ${circuit.name.toUpperCase()}`,
         fechaPrincipal: '',
-        ...(esNacional ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}),
+        ...(esNacional || esPanamericano ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}),
         jugadores
       });
     }
@@ -223,10 +229,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         return {
           serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'),
           p1: mkP(p1), p2: mkP(p2), p3: mkP(p3), p4: mkP(p4), p5: mkP(p5),
-          primero: primero ? { nombre: `${primero.lastName}, ${primero.firstName}`, club: abrev(primero.club), ranking: rankings.find((r: any) => r.playerId === primero.id)?.position ?? null } : null,
-          segundo: segundo ? { nombre: `${segundo.lastName}, ${segundo.firstName}`, club: abrev(segundo.club), ranking: rankings.find((r: any) => r.playerId === segundo.id)?.position ?? null } : null,
-          tercero: tercero ? { nombre: `${tercero.lastName}, ${tercero.firstName}`, club: abrev(tercero.club) } : null,
-          cuarto:  cuarto  ? { nombre: `${cuarto.lastName},  ${cuarto.firstName}`,  club: abrev(cuarto.club)  } : null,
+          // ← NUEVO: primero/segundo/tercero/cuarto incluyen pais
+          primero: primero ? { nombre: `${primero.lastName}, ${primero.firstName}`, club: abrev((primero as any).club), pais: (primero as any).pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === primero.id)?.position ?? null } : null,
+          segundo: segundo ? { nombre: `${segundo.lastName}, ${segundo.firstName}`, club: abrev((segundo as any).club), pais: (segundo as any).pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === segundo.id)?.position ?? null } : null,
+          tercero: tercero ? { nombre: `${tercero.lastName}, ${tercero.firstName}`, club: abrev((tercero as any).club), pais: (tercero as any).pais ?? 'Uruguay' } : null,
+          cuarto:  cuarto  ? { nombre: `${cuarto.lastName},  ${cuarto.firstName}`,  club: abrev((cuarto as any).club),  pais: (cuarto as any).pais  ?? 'Uruguay' } : null,
           completa: !!p5?.result?.winnerId,
         };
       }).sort((a, b) => a.numero - b.numero);
@@ -239,7 +246,16 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         puntos: r.points,
       }));
       const tipoResp = tipoFase === 'inicial-nacional' ? 'inicial-nacional' : 'series-nacional';
-      return res.json({ ...base, tipo: tipoResp, categoriaFederal: categoriaFederal(circuit.tournament.name), fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`, formato: '3 sets de 60 tantos', fechaPrincipal: fechaLarga(pf), series, top16 });
+      return res.json({
+        ...base,
+        tipo: tipoResp,
+        categoriaFederal: categoriaFederal(circuit.tournament.name),
+        esPanamericano, // ← NUEVO
+        fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`,
+        formato: '3 sets de 60 tantos',
+        fechaPrincipal: fechaLarga(pf),
+        series, top16
+      });
     }
 
     // ── BRACKET NACIONAL ──────────────────────────────────────────────
