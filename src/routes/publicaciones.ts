@@ -252,7 +252,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         categoriaFederal: categoriaFederal(circuit.tournament.name),
         esPanamericano, // ← NUEVO
         fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`,
-        formato: '3 sets de 60 tantos',
+        formato: esPanamericano ? '5 sets de 60 tantos' : '3 sets de 60 tantos',
         fechaPrincipal: fechaLarga(pf),
         series, top16
       });
