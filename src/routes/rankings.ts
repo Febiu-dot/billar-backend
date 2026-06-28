@@ -290,7 +290,7 @@ router.get('/final', async (req, res: Response) => {
       select: { configTorneo: true }
     });
     const configTorneo = circuit?.configTorneo as any;
-    if (configTorneo?.tipo === 'nacional') {
+    if (configTorneo?.tipo === 'nacional' || configTorneo?.tipo === 'panamericano') {
       const entries = await prisma.rankingEntry.findMany({
         where: { circuitId, position: { not: null } },
         include: { player: { include: { category: true } } },
