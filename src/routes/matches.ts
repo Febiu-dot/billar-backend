@@ -64,14 +64,14 @@ async function asignarPuntosCruce(matchId: number) {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true, phase: true } });
     if (!match || !match.result) return;
     if (match.serieId?.includes('reduccion') || match.serieId?.includes('repechaje')) return;
-    const { circuitId } = await getCircuitInfo(match.phaseId);
+    const { circuitId, esNacional } = await getCircuitInfo(match.phaseId);
     if (!circuitId) return;
     const isWO = match.result.isWO;
     const winnerId = match.result.winnerId;
     const loserId  = match.playerAId === winnerId ? match.playerBId : match.playerAId;
     const esFinal = match.serieId === 'master-final' || match.serieId === 'nac-final';
     if (isWO) return;
-    const ptsGanador  = esFinal ? 7 : 5;
+    const ptsGanador  = esNacional ? (esFinal ? 5 : 3) : (esFinal ? 7 : 5);
     const ptsPerdedor = esFinal ? 2 : 1;
     if (winnerId) await sumarPuntosRanking(winnerId, circuitId, ptsGanador);
     if (loserId)  await sumarPuntosRanking(loserId,  circuitId, ptsPerdedor);
