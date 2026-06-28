@@ -693,6 +693,11 @@ router.post('/trigger-nac-bracket/:phaseId', authenticate, requireRole('admin'),
 router.post('/trigger-r16-bracket/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try { await rellenarBracketR16Cuartos(parseInt(req.params.phaseId)); res.json({ message: 'Bracket R16 cuartos rellenado correctamente' }); }
   catch (error: any) { res.status(500).json({ error: error.message }); }
+});router.post('/trigger-reparar-series/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const n = await repararSeriesNacionales(parseInt(req.params.phaseId));
+    res.json({ ok: true, message: `Series reparadas: ${n}` });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 // ── Endpoint de recálculo de puntos de series nacionales ──────────────
