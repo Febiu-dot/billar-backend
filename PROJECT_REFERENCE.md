@@ -209,7 +209,7 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ### Bracket Final (bracket-nacional) — diseño (28/06)
 - Renderiza `PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`. Soporta bracket de 8 (`data.tamano === 8`, desde cuartos) y de 16 (con octavos).
-- **Header**: dos logos flanqueando los textos → `.bk-headlogos` con `<img .bk-hl>` FEBIU (`LOGO_FEBIU_B64`) a la izquierda y CPB (`LOGO_CPB_B64`) a la derecha. Textos centrales: kicker "Confederación Panamericana de Billar 2026", `.bk-h1` "Torneo Panamericano", `.bk-subtitle` dinámico (ver abajo).
+- **Header (condicionado a `data.esPanamericano`)**: `.bk-headlogos` con `<img .bk-hl>`. **Panamericano** → FEBIU (`LOGO_FEBIU_B64`) + CPB (`LOGO_CPB_B64`), kicker "Confederación Panamericana de Billar {temporada}", `.bk-h1` "Torneo Panamericano". **Nacional/departamental** → SOLO logo FEBIU, kicker "FEBIU · Temporada {temporada}", `.bk-h1` = `{data.torneo}` (nombre real). El `.bk-subtitle` es dinámico en ambos (ver abajo). **OJO:** estos textos/logos NO deben hardcodearse; el bracket es plantilla compartida nacional+panamericano (un hardcodeo previo metió "Confederación Panamericana" en el Nacional — ya corregido).
 - **Subtítulo dinámico**: el `.bk-subtitle` muestra **"Bracket Final · Categoría X"**. La categoría se deriva concatenando `data.torneo` + `data.circuito`, normalizado sin acentos (`.normalize('NFD').replace(/[\u0300-\u036f]/g,'')`), y matcheando: master/maxima→Máxima, femenin→Femenino, juvenil→Juvenil, segunda→Segunda, tercera→Tercera, primera→Primera; sin match → "Bracket Final" pelado. **NO usar `categoriaFederal`** (solo distingue primera/segunda/tercera, Máster cae en primera). Si una categoría nueva no aparece, revisar que su nombre de torneo o circuito contenga la palabra clave.
 - **Banderas de país en casillas**: cuando `data.esPanamericano`, cada `Seat` muestra `banderaPaisG(pais)` antes del nombre (helper local `getPais(m, side)` lee `playerA.pais`/`playerB.pais`). El **Campeón** también lleva bandera (`camp.pais`). En nacional/departamental no se muestra. CSS export-safe con tamaño FIJO: `.bk-flag` 20×14px, `.bk-flag-champ` 22×15px, `object-fit:cover`, `border-radius:2px`; `.bk-champ-name` es `inline-flex`.
 - **Sin logo central** (se quitó `.bk-logo-halo` del centro) y **sin footer** (`.bk-foot` eliminado).
@@ -217,9 +217,11 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 - Paleta navy/petróleo/dorado/cian con glassmorphism; conectores SVG dibujados en `useEffect` (`#bk-wires`), recalculados en runtime con `getBoundingClientRect()` → reconectan al cambiar el ancho. La lógica/estructura del bracket NO depende del diseño.
 
 
+**Elección de paleta por categoría (TODAS las publicaciones).** La paleta (`getCatV2(...)` para V2 premium y `getColoresCategoria(...)` para el tema del ranking) se elige con el helper `catPaletaFE(data)`, NO con `data.categoriaFederal` directo. `catPaletaFE` deriva la categoría real de `data.torneo` + `data.circuito` sin acentos (mismo patrón que el subtítulo del bracket): `master|maxima|primera` → `'primera'` (navy/gold), `segunda` → segunda, `tercera` → tercera; fallback a `categoriaFederal` del backend y, si nada, `'primera'`. Motivo: el backend `categoriaFederal()` mete Máster/Máxima en primera o tercera por defecto, por lo que el Panamericano Categoría Máxima salía verde. Con `catPaletaFE`, Máxima rinde navy/gold como los nacionales de Primera.
+
 | Categoría | bg | accent |
 |---|---|---|
-| primera | 🔵 navy/gold | #0a223f / #f4c430 |
+| primera (incl. máster/máxima) | 🔵 navy/gold | #0a223f / #f4c430 |
 | segunda | 🟠 marrón/gold | #2f1a0a / #f4c430 |
 | tercera | 🟢 verde/gold | #0a2f1a / #f4c430 |
 
@@ -269,5 +271,5 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ---
 
-*Sistema FEBIU v3.9 — Federación de Billar del Uruguay*
-*Actualizado 28/06/2026 (noche) — Bracket Final Panamericano: banderas de país en casillas y campeón (export-safe, tamaño fijo), subtítulo dinámico "Bracket Final · Categoría X" (derivado de torneo+circuito sin acentos, NO de categoriaFederal), franjas blancas laterales eliminadas (stage 1440, contenido centrado 1180). Solo cambios visuales en PlantillaBracketNacional.*
+*Sistema FEBIU v4.0 — Federación de Billar del Uruguay*
+*Actualizado 28/06/2026 (última) — Paleta navy/gold para Categoría Máxima: nuevo helper `catPaletaFE(data)` deriva la categoría real de torneo+circuito sin acentos (master/maxima/primera→primera) y reemplaza el uso directo de `categoriaFederal` para elegir paleta en TODAS las publicaciones (el Panamericano Máxima salía verde). Arreglo del Header del Bracket: kicker/título/logo CPB condicionados a `data.esPanamericano` (el Nacional de Primera mostraba "Confederación Panamericana" + logo CPB). Solo frontend; 28 errores TS preexistentes sin cambios.*

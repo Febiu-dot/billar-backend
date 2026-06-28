@@ -18,6 +18,25 @@
 
 ## ESTADO AL 28/06/2026
 
+### COMPLETADO (28/06 — última) — Paleta navy/gold para Categoría Máxima + arreglo header Bracket Nacional
+
+Dos problemas en `AdminPublicacionesPage.tsx`. Solo frontend; backend NO se tocó.
+
+1. **Panamericano Categoría Máxima salía TODO en verde; debe ser navy/gold (igual que los nacionales de Primera).** La paleta se elige con `getCatV2(...)` / `getColoresCategoria(...)` a partir de `data.categoriaFederal`. El backend `categoriaFederal()` solo distingue primera/segunda/tercera y, si el nombre del torneo Panamericano no contiene "primera", cae en el `return 'tercera'` por defecto → paleta **verde**.
+   - **Solución:** nuevo helper `catPaletaFE(data)` que deriva la categoría REAL desde `data.torneo` + `data.circuito` normalizando acentos (mismo patrón que el subtítulo dinámico del bracket). Mapeo: `master|maxima|primera` → `'primera'` (navy/gold); `segunda` → segunda; `tercera` → tercera; fallback al `categoriaFederal` del backend y, si nada, `'primera'`.
+   - Se reemplazaron TODOS los usos `getCatV2(data.categoriaFederal)` / `getColoresCategoria(data.categoriaFederal)` por `getCatV2(catPaletaFE(data))` / `getColoresCategoria(catPaletaFE(data))` en PubHeader, PlantillaSeriesNacional, PlantillaRankingNacional, PlantillaBracketNacional y el tema del ranking. Aplica a TODAS las publicaciones (inicial, series, ranking, cruces, bracket). Nacional/departamental quedan idénticos.
+
+2. **El Bracket del Nacional de Primera mostraba "Confederación Panamericana de Billar 2026" + logo CPB (¡siendo nacional!).** Bug colateral del rediseño del bracket (28/06 tarde): el header quedó con kicker/título/logo CPB **hardcodeados** sin condicionar a `data.esPanamericano`.
+   - **Solución:** header condicionado a `data.esPanamericano`. Nacional → kicker `FEBIU · Temporada {temporada}`, `<h1>` = `{data.torneo}` (nombre real), solo logo FEBIU. Panamericano → kicker `Confederación Panamericana de Billar {temporada}`, `<h1>` "Torneo Panamericano", logos FEBIU + CPB (como estaba). El subtítulo dinámico (`subtituloBracket`) ya funcionaba bien en ambos.
+
+`BUILD_TAG` → `pub-2026-06-28-paleta` para forzar chunk nuevo en Vercel. TS: 28 errores preexistentes, sin cambios (ninguno nuevo).
+
+**Lecciones:**
+- Para elegir paleta por categoría NO confiar en `categoriaFederal` del backend (cae en primera/tercera para Máster). Derivar de torneo+circuito sin acentos, igual que el subtítulo del bracket. El helper `catPaletaFE(data)` centraliza esto.
+- Antes de embellecer una plantilla compartida (bracket sirve a nacional Y panamericano), condicionar textos/logos específicos a `data.esPanamericano`. Hardcodear lo panamericano rompe el nacional.
+
+---
+
 ### COMPLETADO (28/06 — noche) — Banderas en Bracket + subtítulo dinámico por categoría + franjas blancas (circuit 31)
 
 Dos cambios visuales en la publicación **Bracket Final** (`PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`) + un fix de layout. La lógica/estructura del bracket NO se tocó.
