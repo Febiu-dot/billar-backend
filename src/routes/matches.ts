@@ -527,7 +527,45 @@ async function rellenarCrucesReduccion(phaseId: number) {
   } catch (error) { console.error('Error rellenando cruces de reducción:', error); }
 }
 
-async function generarSiguientePartidoSerie(matchId: number) {
+// ── Repara slots de series nacionales/panamericanas sin depender del orden de carga ──
+// Para cada serie: P5.slotA = perdedor del P3, P5.slotB = ganador del P4.
+async function repararSeriesNacionales(phaseId: number) {
+  const matches = await prisma.match.findMany({
+    where: { phaseId, serieId: { not: null } },
+    include: { result: true },
+    orderBy: { round: 'asc' }
+  });
+  const seriesMap: Record<string, any[]> = {};
+  for (const m of matches) {
+    const sid = m.serieId as string;
+    if (!/^nac-serie-/.test(sid) && !/^[A-Z]+-G\d+$/.test(sid)) continue;
+    if (!seriesMap[sid]) seriesMap[sid] = [];
+    seriesMap[sid].push(m);
+  }
+  let reparados = 0;
+  for (const partidos of Object.values(seriesMap)) {
+    const roundBase = Math.min(...partidos.map((p: any) => p.round));
+    const p3 = partidos.find((p: any) => p.round === roundBase + 2);
+    const p4 = partidos.find((p: any) => p.round === roundBase + 3);
+    const p5 = partidos.find((p: any) => p.round === roundBase + 4);
+    if (!p5) continue;
+
+    const data: any = {};
+    if (p3?.result?.winnerId) {
+      const p3LoserId = p3.playerAId === p3.result.winnerId ? p3.playerBId : p3.playerAId;
+      if (p3LoserId && p5.playerAId !== p3LoserId) { data.playerAId = p3LoserId; data.slotA = null; }
+    }
+    if (p4?.result?.winnerId) {
+      if (p5.playerBId !== p4.result.winnerId) { data.playerBId = p4.result.winnerId; data.slotB = null; }
+    }
+    if (Object.keys(data).length > 0) {
+      await prisma.match.update({ where: { id: p5.id }, data });
+      await checkAndEmitMatch(p5.id);
+      reparados++;
+    }
+  }
+  return reparados;
+}async function generarSiguientePartidoSerie(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true, phase: true } });
     if (!match || !match.result?.winnerId) return;
