@@ -18,7 +18,22 @@
 
 ## ESTADO AL 28/06/2026
 
-### COMPLETADO (28/06) — Publicación Bracket de 8 + Ranking país/bandera (circuit 31)
+### COMPLETADO (28/06 — tarde) — Rediseño visual Bracket Final Panamericano (circuit 31)
+
+Embellecimiento de la publicación **Bracket** (`PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`). Solo cambios estéticos, la lógica/estructura del bracket no se tocó.
+
+1. **Header con dos logos**: FEBIU (`LOGO_FEBIU_B64`) a la izquierda y CPB (`LOGO_CPB_B64`) a la derecha, flanqueando los textos centrales. Clase nueva `.bk-headlogos` (flex, gap 22px) + `.bk-headtext` + `.bk-hl` (logos 78px, círculo blanco, borde dorado).
+2. **Títulos**: título principal "Torneo Panamericano" (`.bk-h1`), subtítulo "Bracket Final" (`.bk-subtitle`), kicker "Confederación Panamericana de Billar 2026" (`.bk-kicker`). Antes mostraban `{data.torneo}` / `{data.fase}` (texto fijo ahora).
+3. **Logo central grande eliminado**: se quitó el bloque `.bk-logo-halo` del centro (quedaba feo). Las reglas CSS `.bk-logo-halo*` quedan en el `<style>` pero sin uso (inofensivas).
+4. **Footer eliminado**: se quitó `<div className="bk-foot">FEBIU · {data.temporada}</div>`.
+5. **Franja blanca eliminada**: el stage pasó de `width:1440` (fijo) a `width:'100%', maxWidth:1180, margin:'0 auto'`. Eso elimina el área blanca a la derecha al ver/exportar.
+6. **Menos espacio vacío**: `bk-stage` padding `20px 28px 22px`; `.bk-bracket` `min-height:300px` (era 480); `.bk-col` `gap:14px` (era 18); `.bk-center` `gap:18px`.
+
+**Lección:** ancho fijo del stage + contenedor más ancho = franja blanca al exportar. Usar `width:100% + maxWidth + margin auto`.
+
+---
+
+### COMPLETADO (28/06 — mañana) — Publicación Bracket de 8 + Ranking país/bandera (circuit 31)
 
 Dos problemas reportados en **Publicaciones** del Panamericano Máster (circuit 31):
 
@@ -115,4 +130,4 @@ Ver prompt preparado en sesión 27/06.
 - **Panamericano = nacional deportivamente**: en backend, las ramas que filtran por tipo deben aceptar `'nacional' || 'panamericano'`. Series usan prefijo `nac-serie-*`.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 
-*Actualizado 28/06/2026 — Bracket de 8 (regenerar con formato 16) y ranking país+bandera en publicaciones; causa de ambos: datos/bundle viejo, no código. BUILD_TAG → pub-2026-06-28-pana*
+*Actualizado 28/06/2026 (tarde) — Rediseño visual Bracket Final Panamericano: header con logos FEBIU+CPB, títulos "Torneo Panamericano"/"Bracket Final", logo central y footer eliminados, franja blanca corregida (stage width:100%/maxWidth:1180), bracket más compacto.*
