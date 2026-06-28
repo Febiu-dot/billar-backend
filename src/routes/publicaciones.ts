@@ -169,7 +169,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         pais: (e.player as any).pais ?? 'Uruguay', // ← NUEVO
         puntos: e.points,
         setsGanados: e.setsWon,
+        setsPerdidos: e.setsLost,
+        difSets: e.setsWon - e.setsLost, // ← NUEVO: diferencia de sets (criterio oficial)
         tantos: e.pointsFor,
+        tantosContra: e.pointsAgainst,
+        promedio: e.pointsAgainst > 0 ? parseFloat((e.pointsFor / e.pointsAgainst).toFixed(2)) : (e.pointsFor > 0 ? 99.99 : 0), // ← NUEVO
         seccion: getSeccion(e.position)
       }));
 
