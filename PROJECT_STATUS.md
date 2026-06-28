@@ -18,6 +18,25 @@
 
 ## ESTADO AL 28/06/2026
 
+### COMPLETADO (28/06 — noche) — Banderas en Bracket + subtítulo dinámico por categoría + franjas blancas (circuit 31)
+
+Dos cambios visuales en la publicación **Bracket Final** (`PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`) + un fix de layout. La lógica/estructura del bracket NO se tocó.
+
+1. **Banderas de país en cada casilla del bracket.** El `Seat` ahora muestra la banderita (`banderaPaisG(pais)`) antes del nombre cuando `data.esPanamericano` es true. El backend YA enviaba `pais` dentro de `playerA`/`playerB` de cada match (`mkBracketMatch`) y en `campeon.pais`. Se agregó helper local `getPais(m, side)`. La bandera también aparece junto al nombre del **Campeón**. En nacional/departamental NO se muestra bandera (comportamiento intacto).
+   - **CSS export-safe (html-to-image):** banderas con tamaño FIJO — `.bk-flag` 20×14px en casillas, `.bk-flag-champ` 22×15px en el campeón, `border-radius:2px`, `object-fit:cover`. `.bk-champ-name` pasó a `display:inline-flex; align-items:center` para alinear bandera+texto. Los anchos fijos evitan que se corten al exportar.
+
+2. **Subtítulo dinámico por categoría.** El `.bk-subtitle` era fijo ("Bracket Final"). Ahora muestra **"Bracket Final · Categoría X"**. La categoría se deriva de `data.torneo` Y `data.circuito` (nombre del circuito), **normalizando para quitar acentos** (`.normalize('NFD').replace(/[\u0300-\u036f]/g,'')`). Mapeo: master/maxima → "Categoría Máxima", femenin → Femenino, juvenil → Juvenil, segunda → Segunda, tercera → Tercera, primera → Primera; sin match → "Bracket Final".
+   - **Decisión:** NO se usó `categoriaFederal` del backend porque solo distingue primera/segunda/tercera (Máster/Juvenil/Femenino caen en "primera"). Por eso se detecta por nombre de torneo+circuito.
+   - **Por qué falló en el 1er intento:** el regex buscaba solo en `data.torneo` con acentos; el torneo 21 ("Máster") no matcheaba. Se corrigió buscando también en `data.circuito` y quitando acentos. ✓ Quedó perfecto ("Bracket Final · Categoría Máxima").
+
+3. **Franjas blancas laterales eliminadas.** El contenedor de export del bracket es de 1440px (fondo blanco) pero el `.bk-stage` (fondo oscuro) tenía `maxWidth:1180` → ~130px blancos a cada lado. Solución: el `.bk-stage` ahora llena los **1440px** (`maxWidth:1440`), mientras el contenido interno (`.bk-header` y `.bk-bracket`) se mantiene centrado a **1180px** (`max-width:1180px; margin:auto`). Así el fondo oscuro cubre todo y el bracket conserva su densidad. Los conectores SVG (`#bk-wires`) se recalculan en runtime con `getBoundingClientRect()`, así que reconectan solos.
+
+**Lecciones:**
+- Detección de categoría: normalizar acentos y mirar más de un campo (torneo + circuito) — los nombres no siempre traen la palabra donde se espera.
+- Franja blanca al exportar = desajuste entre ancho del contenedor de export (1440) y ancho del fondo del stage. Llenar el fondo al ancho del export y centrar el contenido por dentro.
+
+---
+
 ### COMPLETADO (28/06 — tarde) — Rediseño visual Bracket Final Panamericano (circuit 31)
 
 Embellecimiento de la publicación **Bracket** (`PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`). Solo cambios estéticos, la lógica/estructura del bracket no se tocó.
@@ -102,12 +121,14 @@ El texto "SERIE" ya no se corta. Fix aplicado: color sólido (GOLDB) en vez de g
 
 ### PENDIENTE — Replicar a categorías restantes del Panamericano
 
-Categoría Máxima ya está. Faltan **Segunda, Tercera, Juvenil y Femenino** (cada una es un torneo/circuito SEPARADO dentro del Panamericano, con su propio circuitId).
+Categoría Máxima (Máster) ya está 100%. Faltan **Segunda, Tercera, Juvenil y Femenino** (cada una es un torneo/circuito SEPARADO dentro del Panamericano, con su propio circuitId).
 
-Objetivo:
-1. Subtítulo dinámico por categoría ("SEGUNDA", "TERCERA", "JUVENIL", "FEMENINO") en vez de "CATEGORÍA MÁXIMA" fijo. Definir de dónde sale el dato (configTorneo / nombre del torneo / campo nuevo).
-2. Confirmar formato (5 sets / 60 tantos) por categoría — verificar si alguna usa otro.
-3. Validar que banderas, logo CPB y ajustes PNG aplican automáticamente (mismo render compartido).
+Estado del mecanismo:
+1. ✅ **Subtítulo dinámico del Bracket RESUELTO** — `PlantillaBracketNacional` ya deriva la categoría de `data.torneo`+`data.circuito` sin acentos. Funciona automáticamente para cualquier categoría cuyo nombre de torneo/circuito contenga la palabra clave (segunda/tercera/juvenil/femenino/máster). **Solo verificar** que los nombres de torneo/circuito de Segunda/Tercera/Juvenil/Femenino contengan la palabra de la categoría, o no matcheará (caería en "Bracket Final" pelado).
+2. ✅ **Banderas en bracket** aplican automáticamente (mismo render compartido, condicionadas a `data.esPanamericano`).
+3. ⚠️ **Subtítulo de publicaciones series/inicial** (texto de fase "CATEGORÍA MÁXIMA"): este SÍ sigue fijo, hay que hacerlo dinámico igual que el del bracket cuando se carguen las otras categorías.
+4. Confirmar formato (5 sets / 60 tantos) por categoría — verificar si alguna usa otro.
+5. Cargar jugadores, series y configTorneo (`tipo:panamericano`, `formato:16`) de cada categoría nueva.
 
 Ver prompt preparado en sesión 27/06.
 
@@ -130,4 +151,4 @@ Ver prompt preparado en sesión 27/06.
 - **Panamericano = nacional deportivamente**: en backend, las ramas que filtran por tipo deben aceptar `'nacional' || 'panamericano'`. Series usan prefijo `nac-serie-*`.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 
-*Actualizado 28/06/2026 (tarde) — Rediseño visual Bracket Final Panamericano: header con logos FEBIU+CPB, títulos "Torneo Panamericano"/"Bracket Final", logo central y footer eliminados, franja blanca corregida (stage width:100%/maxWidth:1180), bracket más compacto.*
+*Actualizado 28/06/2026 (noche) — Bracket Final Panamericano: banderas de país en cada casilla y en el campeón (condicionadas a esPanamericano, tamaño fijo export-safe), subtítulo dinámico "Bracket Final · Categoría X" (derivado de torneo+circuito sin acentos), y franjas blancas laterales eliminadas (stage llena 1440, contenido centrado a 1180). Solo cambios visuales en PlantillaBracketNacional.*

@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 28/06/2026
+## Última actualización: 28/06/2026 (noche)
 
 ---
 
@@ -199,7 +199,7 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 - **Tabla Ranking del Circuito** (`RankingFinalPage.tsx`): en Panamericano muestra País (apócope, mismo dict) en vez de Club y oculta la columna Categoría (la categoría la define el torneo: Máxima/Segunda/Juvenil/etc., cada uno circuito separado). El backend `GET /rankings/final` envía `pais` por jugador.
 
 ### Panamericano — subtítulo, formato y ajustes de export PNG (27/06)
-- **Subtítulo**: en el texto de fase, "TORNEO PANAMERICANO" se reemplaza por la categoría. Categoría Máxima → "CATEGORÍA MÁXIMA". (Pendiente: dinámico para Segunda/Tercera/Juvenil/Femenino, cada una torneo/circuit separado.)
+- **Subtítulo**: en el texto de fase de series/inicial, "TORNEO PANAMERICANO" se reemplaza por la categoría. Categoría Máxima → "CATEGORÍA MÁXIMA". (Sigue FIJO aquí; **pendiente** hacerlo dinámico como el del bracket. El **Bracket** ya tiene subtítulo dinámico — ver sección Bracket Final.)
 - **Formato (backend publicaciones.ts)**: en rama series-nacional/inicial-nacional → `formato: esPanamericano ? '5 sets de 60 tantos' : '3 sets de 60 tantos'`. El chip muestra "PARTIDAS A 5 SETS DE 60 TANTOS".
 - **Logo CPB**: constante `LOGO_CPB_B64` (base64) en header Panamericano. Banderas: `FLAG_URU_B64 / FLAG_ARG_B64 / FLAG_BRA_B64` (data:image/png;base64) junto al badge de país.
 - **Ajustes export PNG (html-to-image)** en AdminPublicacionesPage.tsx — claves para que no se corten textos:
@@ -209,10 +209,12 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ### Bracket Final (bracket-nacional) — diseño (28/06)
 - Renderiza `PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`. Soporta bracket de 8 (`data.tamano === 8`, desde cuartos) y de 16 (con octavos).
-- **Header**: dos logos flanqueando los textos → `.bk-headlogos` con `<img .bk-hl>` FEBIU (`LOGO_FEBIU_B64`) a la izquierda y CPB (`LOGO_CPB_B64`) a la derecha. Textos centrales: kicker "Confederación Panamericana de Billar 2026", `.bk-h1` "Torneo Panamericano", `.bk-subtitle` "Bracket Final".
+- **Header**: dos logos flanqueando los textos → `.bk-headlogos` con `<img .bk-hl>` FEBIU (`LOGO_FEBIU_B64`) a la izquierda y CPB (`LOGO_CPB_B64`) a la derecha. Textos centrales: kicker "Confederación Panamericana de Billar 2026", `.bk-h1` "Torneo Panamericano", `.bk-subtitle` dinámico (ver abajo).
+- **Subtítulo dinámico**: el `.bk-subtitle` muestra **"Bracket Final · Categoría X"**. La categoría se deriva concatenando `data.torneo` + `data.circuito`, normalizado sin acentos (`.normalize('NFD').replace(/[\u0300-\u036f]/g,'')`), y matcheando: master/maxima→Máxima, femenin→Femenino, juvenil→Juvenil, segunda→Segunda, tercera→Tercera, primera→Primera; sin match → "Bracket Final" pelado. **NO usar `categoriaFederal`** (solo distingue primera/segunda/tercera, Máster cae en primera). Si una categoría nueva no aparece, revisar que su nombre de torneo o circuito contenga la palabra clave.
+- **Banderas de país en casillas**: cuando `data.esPanamericano`, cada `Seat` muestra `banderaPaisG(pais)` antes del nombre (helper local `getPais(m, side)` lee `playerA.pais`/`playerB.pais`). El **Campeón** también lleva bandera (`camp.pais`). En nacional/departamental no se muestra. CSS export-safe con tamaño FIJO: `.bk-flag` 20×14px, `.bk-flag-champ` 22×15px, `object-fit:cover`, `border-radius:2px`; `.bk-champ-name` es `inline-flex`.
 - **Sin logo central** (se quitó `.bk-logo-halo` del centro) y **sin footer** (`.bk-foot` eliminado).
-- **Stage**: `width:'100%', maxWidth:1180, margin:'0 auto'` (NO ancho fijo — el ancho fijo dejaba franja blanca a la derecha al exportar). Padding `20px 28px 22px`. Bracket `min-height:300px`, `.bk-col gap:14px`.
-- Paleta navy/petróleo/dorado/cian con glassmorphism; conectores SVG dibujados en `useEffect` (`#bk-wires`). La lógica/estructura del bracket NO depende del diseño.
+- **Stage / franjas blancas**: el contenedor de export del bracket es 1440px (fondo blanco). El `.bk-stage` (fondo oscuro) llena **1440px** (`width:'100%', maxWidth:1440, margin:'0 auto'`) para que no queden franjas blancas a los lados; el contenido interno (`.bk-header` y `.bk-bracket`) se centra a **1180px** (`max-width:1180px; margin:auto`) para conservar densidad. Padding `20px 28px 22px`, bracket `min-height:300px`, `.bk-col gap:14px`.
+- Paleta navy/petróleo/dorado/cian con glassmorphism; conectores SVG dibujados en `useEffect` (`#bk-wires`), recalculados en runtime con `getBoundingClientRect()` → reconectan al cambiar el ancho. La lógica/estructura del bracket NO depende del diseño.
 
 
 | Categoría | bg | accent |
@@ -267,5 +269,5 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ---
 
-*Sistema FEBIU v3.8 — Federación de Billar del Uruguay*
-*Actualizado 28/06/2026 — Rediseño visual Bracket Final Panamericano (header logos FEBIU+CPB, títulos Torneo Panamericano / Bracket Final, sin logo central ni footer, stage width:100%/maxWidth:1180 corrige franja blanca). Cambios solo estéticos en PlantillaBracketNacional.*
+*Sistema FEBIU v3.9 — Federación de Billar del Uruguay*
+*Actualizado 28/06/2026 (noche) — Bracket Final Panamericano: banderas de país en casillas y campeón (export-safe, tamaño fijo), subtítulo dinámico "Bracket Final · Categoría X" (derivado de torneo+circuito sin acentos, NO de categoriaFederal), franjas blancas laterales eliminadas (stage 1440, contenido centrado 1180). Solo cambios visuales en PlantillaBracketNacional.*
