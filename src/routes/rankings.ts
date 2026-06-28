@@ -726,7 +726,8 @@ router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), 
   try {
     // Detectar si el circuito es nacional
     const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
-    const esNacional = (circuit?.configTorneo as any)?.tipo === 'nacional';
+    const tipoTorneo = (circuit?.configTorneo as any)?.tipo;
+    const esNacional = tipoTorneo === 'nacional' || tipoTorneo === 'panamericano';
 
     // Reset stats (no puntos)
     await prisma.rankingEntry.updateMany({
