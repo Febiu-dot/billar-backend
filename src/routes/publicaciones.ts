@@ -12,7 +12,7 @@ const CLUB_ABREV: Record<string, string> = {
 const abrev = (club?: string | null) =>
   club ? (CLUB_ABREV[club.toUpperCase()] ?? club.slice(0, 3).toUpperCase()) : '';
 
-// ← NUEVO: mapa país → apócope
+// ← mapa país → apócope
 const PAIS_APOCOPE: Record<string, string> = {
   'Uruguay': 'URU', 'Argentina': 'ARG', 'Brasil': 'BRA', 'Brazil': 'BRA',
   'Paraguay': 'PAR', 'Chile': 'CHI', 'Bolivia': 'BOL', 'Peru': 'PER',
@@ -56,7 +56,7 @@ const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' |
   return 'tercera';
 };
 
-// ← NUEVO: jugadorInfo incluye pais
+// jugadorInfo incluye pais
 const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
   player
     ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), pais: player.pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
@@ -70,10 +70,11 @@ const getSeccion = (pos: number | null): string => {
   return 'TERCERA';
 };
 
+// ← mkBracketMatch ahora incluye pais en playerA / playerB
 const mkBracketMatch = (m: any) => {
   if (!m) return null;
-  const pA = m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev(m.playerA.club) } : null;
-  const pB = m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev(m.playerB.club) } : null;
+  const pA = m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev(m.playerA.club), pais: m.playerA.pais ?? 'Uruguay' } : null;
+  const pB = m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev(m.playerB.club), pais: m.playerB.pais ?? 'Uruguay' } : null;
   return {
     serieId: m.serieId,
     playerA: pA, playerB: pB,
@@ -129,7 +130,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     const base = { tipoFase, torneo: circuit.tournament.name, circuito: circuit.name, temporada: String(circuit.tournament.year), formato: '' };
     const esNacional = esNacionalTorneo(circuit.tournament.name);
 
-    // ← NUEVO: detectar panamericano por configTorneo.tipo
+    // detectar panamericano por configTorneo.tipo
     const configTorneoCircuito = (circuit.configTorneo as any) ?? {};
     const esPanamericano = configTorneoCircuito.tipo === 'panamericano';
 
@@ -165,6 +166,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         posicion: e.position ?? 0,
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
         club: abrev(e.player.club),
+        pais: (e.player as any).pais ?? 'Uruguay', // ← NUEVO
         puntos: e.points,
         setsGanados: e.setsWon,
         tantos: e.pointsFor,
@@ -174,6 +176,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       return res.json({
         ...base,
         tipo: 'ranking',
+        esPanamericano, // ← NUEVO
         fase: tipoFase === 'ranking-final'
           ? `RANKING FINAL — ${circuit.name.toUpperCase()}`
           : `RANKING — ${circuit.name.toUpperCase()}`,
@@ -229,7 +232,6 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         return {
           serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'),
           p1: mkP(p1), p2: mkP(p2), p3: mkP(p3), p4: mkP(p4), p5: mkP(p5),
-          // ← NUEVO: primero/segundo/tercero/cuarto incluyen pais
           primero: primero ? { nombre: `${primero.lastName}, ${primero.firstName}`, club: abrev((primero as any).club), pais: (primero as any).pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === primero.id)?.position ?? null } : null,
           segundo: segundo ? { nombre: `${segundo.lastName}, ${segundo.firstName}`, club: abrev((segundo as any).club), pais: (segundo as any).pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === segundo.id)?.position ?? null } : null,
           tercero: tercero ? { nombre: `${tercero.lastName}, ${tercero.firstName}`, club: abrev((tercero as any).club), pais: (tercero as any).pais ?? 'Uruguay' } : null,
@@ -243,6 +245,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         posicion: r.position,
         nombre: r.player ? `${r.player.lastName}, ${r.player.firstName}` : '—',
         club: r.player ? abrev((r.player as any).club) : null,
+        pais: r.player ? ((r.player as any).pais ?? 'Uruguay') : null, // ← NUEVO
         puntos: r.points,
       }));
       const tipoResp = tipoFase === 'inicial-nacional' ? 'inicial-nacional' : 'series-nacional';
@@ -250,7 +253,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         ...base,
         tipo: tipoResp,
         categoriaFederal: categoriaFederal(circuit.tournament.name),
-        esPanamericano, // ← NUEVO
+        esPanamericano,
         fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`,
         formato: esPanamericano ? '5 sets de 60 tantos' : '3 sets de 60 tantos',
         fechaPrincipal: fechaLarga(pf),
@@ -273,25 +276,35 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const getM = (sid: string) => mkBracketMatch(matches.find(m => m.serieId === sid));
       const pf = matches.find(m => m.scheduledAt)?.scheduledAt;
 
+      const octavos = [1,2,3,4,5,6,7,8].map(i => getM(`nac-oct-${i}`));
+      const cuartos = [1,2,3,4].map(i => getM(`nac-cua-${i}`));
+      const semis   = [1,2].map(i => getM(`nac-semi-${i}`));
+
       const finalMatch = matches.find(m => m.serieId === 'nac-final');
       let campeon: any = null;
       if (finalMatch?.result?.winnerId) {
         const w = finalMatch.result.winnerId === finalMatch.playerAId ? finalMatch.playerA : finalMatch.playerB;
-        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club) };
+        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club), pais: (w as any).pais ?? 'Uruguay' };
       }
+
+      // ← detectar tamaño real del bracket: si no hay octavos generados, arranca en cuartos
+      const hayOctavos = octavos.some(m => m !== null);
+      const tamano = hayOctavos ? 16 : 8;
 
       return res.json({
         ...base,
         tipo: 'bracket-nacional',
         fase: `BRACKET — ${circuit.tournament.name.toUpperCase()}`,
         categoriaFederal: categoriaFederal(circuit.tournament.name),
+        esPanamericano, // ← NUEVO
+        tamano,         // ← NUEVO (8 ó 16)
         formato: '',
         fechaPrincipal: fechaLarga(pf),
         campeon,
-        octavos: [1,2,3,4,5,6,7,8].map(i => getM(`nac-oct-${i}`)),
-        cuartos: [1,2,3,4].map(i => getM(`nac-cua-${i}`)),
-        semis:   [1,2].map(i => getM(`nac-semi-${i}`)),
-        final:   getM('nac-final'),
+        octavos,
+        cuartos,
+        semis,
+        final: getM('nac-final'),
       });
     }
 
@@ -313,8 +326,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         const winB = m.result?.winnerId === m.playerBId;
         return {
           serieId: m.serieId,
-          jugadorA: m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev((m.playerA as any).club) } : null,
-          jugadorB: m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev((m.playerB as any).club) } : null,
+          jugadorA: m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev((m.playerA as any).club), pais: (m.playerA as any).pais ?? 'Uruguay' } : null,
+          jugadorB: m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev((m.playerB as any).club), pais: (m.playerB as any).pais ?? 'Uruguay' } : null,
           slotA: m.slotA, slotB: m.slotB,
           hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt),
           sede: m.table?.venue?.name ?? null, mesa: m.table?.number ?? null,
@@ -338,13 +351,18 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       let campeon: any = null;
       if (finalMatch?.result?.winnerId) {
         const w = finalMatch.result.winnerId === finalMatch.playerAId ? finalMatch.playerA : finalMatch.playerB;
-        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club) };
+        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club), pais: (w as any).pais ?? 'Uruguay' };
       }
+
+      const hayOctavos = octavos.some(m => m !== null);
+      const tamano = hayOctavos ? 16 : 8;
 
       return res.json({
         ...base,
         tipo: 'cruces-nacional',
         categoriaFederal: categoriaFederal(circuit.tournament.name),
+        esPanamericano, // ← NUEVO
+        tamano,         // ← NUEVO
         fase: `ETAPA DE CRUCES — ${circuit.tournament.name.toUpperCase()}`,
         fechaPrincipal: fechaLarga(pf),
         formato: '',
