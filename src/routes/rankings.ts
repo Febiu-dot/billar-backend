@@ -310,7 +310,7 @@ router.get('/final', async (req, res: Response) => {
             firstName:   e.player.firstName,
             lastName:    e.player.lastName,
             club:        e.player.club ?? '',
-            pais:
+            pais:        e.player.pais ?? 'Uruguay',
             categoria:   e.player.category.name,
             puntos:      e.points,
             setsGanados: e.setsWon,
