@@ -207,7 +207,14 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
   - Chip SERIE: padding `'4px 28px 4px 18px'`, fontSize 16, letterSpacing 0.04em (el letterSpacing alto empuja el último carácter fuera del padding → mantener bajo + padding derecho extra).
   - Label partidos: "PARTIDO 1/2" con `whiteSpace:'nowrap'` y `flexShrink:0` (una sola línea).
 
-### Colores por categoría federal
+### Bracket Final (bracket-nacional) — diseño (28/06)
+- Renderiza `PlantillaBracketNacional` en `AdminPublicacionesPage.tsx`. Soporta bracket de 8 (`data.tamano === 8`, desde cuartos) y de 16 (con octavos).
+- **Header**: dos logos flanqueando los textos → `.bk-headlogos` con `<img .bk-hl>` FEBIU (`LOGO_FEBIU_B64`) a la izquierda y CPB (`LOGO_CPB_B64`) a la derecha. Textos centrales: kicker "Confederación Panamericana de Billar 2026", `.bk-h1` "Torneo Panamericano", `.bk-subtitle` "Bracket Final".
+- **Sin logo central** (se quitó `.bk-logo-halo` del centro) y **sin footer** (`.bk-foot` eliminado).
+- **Stage**: `width:'100%', maxWidth:1180, margin:'0 auto'` (NO ancho fijo — el ancho fijo dejaba franja blanca a la derecha al exportar). Padding `20px 28px 22px`. Bracket `min-height:300px`, `.bk-col gap:14px`.
+- Paleta navy/petróleo/dorado/cian con glassmorphism; conectores SVG dibujados en `useEffect` (`#bk-wires`). La lógica/estructura del bracket NO depende del diseño.
+
+
 | Categoría | bg | accent |
 |---|---|---|
 | primera | 🔵 navy/gold | #0a223f / #f4c430 |
@@ -260,5 +267,5 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ---
 
-*Sistema FEBIU v3.7 — Federación de Billar del Uruguay*
-*Actualizado 28/06/2026 — Bracket de 8 (formato 16) y ranking país+bandera en publicaciones ya en código; bug era bundle viejo en Vercel (BUILD_TAG bumpeado a pub-2026-06-28-pana)*
+*Sistema FEBIU v3.8 — Federación de Billar del Uruguay*
+*Actualizado 28/06/2026 — Rediseño visual Bracket Final Panamericano (header logos FEBIU+CPB, títulos Torneo Panamericano / Bracket Final, sin logo central ni footer, stage width:100%/maxWidth:1180 corrige franja blanca). Cambios solo estéticos en PlantillaBracketNacional.*
