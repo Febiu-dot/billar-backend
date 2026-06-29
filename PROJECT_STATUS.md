@@ -10,9 +10,49 @@
 | Torneo Nacional de Primera | tournamentId=19 |
 | C1 Nacional de Primera | circuitId=29 |
 | C2 Nacional de Primera | circuitId=27 |
-| Torneo Panamericano de Primera | tournamentId=21 |
-| C1 Panamericano de Primera | circuitId=31, phaseId=84 |
+| Torneo Panamericano de Primera/Máxima | tournamentId=21 |
+| C1 Panamericano Máxima (Máster) | circuitId=31, phaseId=84 |
 | Willy Billar Club | venueId=25, tableIds 60–65 |
+
+**Nota:** los Panamericanos de Segunda, Tercera, Juvenil y Femenino ya existen como torneos en la base (creados desde Fixture). El fixture real del Panamericano arrancará sobre esos circuitos. Fase bracket de cada categoría = tipo `master`; fase series = tipo `clasificatorio`.
+
+---
+
+## ESTADO AL 29/06/2026
+
+### COMPLETADO (29/06) — Vista Pública: selector de torneo + filtrado de las 3 columnas + apócope Panamericano
+
+Rediseño de `/publico` (`PublicPage.tsx`) para torneos simultáneos. Antes, "Últimos Resultados" mostraba lo último de TODA la base (aparecían partidos del Nacional de Primera C2 ya jugados, fase 76, aunque el simulacro Panamericano ya estaba limpio). Causa: la detección de "circuito activo" dependía de partidos en vivo; sin partidos en juego, `circuitoActivo` quedaba null y mostraba todos los finalizados.
+
+Solución definitiva (solo frontend, backend ya tenía todo):
+- **Selector de torneo** arriba de la portada. Lista SOLO torneos con `active === true` que tengan al menos un partido cargado (en curso / pendiente / finalizado). Sin opción "Todos" (decisión del usuario: confunde; el espectador debe reconocer a los jugadores para saber qué categoría ve).
+- **Al entrar, las 3 columnas vacías** con mensaje "Elegí un torneo…". Recién al elegir, se filtran las 3 columnas (Partidos en Curso / Próximos / Últimos Resultados) por ese `tournament.id`.
+- **Apócope de país** (URU, ARG, BRA…) al lado del nombre SOLO cuando el torneo elegido es Panamericano (`/panamericano/i` sobre el nombre del torneo). Helpers nuevos: `matchEsPana(m)`, `nombrePublico(jug, esPana)`. Reutiliza el dict `PAIS_APOCOPE` ya existente en el archivo.
+- Backend NO se tocó: `GET /matches` ya acepta `?tournamentId=` y ya incluye `phase.circuit.tournament` (con flag `active`) en cada match.
+- **Sección "Series y Rankings por Torneo"** (antes titulada "TORNEO NACIONAL", renombrada): su dropdown también filtra solo torneos `active === true` (línea del `.filter` en `SeccionNacional`, suma `t.active === true` al regex nacional/panamericano). El endpoint `GET /publicaciones/circuitos` ya devuelve `active` (findMany sin select).
+- `PublicPage.tsx` usa marcador `// PUBLIC_BUILD = pub-public-2026-06-29-activos` al tope (no tiene BUILD_TAG propio; el comentario invalida el chunk de Vercel). Se quitó el import sin uso `playerName`.
+
+**Requisito operativo:** el control de qué ve el público es el flag `Tournament.active`. Torneos a mostrar → activos; torneos viejos a ocultar (Nacionales terminados) → marcar inactivos. Aplica a AMBOS selectores de la vista pública y al de Fixture.
+
+**PENDIENTE (próximo chat):** rediseñar la vista de MESAS en `/publico` y el FLUJO DE ENTRADA del público a la app. Hoy la entrada del público usa la misma pantalla que el login (solo con un texto abajo "se entra sin login"). Se quiere: (1) un link directo / instalación PWA que abra SOLO la Vista Pública sin pasar por login; (2) rediseño del estado/vista de mesas en la portada pública.
+
+### COMPLETADO (28/06 — noche 2) — Inicio migración multi-categoría Panamericano: subtítulo dinámico + paleta Segunda bordeaux + Fixture abre en activo
+
+Arranque de la replicación del Panamericano a las 5 categorías (Máxima ✓; Segunda/Tercera/Juvenil/Femenino se cargan desde la UI de Fixture, que YA permite crear torneo/circuito/fases, subir jugadores y generar partidos). El motor ya es genérico: rankings/matches/cruces/series aceptan `tipo === 'panamericano'`. NO se toca `schema.prisma` (la categoría la define el Tournament). Tres cambios frontend:
+
+1. **Subtítulo dinámico de publicaciones series/inicial** (`AdminPublicacionesPage.tsx`, `PubHeader`). El `.replace(/TORNEO PANAMERICANO/gi, 'CATEGORÍA MÁXIMA')` estaba FIJO → Segunda/Tercera salían "MÁXIMA". Ahora el helper `catSubtitulo` deriva de `data.torneo`+`data.circuito` sin acentos (master/maxima→MÁXIMA, femenin→FEMENINO, juvenil→JUVENIL, segunda→SEGUNDA, tercera→TERCERA, primera→PRIMERA). Último texto fijo a Máxima cerrado.
+
+2. **Paleta Segunda → BORDEAUX** `#6B2737` + dorado `#D4AF37` (antes marrón `#b83c00`), permanente para cualquier torneo de Segunda. Actualizada en los 4 mapas de paleta del archivo: `TEMAS.segunda`, `COLORES_CATEGORIA.segunda`, `COLORES_CATEGORIA_V2.segunda` (rampa completa derivada), `SECCION_COLORES.SEGUNDA` + `getCatColor`. `BUILD_TAG` → `pub-2026-06-28-segunda`.
+
+3. **Fixture abre en torneo activo** (`FixturePage.tsx`, `useEffect` inicial): `r.data.find(t => t.active)` con fallback al primero (antes siempre `r.data[0]` = Nacional de Primera). ⚠️ Si hay varios activos, abre en el primer activo de la lista.
+
+**Decisión tipos de fase (NO se cambia):** enum `PhaseType` = `clasificatorio | segunda | primera | master`. No existe "tercera". `clasificatorio` = series, `master` = bracket. Toda categoría usa clasificatorio + master. El nombre de la fase es libre; "master" es solo el tipo interno.
+
+**Verificación 28/06:** solo 3 circuitos con inscriptos: 27 (Nac Pri C2, 32), 29 (Nac Pri C1, 32), 31 (Pana Máster, 16). Columnas reales en DB: Match → `playerAId`/`playerBId`, `serieId`, `phaseId`; Player → `firstName`/`lastName`/`pais`. La fase 76 (bracket "Etapa de Cruces") pertenece a circuit 27 = Nacional de Primera (NO es de prueba — son datos reales).
+
+**PENDIENTE Femenino:** paleta borgoña `#7A1F3D` + dorado `#D4AF37` + antracita `#2F2F2F` SIN implementar. Juvenil queda en fallback navy/gold. El subtítulo del bracket ya contempla femenin/juvenil; falta agregar paleta Femenino a los mapas + `catPaletaFE`. Juvenil y Femenino quedan para el final (si dan los tiempos).
+
+⚠️ **Riesgo nomenclatura:** la detección de categoría (paleta + subtítulo) busca la palabra clave en el nombre de torneo/circuito sin acentos. Cada torneo nuevo DEBE contener su palabra (`segunda`/`tercera`/`juvenil`/`femenin`).
 
 ---
 
@@ -170,4 +210,4 @@ Ver prompt preparado en sesión 27/06.
 - **Panamericano = nacional deportivamente**: en backend, las ramas que filtran por tipo deben aceptar `'nacional' || 'panamericano'`. Series usan prefijo `nac-serie-*`.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 
-*Actualizado 28/06/2026 (noche) — Bracket Final Panamericano: banderas de país en cada casilla y en el campeón (condicionadas a esPanamericano, tamaño fijo export-safe), subtítulo dinámico "Bracket Final · Categoría X" (derivado de torneo+circuito sin acentos), y franjas blancas laterales eliminadas (stage llena 1440, contenido centrado a 1180). Solo cambios visuales en PlantillaBracketNacional.*
+*Actualizado 29/06/2026 — Vista Pública `/publico` con selector de torneo: las 3 columnas (en curso/próximos/resultados) se filtran por el torneo elegido (solo activos, sin "Todos"), columnas vacías hasta elegir, apócope de país solo en Panamericano. Sección "Series y Rankings por Torneo" (ex "Torneo Nacional") también filtra solo activos. Control vía flag Tournament.active. PUBLIC_BUILD pub-public-2026-06-29-activos. Pendiente próximo chat: rediseño vista de mesas + flujo de entrada/instalación PWA del público sin login. (Sesión previa 28/06 noche 2: subtítulo dinámico de publicaciones, Segunda bordeaux #6B2737, Fixture abre en activo, BUILD_TAG pub-2026-06-28-segunda.)*

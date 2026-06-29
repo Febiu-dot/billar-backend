@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 28/06/2026 (noche)
+## Última actualización: 29/06/2026
 
 ---
 
@@ -222,8 +222,27 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 | Categoría | bg | accent |
 |---|---|---|
 | primera (incl. máster/máxima) | 🔵 navy/gold | #0a223f / #f4c430 |
-| segunda | 🟠 marrón/gold | #2f1a0a / #f4c430 |
+| segunda | 🍷 bordeaux/gold | #6B2737 / #D4AF37 |
 | tercera | 🟢 verde/gold | #0a2f1a / #f4c430 |
+| femenino (PENDIENTE) | 🍷 borgoña/gold | #7A1F3D / #D4AF37 |
+| juvenil | fallback navy/gold | #0a223f / #f4c430 |
+
+Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `AdminPublicacionesPage.tsx` (`TEMAS`, `COLORES_CATEGORIA`, `COLORES_CATEGORIA_V2`, `SECCION_COLORES`/`getCatColor`). Permanente para cualquier torneo de Segunda.
+
+**Subtítulo de publicaciones series/inicial (RESUELTO 28/06 noche 2):** ya NO es fijo "CATEGORÍA MÁXIMA". El helper `catSubtitulo` en `PubHeader` deriva de torneo+circuito sin acentos (master/maxima→MÁXIMA, femenin→FEMENINO, juvenil→JUVENIL, segunda→SEGUNDA, tercera→TERCERA, primera→PRIMERA).
+
+### Tipos de fase (enum PhaseType) — el TIPO es la ETAPA, no la categoría
+- Enum DB: `clasificatorio | segunda | primera | master`. **NO existe "tercera" y no hace falta.**
+- `clasificatorio` = etapa de **series**. `master` = etapa de **bracket / eliminación directa**.
+- Toda categoría del Panamericano (incl. Tercera) usa `clasificatorio` (series) + `master` (bracket). El nombre de la fase es libre (campo NOMBRE); "master" es solo el tipo interno, no se muestra al público. Renombrar el enum se descartó (atraviesa back+front + migración).
+
+### Vista Pública `/publico` (PublicPage.tsx) — selector de torneo
+- **Selector de torneo** arriba: lista solo torneos `active === true` que tengan ≥1 partido cargado. Sin opción "Todos".
+- Las **3 columnas** (Partidos en Curso / Próximos / Últimos Resultados) se filtran por `tournament.id` elegido. Vacías hasta elegir.
+- **Apócope de país** al lado del nombre solo si el torneo elegido es Panamericano (`/panamericano/i`). Helpers `matchEsPana`, `nombrePublico`, dict `PAIS_APOCOPE`.
+- Sección **"Series y Rankings por Torneo"** (ex "Torneo Nacional"): su dropdown filtra solo torneos `active === true` (`SeccionNacional`, suma `t.active === true` al regex).
+- Control de qué ve el público = flag `Tournament.active` (aplica a ambos selectores + Fixture). Torneos viejos → marcar inactivos.
+- Backend no requirió cambios: `GET /matches?tournamentId=` y `phase.circuit.tournament` (con `active`) ya existían; `GET /publicaciones/circuitos` ya devuelve `active`.
 
 ---
 
@@ -244,7 +263,7 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-28-pana`.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-28-segunda`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-activos`).
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -271,5 +290,5 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 
 ---
 
-*Sistema FEBIU v4.0 — Federación de Billar del Uruguay*
-*Actualizado 28/06/2026 (última) — Paleta navy/gold para Categoría Máxima: nuevo helper `catPaletaFE(data)` deriva la categoría real de torneo+circuito sin acentos (master/maxima/primera→primera) y reemplaza el uso directo de `categoriaFederal` para elegir paleta en TODAS las publicaciones (el Panamericano Máxima salía verde). Arreglo del Header del Bracket: kicker/título/logo CPB condicionados a `data.esPanamericano` (el Nacional de Primera mostraba "Confederación Panamericana" + logo CPB). Solo frontend; 28 errores TS preexistentes sin cambios.*
+*Sistema FEBIU v4.2 — Federación de Billar del Uruguay*
+*Actualizado 29/06/2026 — Vista Pública `/publico` rediseñada con selector de torneo: 3 columnas filtradas por torneo elegido (solo activos, sin "Todos"), apócope de país solo en Panamericano, sección "Series y Rankings por Torneo" (ex "Torneo Nacional") filtra solo activos. Control vía Tournament.active. Sesión previa (28/06 noche 2): subtítulo dinámico de publicaciones (`catSubtitulo`), paleta Segunda → bordeaux `#6B2737`, Fixture abre en torneo activo, tipos de fase aclarados (master = bracket de toda categoría). BUILD_TAG pub-2026-06-28-segunda / PUBLIC_BUILD pub-public-2026-06-29-activos. Pendiente: vista de mesas + flujo entrada/PWA del público; Femenino borgoña sin implementar.*
