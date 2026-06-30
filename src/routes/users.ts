@@ -12,7 +12,7 @@ router.get('/', authenticate, requireRole('admin'), async (_req: AuthRequest, re
       include: { venue: true },
       orderBy: [{ role: 'asc' }, { username: 'asc' }]
     });
-    res.json(users.map(u => ({
+    res.json(users.map((u: any) => ({
       id: u.id,
       username: u.username,
       role: u.role,
