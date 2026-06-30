@@ -43,10 +43,10 @@ async function asignarPuntosSerie(phaseId: number, serieId: string) {
     const { circuitId } = await getCircuitInfo(phaseId);
     if (!circuitId) return;
     const partidos = await prisma.match.findMany({ where: { phaseId, serieId }, include: { result: true }, orderBy: { round: 'asc' } });
-    const roundBase = Math.min(...partidos.map(p => p.round));
-    const p3 = partidos.find(p => p.round === roundBase + 2);
-    const p4 = partidos.find(p => p.round === roundBase + 3);
-    const p5 = partidos.find(p => p.round === roundBase + 4);
+    const roundBase = Math.min(...partidos.map((p: any) => p.round));
+    const p3 = partidos.find((p: any) => p.round === roundBase + 2);
+    const p4 = partidos.find((p: any) => p.round === roundBase + 3);
+    const p5 = partidos.find((p: any) => p.round === roundBase + 4);
     if (!p5?.result) return;
     const primero = p3?.result?.winnerId;
     const segundo = p5?.result?.winnerId;
@@ -338,7 +338,7 @@ async function rellenarSlotMasterConGanadorPrimera(matchId: number) {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
     if (!match || !match.result?.winnerId) return;
     const todosPrimera = await prisma.match.findMany({ where: { phaseId: match.phaseId }, orderBy: { round: 'asc' } });
-    const pos = todosPrimera.findIndex(m => m.id === matchId) + 1;
+    const pos = todosPrimera.findIndex((m: any) => m.id === matchId) + 1;
     if (pos === 0) return;
     const slotLabel = `Clasificado Primera #${pos}`; const winnerId = match.result.winnerId;
     const masterMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
@@ -573,8 +573,8 @@ async function repararSeriesNacionales(phaseId: number) {
     const roundBase = Math.floor(round / 10) * 10 + 1; const posEnSerie = round - roundBase;
     if (posEnSerie > 3) return;
     const partidos = await prisma.match.findMany({ where: { phaseId, serieId: match.serieId }, include: { result: true }, orderBy: { round: 'asc' } });
-    const p1 = partidos.find(p => p.round === roundBase); const p2 = partidos.find(p => p.round === roundBase + 1);
-    const p3 = partidos.find(p => p.round === roundBase + 2); const p4 = partidos.find(p => p.round === roundBase + 3);
+    const p1 = partidos.find((p: any) => p.round === roundBase); const p2 = partidos.find((p: any) => p.round === roundBase + 1);
+    const p3 = partidos.find((p: any) => p.round === roundBase + 2); const p4 = partidos.find((p: any) => p.round === roundBase + 3);
     const tableId = p1?.tableId ?? null; const ruleSetId = p1?.ruleSetId ?? null;
     if (posEnSerie <= 1 && p1?.result?.winnerId && p2?.result?.winnerId && !p3) {
       const newP3 = await prisma.match.create({
@@ -592,7 +592,7 @@ async function repararSeriesNacionales(phaseId: number) {
       }
       emitMatchUpdate(io, newP3);
     }
-    if (posEnSerie >= 2 && posEnSerie <= 3 && p3?.result?.winnerId && p4?.result?.winnerId && !partidos.find(p => p.round === roundBase + 4)) {
+    if (posEnSerie >= 2 && posEnSerie <= 3 && p3?.result?.winnerId && p4?.result?.winnerId && !partidos.find((p: any) => p.round === roundBase + 4)) {
       const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
       if (p3LoserId && p4!.result!.winnerId) {
         const newP5 = await prisma.match.create({
@@ -658,7 +658,7 @@ router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'),
       bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-3', slotB: 'Gan. NAC-CUA-4', round: 122, status: 'pendiente', serieId: 'nac-semi-2', ruleSetId: ruleSetCruces });
       bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-SEMI-1', slotB: 'Gan. NAC-SEMI-2', round: 131, status: 'pendiente', serieId: 'nac-final', ruleSetId: ruleSetCruces });
       await prisma.match.createMany({ data: bracketData });
-      res.json({ ok: true, message: `Bracket de 8 generado con el top 8 del ranking`, partidos: bracketData.length, seeding: top8.map((e, i) => ({ seed: i+1, nombre: `${e.player.lastName}, ${e.player.firstName}`, puntos: e.points })) });
+      res.json({ ok: true, message: `Bracket de 8 generado con el top 8 del ranking`, partidos: bracketData.length, seeding: top8.map((e: any, i: any) => ({ seed: i+1, nombre: `${e.player.lastName}, ${e.player.firstName}`, puntos: e.points })) });
       return;
     }
 
@@ -681,7 +681,7 @@ router.post('/regenerar-bracket/:circuitId', authenticate, requireRole('admin'),
     bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-CUA-3', slotB: 'Gan. NAC-CUA-4', round: 122, status: 'pendiente', serieId: 'nac-semi-2', ruleSetId: ruleSetCruces });
     bracketData.push({ phaseId: phaseMaster.id, playerAId: null, playerBId: null, slotA: 'Gan. NAC-SEMI-1', slotB: 'Gan. NAC-SEMI-2', round: 131, status: 'pendiente', serieId: 'nac-final', ruleSetId: ruleSetCruces });
     await prisma.match.createMany({ data: bracketData });
-    res.json({ ok: true, message: `Bracket generado con el top 16 del ranking`, partidos: bracketData.length, seeding: top16.map((e, i) => ({ seed: i+1, nombre: `${e.player.lastName}, ${e.player.firstName}`, puntos: e.points })) });
+    res.json({ ok: true, message: `Bracket generado con el top 16 del ranking`, partidos: bracketData.length, seeding: top16.map((e: any, i: any) => ({ seed: i+1, nombre: `${e.player.lastName}, ${e.player.firstName}`, puntos: e.points })) });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
@@ -869,10 +869,10 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
   const existingMatch = await prisma.match.findUnique({ where: { id: matchId }, include: { ruleSet: true, sets: true } });
   if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
   const winnerId = pointsA > pointsB ? existingMatch.playerAId : existingMatch.playerBId;
-  await prisma.setResult.upsert({ where: { id: (existingMatch.sets.find(s => s.setNumber === setNumber)?.id ?? 0) }, create: { matchId, setNumber, pointsA, pointsB, winnerId }, update: { pointsA, pointsB, winnerId } });
+  await prisma.setResult.upsert({ where: { id: (existingMatch.sets.find((s: any) => s.setNumber === setNumber)?.id ?? 0) }, create: { matchId, setNumber, pointsA, pointsB, winnerId }, update: { pointsA, pointsB, winnerId } });
   const allSets = await prisma.setResult.findMany({ where: { matchId }, orderBy: { setNumber: 'asc' } });
-  const setsA = allSets.filter(s => s.pointsA > s.pointsB).length; const setsB = allSets.filter(s => s.pointsB > s.pointsA).length;
-  const totalPtsA = allSets.reduce((acc, s) => acc + s.pointsA, 0); const totalPtsB = allSets.reduce((acc, s) => acc + s.pointsB, 0);
+  const setsA = allSets.filter((s: any) => s.pointsA > s.pointsB).length; const setsB = allSets.filter((s: any) => s.pointsB > s.pointsA).length;
+  const totalPtsA = allSets.reduce((acc: any, s: any) => acc + s.pointsA, 0); const totalPtsB = allSets.reduce((acc: any, s: any) => acc + s.pointsB, 0);
   await prisma.matchResult.upsert({ where: { matchId }, create: { matchId, setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB, isWO: false }, update: { setsA, setsB, pointsA: totalPtsA, pointsB: totalPtsB } });
   const updatedMatch = await prisma.match.findUnique({ where: { id: matchId }, include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } } });
   emitMatchUpdate(io, updatedMatch);
