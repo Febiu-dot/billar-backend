@@ -271,6 +271,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 - `PUT /matches/:id/result` — cargar/editar resultado. Si ya era finalizado, recalcula stats desde cero.
 - `PUT /matches/:id/jugador` — sustituye un jugador en un partido SIN tocar mesa, hora, fase ni serie. Body `{ lado: 'A'|'B', playerId }`. Pone `playerAId`/`playerBId` y limpia el `slotA`/`slotB`. Con `playerId` null vuelve a vaciar el lugar (opcional `slotLabel` para reponer el texto). Sirve para reemplazar provisorios "Qualy" por el jugador real una vez clasificado, sin perder la asignación de mesa/horario. Solo admin.
+- `PUT /matches/:id/desasignar` — anula la asignación de mesa: deja el partido `pendiente` con `tableId` null y libera la mesa (a `libre`) solo si no quedó otro partido `asignado`/`en_juego` en ella. 409 si el partido está `en_juego`/`finalizado`. No borra el partido. Botón "Quitar mesa" en `/admin/partidos`. admin/juez_sede.
 - `POST /matches/regenerar-bracket/:circuitId` — genera bracket espejo desde RankingEntry
 - `POST /matches/trigger-reparar-series/:phaseId` — repara slots de series nacionales/panamericanas (P5.slotA=perdedor P3, P5.slotB=ganador P4) sin depender del orden de carga
 - `GET /rankings/final?circuitId=X` — para nacionales/panamericanos lee de RankingEntry (incluye `pais` del jugador)
