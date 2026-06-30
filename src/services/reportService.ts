@@ -108,7 +108,7 @@ export async function generarReporteCruce(matchId: number): Promise<void> {
       jugadorB: pn(match.playerB),
       setsA: match.result.setsA,
       setsB: match.result.setsB,
-      sets: match.sets.map(s => ({ setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB })),
+      sets: match.sets.map((s: any) => ({ setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB })),
       ganador: pn(winner),
       isWO: match.result.isWO,
       sede: match.table?.venue?.name ?? null,
@@ -120,7 +120,7 @@ export async function generarReporteCruce(matchId: number): Promise<void> {
     texto += `${torneo}\n\n`;
     texto += `${pn(match.playerA)}  ${match.result.setsA} - ${match.result.setsB}  ${pn(match.playerB)}\n`;
     if (match.sets.length > 0) {
-      texto += match.sets.map(s => `Set ${s.setNumber}: ${s.pointsA}-${s.pointsB}`).join(' | ') + '\n';
+      texto += match.sets.map((s: any) => `Set ${s.setNumber}: ${s.pointsA}-${s.pointsB}`).join(' | ') + '\n';
     }
     if (match.result.isWO) texto += `_(W.O.)_\n`;
     texto += `\n✅ *AVANZA:* ${pn(winner)}\n`;
@@ -161,21 +161,21 @@ export async function generarReporteSerie(phaseId: number, serieId: string): Pro
     const serieNum = serieId.match(/(?:clasif-serie-|segunda-serie-)(\d+)/)?.[1] ?? '?';
     const faseLabel = phase.type === 'clasificatorio' ? 'Clasificatorio' : 'Segunda Fase';
     const titulo = `Serie ${serieNum} — ${faseLabel}`;
-    const roundBase = Math.min(...partidos.map(p => p.round));
+    const roundBase = Math.min(...partidos.map((p: any) => p.round));
 
-    const resultados = partidos.map(p => ({
+    const resultados = partidos.map((p: any) => ({
       numero: p.round - roundBase + 1,
       jugadorA: pn(p.playerA),
       jugadorB: pn(p.playerB),
       setsA: p.result?.setsA ?? 0,
       setsB: p.result?.setsB ?? 0,
-      sets: p.sets.map(s => ({ setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB })),
+      sets: p.sets.map((s: any) => ({ setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB })),
       isWO: p.result?.isWO ?? false,
       winnerId: p.result?.winnerId ?? null,
     }));
 
-    const p3 = partidos.find(p => p.round === roundBase + 2);
-    const p5 = partidos.find(p => p.round === roundBase + 4);
+    const p3 = partidos.find((p: any) => p.round === roundBase + 2);
+    const p5 = partidos.find((p: any) => p.round === roundBase + 4);
     const clasificado1 = p3?.result?.winnerId === p3?.playerAId ? p3?.playerA : p3?.playerB;
     const clasificado2 = p5?.result?.winnerId === p5?.playerAId ? p5?.playerA : p5?.playerB;
 
