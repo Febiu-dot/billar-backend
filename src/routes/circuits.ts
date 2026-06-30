@@ -578,7 +578,7 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
 
     const config = getConfigTorneo(circuit);
 
-    const phaseIds = circuit.phases.map(p => p.id);
+    const phaseIds = circuit.phases.map((p: any) => p.id);
     await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.matchResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
     await prisma.match.deleteMany({ where: { phaseId: { in: phaseIds } } });
@@ -595,8 +595,8 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     // ══════════════════════════════════════════════════════════════════
     if (esNacional(config)) {
       const es16 = config.formato === '16';
-      const phaseClasif = circuit.phases.find(p => p.type === 'clasificatorio');
-      const phaseMaster = circuit.phases.find(p => p.type === 'master');
+      const phaseClasif = circuit.phases.find((p: any) => p.type === 'clasificatorio');
+      const phaseMaster = circuit.phases.find((p: any) => p.type === 'master');
 
       if (!phaseClasif) { res.status(400).json({ error: 'Falta la fase Clasificatorio' }); return; }
       if (!phaseMaster) { res.status(400).json({ error: 'Falta la fase Master (bracket)' }); return; }
@@ -661,10 +661,10 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     // ══════════════════════════════════════════════════════════════════
     const { cuposDesdeClasif } = config;
 
-    const phaseClasif  = circuit.phases.find(p => p.type === 'clasificatorio');
-    const phaseSegunda = circuit.phases.find(p => p.type === 'segunda');
-    const fasePrimera  = circuit.phases.find(p => p.type === 'primera');
-    const faseMaster   = circuit.phases.find(p => p.type === 'master');
+    const phaseClasif  = circuit.phases.find((p: any) => p.type === 'clasificatorio');
+    const phaseSegunda = circuit.phases.find((p: any) => p.type === 'segunda');
+    const fasePrimera  = circuit.phases.find((p: any) => p.type === 'primera');
+    const faseMaster   = circuit.phases.find((p: any) => p.type === 'master');
 
     let numClasifSegunda = 0;
     let numClasifPrimera = 0;
