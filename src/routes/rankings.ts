@@ -11,10 +11,10 @@ async function getPhasesDeCircuito(circuitId: number) {
     orderBy: { order: 'asc' }
   });
   return {
-    clasificatorio: phases.find(p => p.type === 'clasificatorio')?.id ?? null,
-    segunda:        phases.find(p => p.type === 'segunda')?.id ?? null,
-    primera:        phases.find(p => p.type === 'primera')?.id ?? null,
-    master:         phases.find(p => p.type === 'master')?.id ?? null,
+    clasificatorio: phases.find((p: any) => p.type === 'clasificatorio')?.id ?? null,
+    segunda:        phases.find((p: any) => p.type === 'segunda')?.id ?? null,
+    primera:        phases.find((p: any) => p.type === 'primera')?.id ?? null,
+    master:         phases.find((p: any) => p.type === 'master')?.id ?? null,
   };
 }
 
@@ -132,7 +132,7 @@ router.get('/torneo', async (req, res: Response) => {
     });
     const getPublicado = (phaseId: number | null) => {
       if (!phaseId) return false;
-      const config = configs.find(c => c.phaseId === phaseId);
+      const config = configs.find((c: any) => c.phaseId === phaseId);
       return (config?.configuracion as any)?.rankingPublicado ?? false;
     };
 
@@ -155,13 +155,13 @@ router.get('/torneo', async (req, res: Response) => {
       });
 
       for (let i = 1; i <= cuposDesdeClasif - 1; i++) {
-        const cruce = crucesClasif.find(c => c.serieId === `clasif-reduccion-${i}`);
+        const cruce = crucesClasif.find((c: any) => c.serieId === `clasif-reduccion-${i}`);
         if (cruce?.result?.winnerId) {
           const jugador = cruce.playerA?.id === cruce.result.winnerId ? cruce.playerA : cruce.playerB;
           clasificadosClasif.push({ posicion: i, jugador, fuente: `Cruce ${i}` });
         }
       }
-      const repechaje = crucesClasif.find(c => c.serieId === 'clasif-repechaje');
+      const repechaje = crucesClasif.find((c: any) => c.serieId === 'clasif-repechaje');
       if (repechaje?.result?.winnerId) {
         const jugador = repechaje.playerA?.id === repechaje.result.winnerId ? repechaje.playerA : repechaje.playerB;
         clasificadosClasif.push({ posicion: cuposDesdeClasif, jugador, fuente: 'Repechaje' });
@@ -335,8 +335,8 @@ router.get('/final', async (req, res: Response) => {
       include: { player: { include: { category: true } } }
     });
     const players = circuitPlayers
-      .map(cp => cp.player)
-      .filter(p => p.dni !== 'FEBIU000' && p.active);
+      .map((cp: any) => cp.player)
+      .filter((p: any) => p.dni !== 'FEBIU000' && p.active);
 
     const allMatches = await prisma.match.findMany({
       where: {
@@ -450,7 +450,7 @@ router.get('/final', async (req, res: Response) => {
     }
 
     const ranking = players
-      .map(player => {
+      .map((player: any) => {
         const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
         const promedio = s.setsJugados > 0 ? parseFloat((s.tantos / s.setsJugados).toFixed(2)) : 0;
         const pctSets   = s.setsJugados > 0 ? parseFloat((s.setsGanados / s.setsJugados * 100).toFixed(1)) : 0;
@@ -471,11 +471,11 @@ router.get('/final', async (req, res: Response) => {
           pctTantos,
         };
       })
-      .sort((a, b) => sortAlternativa4(
+      .sort((a: any, b: any) => sortAlternativa4(
         { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
         { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
       ))
-      .map((player, index) => ({ ...player, posicion: index + 1 }));
+      .map((player: any, index: any) => ({ ...player, posicion: index + 1 }));
 
     res.json(ranking);
   } catch (error: any) {
@@ -497,8 +497,8 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       include: { player: { include: { category: true } } }
     });
     const players = circuitPlayers
-      .map(cp => cp.player)
-      .filter(p => p.dni !== 'FEBIU000' && p.active);
+      .map((cp: any) => cp.player)
+      .filter((p: any) => p.dni !== 'FEBIU000' && p.active);
 
     const allMatches = await prisma.match.findMany({
       where: {
@@ -650,7 +650,7 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
     }
 
     const ranked = players
-      .map(player => {
+      .map((player: any) => {
         const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
         return {
           playerId: player.id,
@@ -661,7 +661,7 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
           tantosContra: s.tantosContra,
         };
       })
-      .sort((a, b) => sortAlternativa4(
+      .sort((a: any, b: any) => sortAlternativa4(
         { puntos: a.puntos, setsGanados: a.setsGanados, setsJugados: a.setsJugados, tantos: a.tantos, tantosContra: a.tantosContra },
         { puntos: b.puntos, setsGanados: b.setsGanados, setsJugados: b.setsJugados, tantos: b.tantos, tantosContra: b.tantosContra }
       ));
