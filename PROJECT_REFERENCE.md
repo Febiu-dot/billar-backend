@@ -290,6 +290,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
 7. **Export PNG**: usa `html-to-image` (CDN v1.11.11). Emojis de bandera pueden fallar. Imágenes en `/public` con `crossOrigin="anonymous"`.
+8. **Formato del chip de publicación** (tabla inicial/series): se construye en `publicaciones.ts` desde el `RuleSet` apuntado por `config.ruleSetSeries` del circuito → `${bestOf} sets de ${pointsPerSet} tantos`. NO está hardcodeado por tipo de torneo. Si una categoría muestra un nº de sets inesperado, el dato a corregir es el `ruleSetSeries`/RuleSet de su config, no el código. El frontend muestra `data.formato` tal cual (no tiene texto fijo).
 
 ---
 
