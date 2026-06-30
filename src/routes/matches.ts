@@ -824,6 +824,37 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
   res.json(match);
 });
 
+// Anula la asignacion de mesa de un partido: lo vuelve a 'pendiente' sin tableId
+// y libera la mesa (solo si no quedo otro partido ocupandola). No borra el partido.
+router.put('/:id/desasignar', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
+  const matchId = Number(req.params.id);
+  const actual = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!actual) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
+  if (actual.status === 'en_juego' || actual.status === 'finalizado') {
+    return res.status(409).json({ error: 'No se puede quitar la mesa de un partido en juego o finalizado' }) as any;
+  }
+  const tableIdPrev = actual.tableId;
+
+  const match = await prisma.match.update({
+    where: { id: matchId }, data: { tableId: null, status: 'pendiente' },
+    include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
+  });
+
+  // liberar la mesa solo si no quedo otro partido asignado/en juego en ella
+  if (tableIdPrev) {
+    const otro = await prisma.match.findFirst({
+      where: { tableId: tableIdPrev, status: { in: ['asignado', 'en_juego'] } },
+    });
+    if (!otro) {
+      const libre = await prisma.table.update({ where: { id: tableIdPrev }, data: { status: 'libre' } });
+      emitTableUpdate(io, libre);
+    }
+  }
+
+  emitMatchUpdate(io, match);
+  res.json(match);
+});
+
 router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const match = await prisma.match.update({
     where: { id: Number(req.params.id) }, data: { status: 'en_juego', startedAt: new Date() },
