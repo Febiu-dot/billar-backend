@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 29/06/2026 (noche tardía) — v4.5
+## Última actualización: 30/06/2026 — v4.6
 
 ---
 
@@ -40,6 +40,7 @@ Necesito SIEMPRE:
 - ⚠️ **Panamericano = nacional deportivamente**: toda rama backend que filtre por tipo debe aceptar `tipo === 'nacional' || tipo === 'panamericano'` (aplica en `rankings.ts` → `recalcular-stats` y `GET /final`, y en `matches.ts` → `PUT /:id/result`). También en frontend: `RankingFinalPage.tsx` y `CrucesPage.tsx` detectan `esNac` con el mismo OR. Series del Panamericano usan prefijo `nac-serie-*`.
 - ⚠️ **Slot sin resolver en serie** (placeholder "Per. SX-PY" con playerId null pese a estar finalizado): la propagación depende del orden de carga. Reparar con `POST /matches/trigger-reparar-series/:phaseId`.
 - ⚠️ **configTorneo OBLIGATORIO en circuitos Nacional/Panamericano**: cada Circuit debe tener `configTorneo.tipo = 'nacional' | 'panamericano'`. Si está vacío, `getConfigTorneo` asume `'departamental'` y la generación de partidos arma el esquema departamental equivocado (Máster/Primera/Segunda/Clasif con cupos) en vez de series + bracket. Al replicar un Panamericano a categorías nuevas desde el Fixture, el `configTorneo` NO se copia → setearlo por SQL clonando el de Máxima: `'{"tipo":"panamericano","formato":"16","categoriaFederal":"<primera|segunda|tercera>","ruleSetSeries":1,"ruleSetCruces":2,"cantMaster":0,"cantPrimera":0,"cantSegunda":0,"cuposDesdeClasif":0}'`. `categoriaFederal` solo admite primera/segunda/tercera (para Juvenil/Femenino usar "tercera"; no afecta porque las reglas las fijan los ruleSet guardados y la paleta/subtítulo salen del nombre del circuito). RuleSet 1 = Series mejor de 3; RuleSet 2 = Cruces mejor de 5. Al generar, `config.ruleSetSeries ?? getRuleSetNacional(...)` → los valores guardados mandan.
+- ⚠️ **Provisorios "Qualy" en series**: los lugares a definir por un torneo clasificatorio previo se cargan como **jugadores reales** en `Player` (ej. "Qualy Uno", "Qualy Dos"), NO como `slotA`/`slotB` de texto (si fueran slot vacío, el armado de series no funcionaría). Una vez jugado el Qualy, sustituir cada provisorio por el jugador real con `PUT /matches/:id/jugador` desde el ✏️ en `/admin/partidos` (lápiz visible sobre ambos jugadores en partidos `pendiente`/`asignado`). Conserva mesa y horario.
 - ⚠️ **Carga de ranking por Excel + DNI duplicado**: la carga hace `findFirst` por DNI. Si dos jugadores en `Player` comparten DNI (o dos filas del Excel tienen el mismo DNI), ambas filas resuelven al MISMO player → el `upsert` solo actualiza, no crea inscripto nuevo → quedan menos `CircuitPlayer` que filas (reporta "N cargados" pero hay N-1 inscriptos; aparece 1 LIBRE al generar partidos). Diagnóstico: buscar qué `position` falta en `RankingEntry`. Solución: corregir el DNI duplicado en `Player` y recargar.
 
 ---
@@ -268,6 +269,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 ## ENDPOINTS CLAVE
 
 - `PUT /matches/:id/result` — cargar/editar resultado. Si ya era finalizado, recalcula stats desde cero.
+- `PUT /matches/:id/jugador` — sustituye un jugador en un partido SIN tocar mesa, hora, fase ni serie. Body `{ lado: 'A'|'B', playerId }`. Pone `playerAId`/`playerBId` y limpia el `slotA`/`slotB`. Con `playerId` null vuelve a vaciar el lugar (opcional `slotLabel` para reponer el texto). Sirve para reemplazar provisorios "Qualy" por el jugador real una vez clasificado, sin perder la asignación de mesa/horario. Solo admin.
 - `POST /matches/regenerar-bracket/:circuitId` — genera bracket espejo desde RankingEntry
 - `POST /matches/trigger-reparar-series/:phaseId` — repara slots de series nacionales/panamericanas (P5.slotA=perdedor P3, P5.slotB=ganador P4) sin depender del orden de carga
 - `GET /rankings/final?circuitId=X` — para nacionales/panamericanos lee de RankingEntry (incluye `pais` del jugador)
@@ -282,7 +284,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-selector-allmatches`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-30-mesas-por-torneo`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.

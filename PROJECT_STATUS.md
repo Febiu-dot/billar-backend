@@ -18,7 +18,21 @@
 
 ---
 
-## ESTADO AL 29/06/2026
+## ESTADO AL 30/06/2026
+
+### COMPLETADO (30/06) — Vista de mesas por torneo en /publico + sustitución de provisorios "Qualy" sin perder mesa/horario
+
+**1. Vista de MESAS de `/publico` rediseñada y filtrada por torneo** (`PublicPage.tsx`, `PUBLIC_BUILD = pub-public-2026-06-30-mesas-por-torneo`). Antes "Estado de Mesas" cargaba TODAS las mesas de TODAS las sedes (`GET /tables` sin filtro), en botones chicos (grilla 9) que solo mostraban número + 1ª palabra de la sede + puntito de color; el detalle requería abrir el modal. Cambios (solo frontend):
+- **Mesas filtradas por el torneo elegido**, derivadas de los partidos (`allMatches`), NO por venueId fijo: una mesa entra si tiene ≥1 partido (cualquier estado) del `torneoSel`. Para el Panamericano quedan exactamente las 6 de Willy (tableIds 60–65). Robusto ante cambio de sede. Antes de elegir torneo → mensaje "Elegí un torneo…"; torneo sin mesas → "Este torneo no tiene mesas asignadas todavía".
+- **Tarjetas anchas** (1 col mobile / 2 desktop) en vez de botones: barra superior con número + sede + estado (En juego/Libre/Fuera de servicio, color verde/naranja/rojo, punto pulsante si en juego) y, si está en juego, en la propia portada: torneo · categoría (`phase.circuit.tournament.name` · `phase.name`), ambos jugadores (con apócope de país solo en Panamericano vía `nombrePublico`/`matchEsPana`), sets grandes (`result.setsA—setsB`) y puntos del set actual (`pointsA—pointsB`). El modal `mesaModal` se conserva como "ver detalle" al tocar una mesa en juego.
+- Helpers nuevos en el componente: `mesasTorneo` (deriva y ordena por `number`) y `matchEnMesaDe(tableId)`.
+
+**2. Sustitución de jugador provisorio "Qualy" por el real, SIN perder mesa ni horario** (backend `matches.ts` + frontend `MatchesPage.tsx`). Caso: la etapa de series tiene partidos ya generados (con mesa/hora por asignar) donde varios puestos son provisorios porque salen de un torneo Qualy previo. Los "Qualy Uno/Dos/…" están cargados como **jugadores reales** en `Player` (no como `slotA`/`slotB`; si fueran slot vacío no se armaban las series).
+- **Backend — endpoint nuevo `PUT /matches/:id/jugador`** (solo admin). Body `{ lado: 'A'|'B', playerId }`. Setea `playerAId`/`playerBId` y limpia `slotA`/`slotB`; `playerId` null vacía el lugar (opcional `slotLabel` para reponer texto). NO toca `tableId`, `scheduledAt`, `phaseId` ni `serieId`. Reutiliza el `include` estándar + `emitMatchUpdate`. Insertado antes de `PUT /:id/assign`.
+- **Frontend — lápiz ✏️ de sustitución** en `/admin/partidos`. Aparece sobre **ambos** jugadores en partidos `pendiente` o `asignado` (sea provisorio o real). Nombres tipo "Qualy" se muestran en naranja. Modal con `<select>` de todos los jugadores activos (orden apellido) que llama al endpoint; tras éxito refresca. Estados nuevos: `subModal`/`subPlayers`/`subSelected`/`subSaving`; funciones `openSubModal`/`handleSustituir`. El render de jugadores se reescribió con helper inline `renderLado('A'|'B')`.
+- ⚠️ El helper `playerName` muestra `—` cuando no hay jugador real e **ignora** `slotA/slotB`; por eso en partidos con lugar vacío de verdad se ve "—". Con los Qualy como Player real, el nombre se ve normal y el ✏️ permite cambiarlo.
+
+
 
 ### COMPLETADO (29/06 — noche tardía) — configTorneo de categorías Panamericano + título/subtítulo de publicaciones + DNI duplicado
 
@@ -50,7 +64,7 @@ Antes, el público entraba por la **misma pantalla de login** (con un link chico
 
 **Ajuste selector de torneos (mismo día):** el selector superior de `/publico` derivaba `torneosActivos` solo de las 3 listas filtradas (en juego/pendiente/finalizado); un torneo `active` sin partidos en esas listas no aparecía. Cambiado para derivar de **`allMatches`** (todos los partidos sin importar estado), filtrando `tournament.active === true`, sin depender del nombre. `PUBLIC_BUILD = pub-public-2026-06-29-selector-allmatches`. **Sin verificar en vivo aún** (no hay partidos asignados al cierre de la sesión). ⚠️ Si tras asignar partidos el selector sigue vacío, revisar que `GET /matches` (sin filtro) popule la cadena `phase → circuit → tournament` en el `include`.
 
-**PENDIENTE (próximo chat):** rediseño de la **vista de MESAS** en `/publico` ("Estado de Mesas", las 6 mesas venueId=25 / tableIds 60–65). Mostrar mejor qué se juega en cada mesa (jugadores, categoría, etc.). Mostrar propuesta visual ANTES de implementar.
+**~~PENDIENTE~~ RESUELTO (30/06):** rediseño de la **vista de MESAS** en `/publico` — ver bloque "ESTADO AL 30/06/2026" arriba (filtrada por torneo + tarjetas con jugadores/marcador).
 
 ### COMPLETADO (29/06) — Vista Pública: selector de torneo + filtrado de las 3 columnas + apócope Panamericano
 
@@ -241,5 +255,9 @@ Ver prompt preparado en sesión 27/06.
 - Archivos >2000 lineas (AdminPublicacionesPage.tsx ~2090): proveer completo para descarga, NO editar por GitHub web
 - **Panamericano = nacional deportivamente**: en backend, las ramas que filtran por tipo deben aceptar `'nacional' || 'panamericano'`. Series usan prefijo `nac-serie-*`.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
+- **Provisorios "Qualy" = jugadores reales en `Player`** (no slots de texto). Sustituir por el real con `PUT /matches/:id/jugador` desde el ✏️ en `/admin/partidos` (conserva mesa y horario).
+- **Vista de mesas de `/publico` filtra por torneo elegido** (deriva de `allMatches`, no de `GET /tables` ni de venueId fijo). Una mesa sin partidos del torneo no aparece.
+
+*Actualizado 30/06/2026 — Vista de mesas de /publico filtrada por torneo (deriva de allMatches, no de GET /tables ni venueId fijo) + rediseño a tarjetas con jugadores/categoría/marcador en portada; modal conservado como detalle. PUBLIC_BUILD pub-public-2026-06-30-mesas-por-torneo. Endpoint nuevo PUT /matches/:id/jugador para sustituir provisorios "Qualy" (cargados como Player real) por el jugador real sin perder mesa/horario; lápiz ✏️ en /admin/partidos sobre jugadores de partidos pendiente/asignado.*
 
 *Actualizado 29/06/2026 (noche tardía) — configTorneo faltante en categorías nuevas del Panamericano (Segunda/Tercera/Juvenil/Femenino quedaban en esquema departamental): setear por SQL clonando el de Máxima (tipo panamericano, formato 16, ruleSetSeries 1, ruleSetCruces 2). Publicaciones Panamericano: título fijo "TORNEO PANAMERICANO" + subtítulo reconstruido "<TIPO> — CATEGORÍA <X>", independientes del nombre del torneo. BUILD_TAG pub-2026-06-29-subtitulo-limpio. Regla nueva: DNI duplicado en carga de ranking pierde 1 inscripto. (Misma noche, antes: entrada del público + PWA → start_url/scope /publico, sw.js v3, raíz / sin login a /publico, link removido del LoginPage; selector de torneos desde allMatches. PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente: rediseño vista de mesas.)*
