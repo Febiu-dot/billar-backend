@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 30/06/2026 — v4.6
+## Última actualización: 30/06/2026 — v4.7
 
 ---
 
@@ -285,6 +285,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 ## NOTAS TÉCNICAS
 
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
+1b. **Backend TypeScript (tsconfig strict: true)**: el repo está en **0 errores de TS** desde 30/06/2026. Antes había 77 TS7006. Para evitar reintroducirlos: siempre anotar parámetros de callbacks con tipo explícito (`.map((p: any) => ...)`, `.find((m: any) => ...)`, etc.) en vez de dejar el parámetro sin tipo.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
 3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-30-mesas-por-torneo`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
