@@ -782,6 +782,36 @@ router.put('/:id', authenticate, requireRole('admin', 'juez_sede'), async (req: 
   res.json(match);
 });
 
+// Sustituye un jugador provisorio (slot tipo "Qualy 1") por un jugador real,
+// SIN tocar mesa, hora, fase ni serie del partido. lado: 'A' | 'B'.
+// playerId=null deja el lugar vacio y vuelve a poner el slot si se envia slotLabel.
+router.put('/:id/jugador', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const { lado, playerId, slotLabel } = req.body;
+  const matchId = Number(req.params.id);
+  if (lado !== 'A' && lado !== 'B') return res.status(400).json({ error: 'lado debe ser A o B' });
+
+  let data: any;
+  if (playerId) {
+    const jug = await prisma.player.findUnique({ where: { id: Number(playerId) } });
+    if (!jug) return res.status(404).json({ error: 'jugador no encontrado' });
+    data = lado === 'A'
+      ? { playerAId: Number(playerId), slotA: null }
+      : { playerBId: Number(playerId), slotB: null };
+  } else {
+    // limpiar: vuelve a placeholder
+    data = lado === 'A'
+      ? { playerAId: null, slotA: (slotLabel ?? null) }
+      : { playerBId: null, slotB: (slotLabel ?? null) };
+  }
+
+  const match = await prisma.match.update({
+    where: { id: matchId }, data,
+    include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
+  });
+  emitMatchUpdate(io, match);
+  res.json(match);
+});
+
 router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { tableId } = req.body; const matchId = Number(req.params.id);
   await prisma.table.update({ where: { id: tableId }, data: { status: 'ocupada' } });
