@@ -20,6 +20,22 @@
 
 ## ESTADO AL 29/06/2026
 
+### COMPLETADO (29/06 — noche) — Flujo de entrada del público + instalación PWA directa a `/publico` (sin login)
+
+Antes, el público entraba por la **misma pantalla de login** (con un link chico "Ver torneo sin login"). Confuso. Resuelto para que la app instalada y la raíz abran DIRECTO en la Vista Pública sin pasar nunca por login. **Solo frontend, 4 archivos + bump:**
+
+1. **`public/manifest.json`**: `start_url` y `scope` cambiados de `/` a **`/publico`** → la PWA instalada arranca en la Vista Pública. Agregado `"id": "/publico"` (evita que iOS/Android mezclen instalaciones viejas). Se quitó el shortcut "Panel Juez" (apuntaba fuera del nuevo scope; algunos navegadores lo descartan). Shortcut "Ver Torneo" → `/publico` queda.
+2. **`public/sw.js`**: `CACHE_NAME` bumpeado `febiu-billar-v2` → **`v3`** (invalida SW viejo; el SW ya dio problemas de caché en este proyecto). `STATIC_ASSETS` precachea `/publico` en vez de `/`. Lógica navigate (network-first, fallback `index.html`) y assets (cache-first) sin cambios.
+3. **`src/App.tsx`**: la raíz `/` ya NO usa `ProtectedRoute` (que mandaba a `/login`). Ahora redirige por rol: admin→`/admin`, juez→`/juez`, **sin sesión→`/publico`**. Las rutas admin/juez siguen protegidas igual; `ProtectedRoute` sigue en uso. Catch-all `*` va a `/` (que ahora resuelve a público).
+4. **`src/pages/LoginPage.tsx`**: removido el bloque del link "Ver torneo sin login →" (el público ya no pasa por login).
+- `PublicPage.tsx` → `PUBLIC_BUILD = pub-public-2026-06-29-pwa-publico` (luego bumpeado de nuevo, ver punto siguiente).
+
+**Link para el público / QR:** `https://billar-frontend-blue.vercel.app/publico` → abre directo, e instalado arranca en `/publico`. Para reinstalar limpio: desinstalar PWA vieja, cerrar navegador, reabrir `/publico`, instalar (Android: menú → Agregar a pantalla principal; iPhone: Compartir → Agregar a inicio).
+
+**Ajuste selector de torneos (mismo día):** el selector superior de `/publico` derivaba `torneosActivos` solo de las 3 listas filtradas (en juego/pendiente/finalizado); un torneo `active` sin partidos en esas listas no aparecía. Cambiado para derivar de **`allMatches`** (todos los partidos sin importar estado), filtrando `tournament.active === true`, sin depender del nombre. `PUBLIC_BUILD = pub-public-2026-06-29-selector-allmatches`. **Sin verificar en vivo aún** (no hay partidos asignados al cierre de la sesión). ⚠️ Si tras asignar partidos el selector sigue vacío, revisar que `GET /matches` (sin filtro) popule la cadena `phase → circuit → tournament` en el `include`.
+
+**PENDIENTE (próximo chat):** rediseño de la **vista de MESAS** en `/publico` ("Estado de Mesas", las 6 mesas venueId=25 / tableIds 60–65). Mostrar mejor qué se juega en cada mesa (jugadores, categoría, etc.). Mostrar propuesta visual ANTES de implementar.
+
 ### COMPLETADO (29/06) — Vista Pública: selector de torneo + filtrado de las 3 columnas + apócope Panamericano
 
 Rediseño de `/publico` (`PublicPage.tsx`) para torneos simultáneos. Antes, "Últimos Resultados" mostraba lo último de TODA la base (aparecían partidos del Nacional de Primera C2 ya jugados, fase 76, aunque el simulacro Panamericano ya estaba limpio). Causa: la detección de "circuito activo" dependía de partidos en vivo; sin partidos en juego, `circuitoActivo` quedaba null y mostraba todos los finalizados.
@@ -210,4 +226,4 @@ Ver prompt preparado en sesión 27/06.
 - **Panamericano = nacional deportivamente**: en backend, las ramas que filtran por tipo deben aceptar `'nacional' || 'panamericano'`. Series usan prefijo `nac-serie-*`.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 
-*Actualizado 29/06/2026 — Vista Pública `/publico` con selector de torneo: las 3 columnas (en curso/próximos/resultados) se filtran por el torneo elegido (solo activos, sin "Todos"), columnas vacías hasta elegir, apócope de país solo en Panamericano. Sección "Series y Rankings por Torneo" (ex "Torneo Nacional") también filtra solo activos. Control vía flag Tournament.active. PUBLIC_BUILD pub-public-2026-06-29-activos. Pendiente próximo chat: rediseño vista de mesas + flujo de entrada/instalación PWA del público sin login. (Sesión previa 28/06 noche 2: subtítulo dinámico de publicaciones, Segunda bordeaux #6B2737, Fixture abre en activo, BUILD_TAG pub-2026-06-28-segunda.)*
+*Actualizado 29/06/2026 (noche) — Flujo de entrada del público + PWA: manifest `start_url`/`scope` → `/publico` (+ `id:/publico`), `sw.js` CACHE_NAME → v3 (precache `/publico`), raíz `/` sin login redirige a `/publico` (App.tsx, sin ProtectedRoute), link "Ver torneo sin login" removido del LoginPage. Selector de torneos de `/publico` ahora deriva de `allMatches` (cualquier torneo active, sin depender del nombre) — sin verificar en vivo (no había partidos asignados). PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente próximo chat: rediseño vista de mesas. (Sesión previa 29/06: selector de torneo con 3 columnas filtradas, apócope Panamericano, control vía Tournament.active. 28/06 noche 2: subtítulo dinámico, Segunda bordeaux #6B2737, Fixture abre en activo.)*

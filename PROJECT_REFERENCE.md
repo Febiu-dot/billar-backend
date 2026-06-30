@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 29/06/2026
+## Última actualización: 29/06/2026 (noche) — v4.3
 
 ---
 
@@ -237,12 +237,19 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - Toda categoría del Panamericano (incl. Tercera) usa `clasificatorio` (series) + `master` (bracket). El nombre de la fase es libre (campo NOMBRE); "master" es solo el tipo interno, no se muestra al público. Renombrar el enum se descartó (atraviesa back+front + migración).
 
 ### Vista Pública `/publico` (PublicPage.tsx) — selector de torneo
-- **Selector de torneo** arriba: lista solo torneos `active === true` que tengan ≥1 partido cargado. Sin opción "Todos".
+- **Selector de torneo** arriba: lista torneos `active === true` con ≥1 partido cargado. Deriva de `allMatches` (todos los partidos, sin importar estado), filtrando `tournament.active === true`, **sin depender del nombre**. Sin opción "Todos". (Si queda vacío tras asignar partidos → revisar que `GET /matches` popule `phase.circuit.tournament` en el include.)
 - Las **3 columnas** (Partidos en Curso / Próximos / Últimos Resultados) se filtran por `tournament.id` elegido. Vacías hasta elegir.
 - **Apócope de país** al lado del nombre solo si el torneo elegido es Panamericano (`/panamericano/i`). Helpers `matchEsPana`, `nombrePublico`, dict `PAIS_APOCOPE`.
 - Sección **"Series y Rankings por Torneo"** (ex "Torneo Nacional"): su dropdown filtra solo torneos `active === true` (`SeccionNacional`, suma `t.active === true` al regex).
 - Control de qué ve el público = flag `Tournament.active` (aplica a ambos selectores + Fixture). Torneos viejos → marcar inactivos.
 - Backend no requirió cambios: `GET /matches?tournamentId=` y `phase.circuit.tournament` (con `active`) ya existían; `GET /publicaciones/circuitos` ya devuelve `active`.
+
+### Entrada del público + PWA (instalación directa a `/publico`, sin login)
+- **`public/manifest.json`**: `start_url` y `scope` = `/publico` (+ `"id": "/publico"`). La PWA instalada abre directo en la Vista Pública, nunca en login. Shortcut "Ver Torneo" → `/publico`; el de "Panel Juez" se quitó (queda fuera del scope).
+- **`public/sw.js`**: `CACHE_NAME = febiu-billar-v3` (bumpear en cada cambio que deba invalidar caché). Precachea `/publico`. Registro inline en `index.html`, scope `/`, header `Service-Worker-Allowed:/` en `vercel.json`.
+- **`src/App.tsx`**: raíz `/` redirige por rol (admin→`/admin`, juez→`/juez`, sin sesión→`/publico`); ya NO pasa por `ProtectedRoute`. Rutas admin/juez siguen protegidas. `/login` solo para admin/juez.
+- **Link/QR público:** `billar-frontend-blue.vercel.app/publico`. Reinstalar limpio: desinstalar PWA vieja → cerrar navegador → reabrir `/publico` → instalar.
+- **PENDIENTE:** rediseño de la vista de MESAS ("Estado de Mesas", 6 mesas venueId=25 / tableIds 60–65). Propuesta visual antes de implementar.
 
 ---
 
@@ -263,7 +270,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-28-segunda`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-activos`).
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-28-segunda`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-selector-allmatches`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -290,5 +297,5 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 ---
 
-*Sistema FEBIU v4.2 — Federación de Billar del Uruguay*
-*Actualizado 29/06/2026 — Vista Pública `/publico` rediseñada con selector de torneo: 3 columnas filtradas por torneo elegido (solo activos, sin "Todos"), apócope de país solo en Panamericano, sección "Series y Rankings por Torneo" (ex "Torneo Nacional") filtra solo activos. Control vía Tournament.active. Sesión previa (28/06 noche 2): subtítulo dinámico de publicaciones (`catSubtitulo`), paleta Segunda → bordeaux `#6B2737`, Fixture abre en torneo activo, tipos de fase aclarados (master = bracket de toda categoría). BUILD_TAG pub-2026-06-28-segunda / PUBLIC_BUILD pub-public-2026-06-29-activos. Pendiente: vista de mesas + flujo entrada/PWA del público; Femenino borgoña sin implementar.*
+*Sistema FEBIU v4.3 — Federación de Billar del Uruguay*
+*Actualizado 29/06/2026 (noche) — Entrada del público + PWA: manifest `start_url`/`scope` → `/publico` (+ `id:/publico`), `sw.js` CACHE_NAME → `febiu-billar-v3` (precache `/publico`), raíz `/` sin login va a `/publico` (App.tsx sin ProtectedRoute), link "Ver torneo sin login" removido del LoginPage. La PWA instalada y la raíz abren directo en la Vista Pública. Selector de torneos de `/publico` ahora deriva de `allMatches` (cualquier torneo active, sin depender del nombre) — sin verificar en vivo (no había partidos asignados). PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente próximo chat: rediseño de la vista de mesas. (Sesión previa 29/06: selector de torneo con 3 columnas filtradas + apócope Panamericano. 28/06 noche 2: subtítulo dinámico `catSubtitulo`, Segunda bordeaux `#6B2737`, Fixture abre en activo. Femenino borgoña sin implementar.)*
