@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 29/06/2026 (noche) — v4.3
+## Última actualización: 29/06/2026 (noche tardía) — v4.5
 
 ---
 
@@ -39,6 +39,8 @@ Necesito SIEMPRE:
 - ⚠️ `acumulado.ts` es un directorio → siempre usar `rankingAcumulado.ts`
 - ⚠️ **Panamericano = nacional deportivamente**: toda rama backend que filtre por tipo debe aceptar `tipo === 'nacional' || tipo === 'panamericano'` (aplica en `rankings.ts` → `recalcular-stats` y `GET /final`, y en `matches.ts` → `PUT /:id/result`). También en frontend: `RankingFinalPage.tsx` y `CrucesPage.tsx` detectan `esNac` con el mismo OR. Series del Panamericano usan prefijo `nac-serie-*`.
 - ⚠️ **Slot sin resolver en serie** (placeholder "Per. SX-PY" con playerId null pese a estar finalizado): la propagación depende del orden de carga. Reparar con `POST /matches/trigger-reparar-series/:phaseId`.
+- ⚠️ **configTorneo OBLIGATORIO en circuitos Nacional/Panamericano**: cada Circuit debe tener `configTorneo.tipo = 'nacional' | 'panamericano'`. Si está vacío, `getConfigTorneo` asume `'departamental'` y la generación de partidos arma el esquema departamental equivocado (Máster/Primera/Segunda/Clasif con cupos) en vez de series + bracket. Al replicar un Panamericano a categorías nuevas desde el Fixture, el `configTorneo` NO se copia → setearlo por SQL clonando el de Máxima: `'{"tipo":"panamericano","formato":"16","categoriaFederal":"<primera|segunda|tercera>","ruleSetSeries":1,"ruleSetCruces":2,"cantMaster":0,"cantPrimera":0,"cantSegunda":0,"cuposDesdeClasif":0}'`. `categoriaFederal` solo admite primera/segunda/tercera (para Juvenil/Femenino usar "tercera"; no afecta porque las reglas las fijan los ruleSet guardados y la paleta/subtítulo salen del nombre del circuito). RuleSet 1 = Series mejor de 3; RuleSet 2 = Cruces mejor de 5. Al generar, `config.ruleSetSeries ?? getRuleSetNacional(...)` → los valores guardados mandan.
+- ⚠️ **Carga de ranking por Excel + DNI duplicado**: la carga hace `findFirst` por DNI. Si dos jugadores en `Player` comparten DNI (o dos filas del Excel tienen el mismo DNI), ambas filas resuelven al MISMO player → el `upsert` solo actualiza, no crea inscripto nuevo → quedan menos `CircuitPlayer` que filas (reporta "N cargados" pero hay N-1 inscriptos; aparece 1 LIBRE al generar partidos). Diagnóstico: buscar qué `position` falta en `RankingEntry`. Solución: corregir el DNI duplicado en `Player` y recargar.
 
 ---
 
@@ -251,6 +253,16 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **Link/QR público:** `billar-frontend-blue.vercel.app/publico`. Reinstalar limpio: desinstalar PWA vieja → cerrar navegador → reabrir `/publico` → instalar.
 - **PENDIENTE:** rediseño de la vista de MESAS ("Estado de Mesas", 6 mesas venueId=25 / tableIds 60–65). Propuesta visual antes de implementar.
 
+### Publicaciones Panamericano — título/subtítulo independientes del nombre del torneo
+- **Título** grande fijo en Panamericano: `'TORNEO PANAMERICANO'` (`data.esPanamericano ? 'TORNEO PANAMERICANO' : data.torneo`, en `PubHeader` moderno+departamental y en bracket `bk-h1`). NO usa el nombre real del torneo.
+- **Subtítulo**: `faseMostrar` toma el prefijo antes del "—" de `data.fase` ("FIXTURE INICIAL — <torneo>") y le pega `catSubtitulo` → "FIXTURE INICIAL — CATEGORÍA MÁXIMA" sin residuos.
+- Categoría se detecta de `norm(data.torneo)+norm(data.circuito)` (prioridad master/maxima, luego femenin/juvenil/segunda/tercera/primera). **El nombre del CIRCUITO debe llevar la palabra de categoría.**
+- Implicancia: el admin nombra los torneos como quiera para distinguirlos en el Fixture sin afectar la publicación.
+
+### configTorneo de circuitos — esquema de generación
+- `getConfigTorneo` default `tipo:'departamental'`. `esNacional(config)` = `tipo === 'nacional' || 'panamericano'`. Solo si es nacional/pana se arma series clasificatorias + bracket; si no, esquema departamental.
+- Al replicar un Panamericano a categorías nuevas, el `configTorneo` queda VACÍO → hay que setearlo por SQL (ver REGLAS CRÍTICAS). Sin esto la "Vista previa" muestra el esquema departamental y los partidos van a fase `master` en vez de `clasificatorio`.
+
 ---
 
 ## ENDPOINTS CLAVE
@@ -270,7 +282,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-28-segunda`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-selector-allmatches`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-29-selector-allmatches`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -297,5 +309,5 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 ---
 
-*Sistema FEBIU v4.3 — Federación de Billar del Uruguay*
-*Actualizado 29/06/2026 (noche) — Entrada del público + PWA: manifest `start_url`/`scope` → `/publico` (+ `id:/publico`), `sw.js` CACHE_NAME → `febiu-billar-v3` (precache `/publico`), raíz `/` sin login va a `/publico` (App.tsx sin ProtectedRoute), link "Ver torneo sin login" removido del LoginPage. La PWA instalada y la raíz abren directo en la Vista Pública. Selector de torneos de `/publico` ahora deriva de `allMatches` (cualquier torneo active, sin depender del nombre) — sin verificar en vivo (no había partidos asignados). PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente próximo chat: rediseño de la vista de mesas. (Sesión previa 29/06: selector de torneo con 3 columnas filtradas + apócope Panamericano. 28/06 noche 2: subtítulo dinámico `catSubtitulo`, Segunda bordeaux `#6B2737`, Fixture abre en activo. Femenino borgoña sin implementar.)*
+*Sistema FEBIU v4.5 — Federación de Billar del Uruguay*
+*Actualizado 29/06/2026 (noche tardía) — configTorneo OBLIGATORIO en circuitos Nacional/Panamericano: al replicar el Panamericano a categorías nuevas queda vacío → se arma esquema departamental equivocado; setear por SQL clonando el de Máxima (tipo panamericano, formato 16, ruleSetSeries 1, ruleSetCruces 2). Publicaciones Panamericano: título fijo "TORNEO PANAMERICANO" + subtítulo reconstruido, independientes del nombre del torneo (categoría del nombre del circuito). BUILD_TAG pub-2026-06-29-subtitulo-limpio. Regla nueva: DNI duplicado en carga de ranking pierde 1 inscripto. Misma noche, antes: entrada del público + PWA (manifest start_url/scope /publico, sw.js v3, raíz / sin login a /publico, link removido del LoginPage), selector de torneos desde allMatches. PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente: rediseño de la vista de mesas.*
