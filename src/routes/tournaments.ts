@@ -7,7 +7,7 @@ const router = Router();
 // ── Helper: cascade delete de un circuito ────────────────────────────
 async function deleteCircuitCascade(circuitId: number) {
   const phases = await prisma.phase.findMany({ where: { circuitId } });
-  const phaseIds = phases.map(p => p.id);
+  const phaseIds = phases.map((p: any) => p.id);
 
   if (phaseIds.length > 0) {
     await prisma.setResult.deleteMany({ where: { match: { phaseId: { in: phaseIds } } } });
