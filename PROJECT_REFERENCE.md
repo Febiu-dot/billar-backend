@@ -32,6 +32,7 @@ Necesito SIEMPRE:
 - ⚠️ Sin migraciones a menos que cambie el schema.prisma
 - ⚠️ **Cambio de schema con columna nueva**: correr el `ALTER TABLE` en Railway ANTES de desplegar el código que la usa, o el servicio crashea al arrancar (seed).
 - ⚠️ **GitHub**: antes de commitear, verificar con Ctrl+F que el cambio esté realmente en el archivo. La traducción automática del navegador corrompe el pegado.
+- ⚠️ **Limpiar SOLO el ranking de un circuito sin borrar partidos/inscriptos**: `DELETE FROM "RankingEntry" WHERE "circuitId"=X` (Clasificados) y `DELETE FROM "RankingAcumulado" WHERE "tournamentId"=Y` (Ranking Final), por SQL, una sentencia por vez. El endpoint `DELETE /rankings/limpiar/:circuitId` NO sirve para esto porque ADEMÁS borra partidos, resultados e inscriptos (solo usarlo para descartar un circuito entero). El acumulado no tiene endpoint de borrado; se regenera con `POST /acumulado/calcular/:tournamentId`.
 - ⚠️ **NUNCA** usar `POST /circuits/:id/reset` — borra todos los partidos sin recuperación
 - ⚠️ Usar `DELETE /rankings/limpiar/:circuitId` para limpiar rankings
 - ⚠️ Service Worker puede bloquear el login → Application → Borrar datos de sitios → Ctrl+Shift+R
