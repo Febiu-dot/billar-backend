@@ -253,13 +253,23 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         puntos: r.points,
       }));
       const tipoResp = tipoFase === 'inicial-nacional' ? 'inicial-nacional' : 'series-nacional';
+
+      // Formato real desde el RuleSet de las series (config.ruleSetSeries),
+      // en vez de asumir 5 sets para todo Panamericano. Fallback al texto previo.
+      let formatoTxt = esPanamericano ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
+      const ruleSetSeriesId = configTorneoCircuito.ruleSetSeries;
+      if (ruleSetSeriesId) {
+        const rs = await prisma.ruleSet.findUnique({ where: { id: Number(ruleSetSeriesId) } });
+        if (rs) formatoTxt = `${rs.bestOf} sets de ${rs.pointsPerSet} tantos`;
+      }
+
       return res.json({
         ...base,
         tipo: tipoResp,
         categoriaFederal: categoriaFederal(circuit.tournament.name),
         esPanamericano,
         fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`,
-        formato: esPanamericano ? '5 sets de 60 tantos' : '3 sets de 60 tantos',
+        formato: formatoTxt,
         fechaPrincipal: fechaLarga(pf),
         series, top16
       });
