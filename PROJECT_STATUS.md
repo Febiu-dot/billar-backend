@@ -18,7 +18,15 @@
 
 ---
 
-## ESTADO AL 30/06/2026
+## ESTADO AL 01/07/2026
+
+### COMPLETADO (01/07) — Selectores de torneo del admin (Fixture y Partidos) filtran solo torneos activos
+
+Los modales/selectores de torneo en `/admin/fixture` (`FixturePage.tsx`) y `/admin/partidos` (`MatchesPage.tsx`) cargaban **todos** los torneos con `GET /tournaments` sin filtrar, así que los Nacionales finalizados seguían apareciendo y estorbaban al trabajar en el Panamericano. Cambio (solo frontend):
+- Ambos ahora filtran `r.data.filter(t => t.active)` → el selector muestra solo torneos con `active = true`. En `FixturePage` la auto-selección inicial toma el primer activo (`activos[0]`).
+- **No se borra nada**: los Nacionales quedan en la base con su historial; solo se ocultan de los selectores mientras estén en `active = false`. Para volver a verlos/editarlos: `UPDATE "Tournament" SET active = true WHERE id = ...`, trabajar, y volver a desactivar.
+- Marcadores de build agregados al tope de cada archivo: `// BUILD_TAG = fixture-2026-07-01-solo-activos` y `// BUILD_TAG = matches-2026-07-01-solo-activos`.
+- Mismo mecanismo que ya se usa en la Vista Pública y para ocultar Juvenil (torneo 24) / Femenino (torneo 25). Requisito: los torneos a ocultar deben estar en `active = false`.
 
 ### COMPLETADO (30/06) — Vista de mesas por torneo en /publico + sustitución de provisorios "Qualy" sin perder mesa/horario
 
@@ -269,6 +277,8 @@ Ver prompt preparado en sesión 27/06.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 - **Provisorios "Qualy" = jugadores reales en `Player`** (no slots de texto). Sustituir por el real con `PUT /matches/:id/jugador` desde el ✏️ en `/admin/partidos` (conserva mesa y horario).
 - **Vista de mesas de `/publico` filtra por torneo elegido** (deriva de `allMatches`, no de `GET /tables` ni de venueId fijo). Una mesa sin partidos del torneo no aparece.
+
+*Actualizado 01/07/2026 — Selectores de torneo del admin (FixturePage y MatchesPage) ahora filtran solo torneos con active=true, para no ver los Nacionales finalizados mientras se trabaja en el Panamericano. No se borra nada: los inactivos quedan en la base con su historial y reaparecen si se reactivan (UPDATE Tournament SET active=true). BUILD_TAG fixture-2026-07-01-solo-activos / matches-2026-07-01-solo-activos. Mismo mecanismo active ya usado en Vista Pública y para ocultar Juvenil (torneo 24) / Femenino (torneo 25).*
 
 *Actualizado 30/06/2026 — Vista de mesas de /publico filtrada por torneo (deriva de allMatches, no de GET /tables ni venueId fijo) + rediseño a tarjetas con jugadores/categoría/marcador en portada; modal conservado como detalle. PUBLIC_BUILD pub-public-2026-06-30-mesas-por-torneo. Endpoint nuevo PUT /matches/:id/jugador para sustituir provisorios "Qualy" (cargados como Player real) por el jugador real sin perder mesa/horario; lápiz ✏️ en /admin/partidos sobre jugadores de partidos pendiente/asignado. Limpieza de residuos del simulacro Pana Máxima por SQL puntual (DELETE RankingEntry circuit 31 = 20 filas, DELETE RankingAcumulado torneo 21 = 16 filas) SIN tocar partidos/inscriptos reales; regla nueva para limpiar ranking sin borrar fixture. Formato del chip de tabla inicial/series ahora dinámico desde el RuleSet real (config.ruleSetSeries) en publicaciones.ts, ya no hardcodeado a 5 sets para Panamericano (Segunda/Tercera salían mal; eran 3 sets). Endpoint nuevo PUT /matches/:id/desasignar + botón "Quitar mesa" en /admin/partidos para anular una asignación de mesa hecha por error (libera la mesa si no quedó otro partido ocupándola; bloquea si en juego/finalizado).*
 

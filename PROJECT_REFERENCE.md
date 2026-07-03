@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 30/06/2026 — v4.7
+## Última actualización: 01/07/2026 — v4.8
 
 ---
 
@@ -245,7 +245,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - Las **3 columnas** (Partidos en Curso / Próximos / Últimos Resultados) se filtran por `tournament.id` elegido. Vacías hasta elegir.
 - **Apócope de país** al lado del nombre solo si el torneo elegido es Panamericano (`/panamericano/i`). Helpers `matchEsPana`, `nombrePublico`, dict `PAIS_APOCOPE`.
 - Sección **"Series y Rankings por Torneo"** (ex "Torneo Nacional"): su dropdown filtra solo torneos `active === true` (`SeccionNacional`, suma `t.active === true` al regex).
-- Control de qué ve el público = flag `Tournament.active` (aplica a ambos selectores + Fixture). Torneos viejos → marcar inactivos.
+- Control de qué ve el público = flag `Tournament.active`. Los selectores de torneo filtran por `active === true` en: Vista Pública (`/publico`), sección Series/Rankings, Fixture público, y **también los selectores del admin** `FixturePage` (`/admin/fixture`) y `MatchesPage` (`/admin/partidos`) desde 01/07 — para no ver torneos finalizados mientras se trabaja. Torneos viejos → marcar `active = false` (NO se borran; reaparecen con `UPDATE Tournament SET active = true`). Actualmente inactivos a propósito: Nacionales finalizados, Juvenil (torneo 24), Femenino (torneo 25).
 - Backend no requirió cambios: `GET /matches?tournamentId=` y `phase.circuit.tournament` (con `active`) ya existían; `GET /publicaciones/circuitos` ya devuelve `active`.
 
 ### Entrada del público + PWA (instalación directa a `/publico`, sin login)
@@ -287,7 +287,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 1b. **Backend TypeScript (tsconfig strict: true)**: el repo está en **0 errores de TS** desde 30/06/2026. Antes había 77 TS7006. Para evitar reintroducirlos: siempre anotar parámetros de callbacks con tipo explícito (`.map((p: any) => ...)`, `.find((m: any) => ...)`, etc.) en vez de dejar el parámetro sin tipo.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa un comentario `// PUBLIC_BUILD = ...` al tope con el mismo fin (actual: `pub-public-2026-06-30-mesas-por-torneo`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-06-29-subtitulo-limpio`. `PublicPage.tsx` usa `// PUBLIC_BUILD = ...` (actual `pub-public-2026-06-30-mesas-por-torneo`); `FixturePage.tsx` y `MatchesPage.tsx` usan `// BUILD_TAG = ...` (actuales `fixture-2026-07-01-solo-activos` y `matches-2026-07-01-solo-activos`). El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -315,5 +315,6 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 ---
 
-*Sistema FEBIU v4.5 — Federación de Billar del Uruguay*
+*Sistema FEBIU v4.8 — Federación de Billar del Uruguay*
+*Actualizado 01/07/2026 — Selectores de torneo del admin (FixturePage /admin/fixture y MatchesPage /admin/partidos) ahora filtran solo torneos active=true, para ocultar los Nacionales finalizados mientras se trabaja en el Panamericano. No se borra nada (reaparecen con UPDATE Tournament active=true). BUILD_TAG fixture-2026-07-01-solo-activos / matches-2026-07-01-solo-activos.*
 *Actualizado 29/06/2026 (noche tardía) — configTorneo OBLIGATORIO en circuitos Nacional/Panamericano: al replicar el Panamericano a categorías nuevas queda vacío → se arma esquema departamental equivocado; setear por SQL clonando el de Máxima (tipo panamericano, formato 16, ruleSetSeries 1, ruleSetCruces 2). Publicaciones Panamericano: título fijo "TORNEO PANAMERICANO" + subtítulo reconstruido, independientes del nombre del torneo (categoría del nombre del circuito). BUILD_TAG pub-2026-06-29-subtitulo-limpio. Regla nueva: DNI duplicado en carga de ranking pierde 1 inscripto. Misma noche, antes: entrada del público + PWA (manifest start_url/scope /publico, sw.js v3, raíz / sin login a /publico, link removido del LoginPage), selector de torneos desde allMatches. PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente: rediseño de la vista de mesas.*
