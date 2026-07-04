@@ -230,7 +230,108 @@ async function rellenarBracketNacionalOctavos(clasificatorioPhaseId: number) {
       await prisma.match.update({ where: { id: bracketMatch.id }, data: { playerAId: seedAlto.playerId, playerBId: seedBajo.playerId, slotA: null, slotB: null, status: 'pendiente' } });
       await checkAndEmitMatch(bracketMatch.id);
     }
+    // Sincronizar RankingEntry con jugadores reales + recalcular stats y posiciones
+    const circuitIdOct = clasificatorioPhase?.circuit?.id;
+    if (circuitIdOct) await sincronizarYRecalcularRanking(circuitIdOct);
   } catch (error) { console.error('Error rellenando bracket Nacional octavos:', error); }
+}
+
+// ── Sincroniza RankingEntry con jugadores reales de las series nac-serie-* ──
+// Se llama automáticamente al armarse el bracket. Reemplaza provisorios Qualy
+// por los jugadores reales y recalcula stats + posiciones. Sin intervención manual.
+async function sincronizarYRecalcularRanking(circuitId: number) {
+  try {
+    // 1. Jugadores reales que jugaron series
+    const seriesMatches = await prisma.match.findMany({
+      where: { phase: { circuitId }, serieId: { startsWith: 'nac-serie-' }, status: { in: ['finalizado', 'wo', 'pendiente', 'en_juego'] } },
+      select: { playerAId: true, playerBId: true }
+    });
+    const jugadoresRealesSet: Set<number> = new Set();
+    for (const m of seriesMatches) {
+      if (m.playerAId) jugadoresRealesSet.add(m.playerAId);
+      if (m.playerBId) jugadoresRealesSet.add(m.playerBId);
+    }
+    const jugadoresReales = Array.from(jugadoresRealesSet);
+
+    // 2. Filas actuales del RankingEntry
+    const entradas = await prisma.rankingEntry.findMany({ where: { circuitId } });
+    const playerIdsEnRanking = entradas.map((e: any) => e.playerId);
+
+    // 3. Provisorios = en RankingEntry pero no jugaron ninguna serie
+    const provisorios = entradas.filter((e: any) => !jugadoresRealesSet.has(e.playerId));
+    // 4. Reales sin fila = jugaron series pero no tienen RankingEntry
+    const sinFila = jugadoresReales.filter((id: number) => !playerIdsEnRanking.includes(id));
+
+    // 5. Reemplazar par a par
+    for (let i = 0; i < Math.min(provisorios.length, sinFila.length); i++) {
+      await prisma.rankingEntry.update({ where: { id: provisorios[i].id }, data: { playerId: sinFila[i] } });
+    }
+    // 6. Borrar sobrantes
+    for (const s of provisorios.slice(sinFila.length)) {
+      await prisma.rankingEntry.delete({ where: { id: s.id } });
+    }
+
+    // 7. Recalcular puntos de series (8/6/4/2)
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+    const ruleSetSeries = (circuit?.configTorneo as any)?.ruleSetSeries ?? 1;
+    const ruleSet = await prisma.ruleSet.findUnique({ where: { id: ruleSetSeries } });
+    const setsToWin = ruleSet?.setsToWin ?? 2;
+
+    await prisma.rankingEntry.updateMany({ where: { circuitId }, data: { points: 0 } });
+
+    const phases = await prisma.phase.findMany({ where: { circuitId } });
+    for (const phase of phases) {
+      const serieIds = await prisma.match.groupBy({ by: ['serieId'], where: { phaseId: phase.id, serieId: { startsWith: 'nac-serie-' } } });
+      for (const { serieId } of serieIds) {
+        if (!serieId) continue;
+        const partidos = await prisma.match.findMany({ where: { phaseId: phase.id, serieId }, include: { result: true }, orderBy: { round: 'asc' } });
+        const roundBase = Math.min(...partidos.map((p: any) => p.round));
+        const p3 = partidos.find((p: any) => p.round === roundBase + 2);
+        const p4 = partidos.find((p: any) => p.round === roundBase + 3);
+        const p5 = partidos.find((p: any) => p.round === roundBase + 4);
+        if (!p5?.result) continue;
+        const primero = p3?.result?.winnerId;
+        const segundo = p5?.result?.winnerId;
+        const tercero = p5 ? (p5.playerAId === p5.result?.winnerId ? p5.playerBId : p5.playerAId) : null;
+        const cuarto  = p4?.result ? (p4.playerAId === p4.result?.winnerId ? p4.playerBId : p4.playerAId) : null;
+        if (primero) await prisma.rankingEntry.updateMany({ where: { playerId: primero, circuitId }, data: { points: { increment: 8 } } });
+        if (segundo)  await prisma.rankingEntry.updateMany({ where: { playerId: segundo,  circuitId }, data: { points: { increment: 6 } } });
+        if (tercero)  await prisma.rankingEntry.updateMany({ where: { playerId: tercero,  circuitId }, data: { points: { increment: 4 } } });
+        if (cuarto)   await prisma.rankingEntry.updateMany({ where: { playerId: cuarto,   circuitId }, data: { points: { increment: 2 } } });
+      }
+    }
+
+    // 8. Recalcular stats desde partidos reales
+    await prisma.rankingEntry.updateMany({ where: { circuitId }, data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 } });
+    const matchesFinalizados = await prisma.match.findMany({
+      where: { phase: { circuitId }, status: { in: ['finalizado', 'wo'] }, serieId: { startsWith: 'nac-serie-' } },
+      include: { result: true }
+    });
+    for (const m of matchesFinalizados) {
+      if (!m.result || !m.playerAId || !m.playerBId) continue;
+      const { setsA, setsB, pointsA, pointsB, winnerId } = m.result;
+      const wonA = winnerId === m.playerAId ? 1 : 0;
+      const wonB = winnerId === m.playerBId ? 1 : 0;
+      await prisma.rankingEntry.updateMany({ where: { playerId: m.playerAId, circuitId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonA }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } } });
+      await prisma.rankingEntry.updateMany({ where: { playerId: m.playerBId, circuitId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wonB }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } } });
+    }
+
+    // 9. Recalcular posiciones
+    const entradasFinal = await prisma.rankingEntry.findMany({ where: { circuitId } });
+    const sorted = [...entradasFinal].sort((a: any, b: any) => {
+      if (b.points !== a.points) return b.points - a.points;
+      const aSets = (a.setsWon + a.setsLost) > 0 ? a.setsWon / (a.setsWon + a.setsLost) : 0;
+      const bSets = (b.setsWon + b.setsLost) > 0 ? b.setsWon / (b.setsWon + b.setsLost) : 0;
+      if (bSets !== aSets) return bSets - aSets;
+      const aPts = (a.pointsFor + a.pointsAgainst) > 0 ? a.pointsFor / (a.pointsFor + a.pointsAgainst) : 0;
+      const bPts = (b.pointsFor + b.pointsAgainst) > 0 ? b.pointsFor / (b.pointsFor + b.pointsAgainst) : 0;
+      return bPts - aPts;
+    });
+    for (let i = 0; i < sorted.length; i++) {
+      await prisma.rankingEntry.update({ where: { id: sorted[i].id }, data: { position: i + 1 } });
+    }
+    console.log(`[sincronizarYRecalcularRanking] circuit ${circuitId}: ${provisorios.length} provisorios reemplazados, ranking recalculado.`);
+  } catch (e) { console.error('Error en sincronizarYRecalcularRanking:', e); }
 }
 
 // ── FORMATO 16: 4 series → 8 clasificados → bracket arranca en CUARTOS ──
@@ -302,6 +403,9 @@ async function rellenarBracketR16Cuartos(clasificatorioPhaseId: number) {
       await prisma.match.update({ where: { id: bracketMatch.id }, data: { playerAId: seedAlto.playerId, playerBId: seedBajo.playerId, slotA: null, slotB: null, status: 'pendiente' } });
       await checkAndEmitMatch(bracketMatch.id);
     }
+    // Sincronizar RankingEntry con jugadores reales + recalcular stats y posiciones
+    const circuitIdR16 = clasificatorioPhase?.circuit?.id;
+    if (circuitIdR16) await sincronizarYRecalcularRanking(circuitIdR16);
   } catch (error) { console.error('Error rellenando bracket R16 cuartos:', error); }
 }
 
