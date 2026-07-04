@@ -389,23 +389,31 @@ async function rellenarBracketR16Cuartos(clasificatorioPhaseId: number) {
       if (p5?.result?.winnerId) { const s = statsJugador[p5.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 }; clasificados.push({ playerId: p5.result.winnerId, puntos: 6, setsGanados: s.sets, tantos: s.ptsFor }); }
     }
 
-    clasificados.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; return b.tantos - a.tantos; });
     if (clasificados.length < 8) { console.error(`Solo ${clasificados.length} clasificados, se necesitan 8`); return; }
+
+    // Sincronizar RankingEntry ANTES de armar el bracket para usar posiciones correctas
+    const circuitIdR16 = clasificatorioPhase?.circuit?.id;
+    if (circuitIdR16) await sincronizarYRecalcularRanking(circuitIdR16);
+
+    // Usar el RankingEntry ya calculado para el seeding (mismo criterio que muestra el ranking)
+    const rankingEntriesR16 = await prisma.rankingEntry.findMany({
+      where: { circuitId: circuitIdR16 },
+      orderBy: { position: 'asc' }
+    });
+    const top8 = rankingEntriesR16.slice(0, 8);
+    if (top8.length < 8) { console.error(`Solo ${top8.length} en ranking, se necesitan 8`); return; }
 
     // cua-1 = seed1 vs seed8 | cua-2 = seed4 vs seed5 | cua-3 = seed3 vs seed6 | cua-4 = seed2 vs seed7
     const seedingMap: [number, number][] = [[0,7],[3,4],[2,5],[1,6]];
     for (let i = 0; i < 4; i++) {
       const [idxAlto, idxBajo] = seedingMap[i];
-      const seedAlto = clasificados[idxAlto]; const seedBajo = clasificados[idxBajo];
+      const seedAlto = top8[idxAlto]; const seedBajo = top8[idxBajo];
       if (!seedAlto || !seedBajo) continue;
       const bracketMatch = await prisma.match.findFirst({ where: { phaseId: masterPhase.id, serieId: `nac-cua-${i + 1}` } });
       if (!bracketMatch) continue;
       await prisma.match.update({ where: { id: bracketMatch.id }, data: { playerAId: seedAlto.playerId, playerBId: seedBajo.playerId, slotA: null, slotB: null, status: 'pendiente' } });
       await checkAndEmitMatch(bracketMatch.id);
     }
-    // Sincronizar RankingEntry con jugadores reales + recalcular stats y posiciones
-    const circuitIdR16 = clasificatorioPhase?.circuit?.id;
-    if (circuitIdR16) await sincronizarYRecalcularRanking(circuitIdR16);
   } catch (error) { console.error('Error rellenando bracket R16 cuartos:', error); }
 }
 
