@@ -725,10 +725,56 @@ router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (
 router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const circuitId = Number(req.params.circuitId);
   try {
-    // Detectar si el circuito es nacional
+    // Detectar si el circuito es nacional/panamericano
     const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
     const tipoTorneo = (circuit?.configTorneo as any)?.tipo;
     const esNacional = tipoTorneo === 'nacional' || tipoTorneo === 'panamericano';
+
+    // ── SINCRONIZACIÓN DE QUALY (solo nacionales/panamericanos) ──────────
+    // Detecta filas del RankingEntry cuyo jugador NO jugó ninguna serie real
+    // y las reemplaza por los jugadores reales que sí jugaron.
+    let sincronizados = 0;
+    if (esNacional) {
+      // 1. Obtener todos los playerIds únicos que jugaron series nac-serie-*
+      const seriesMatches = await prisma.match.findMany({
+        where: {
+          phase: { circuitId },
+          serieId: { startsWith: 'nac-serie-' },
+          status: { in: ['finalizado', 'wo', 'pendiente', 'en_juego'] }
+        },
+        select: { playerAId: true, playerBId: true }
+      });
+      const jugadoresRealesSet = new Set<number>();
+      for (const m of seriesMatches) {
+        if (m.playerAId) jugadoresRealesSet.add(m.playerAId);
+        if (m.playerBId) jugadoresRealesSet.add(m.playerBId);
+      }
+      const jugadoresReales = Array.from(jugadoresRealesSet);
+
+      // 2. Obtener filas actuales del RankingEntry
+      const entradasActuales = await prisma.rankingEntry.findMany({ where: { circuitId } });
+      const playerIdsEnRanking = entradasActuales.map((e: any) => e.playerId);
+
+      // 3. Detectar provisorios: están en el RankingEntry pero NO jugaron ninguna serie
+      const provisorios = entradasActuales.filter((e: any) => !jugadoresRealesSet.has(e.playerId));
+      // 4. Detectar reales sin fila: jugaron series pero no tienen RankingEntry
+      const sinFila = jugadoresReales.filter((id: number) => !playerIdsEnRanking.includes(id));
+
+      // 5. Reemplazar provisorios por reales sin fila (par a par)
+      for (let i = 0; i < Math.min(provisorios.length, sinFila.length); i++) {
+        await prisma.rankingEntry.update({
+          where: { id: provisorios[i].id },
+          data: { playerId: sinFila[i] }
+        });
+        sincronizados++;
+      }
+      // 6. Borrar provisorios sobrantes (si hubiera más provisorios que reales sin fila)
+      const sobrantes = provisorios.slice(sinFila.length);
+      for (const s of sobrantes) {
+        await prisma.rankingEntry.delete({ where: { id: s.id } });
+      }
+    }
+    // ── FIN SINCRONIZACIÓN ───────────────────────────────────────────────
 
     // Reset stats (no puntos)
     await prisma.rankingEntry.updateMany({
@@ -772,7 +818,7 @@ router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), 
       await prisma.rankingEntry.update({ where: { id: sorted[i].id }, data: { position: i + 1 } });
     }
 
-    res.json({ ok: true, partidos: matches.length, jugadores: entries.length });
+    res.json({ ok: true, partidos: matches.length, jugadores: entries.length, sincronizados });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
