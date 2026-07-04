@@ -18,6 +18,29 @@
 
 ---
 
+## ESTADO AL 04/07/2026
+
+### COMPLETADO (04/07) — Reparación del ranking final de Tercera (Qualy no sincronizados) + fix de fondo + hora en cruces
+
+**Contexto:** al terminar las series del Panamericano de **Tercera** (circuit 33), el ranking final salió con 3 errores: (a) un jugador modificado después de la inscripción aparecía con el dato viejo; (b) los puestos "Qualy" mostraban los provisorios en vez de los jugadores reales que clasificaron; (c) el bracket salió mal.
+
+**Causa raíz (bug de fondo):** el `RankingEntry` se crea al armar las series con los 16 slots iniciales (incluidos provisorios "Qualy" como jugadores reales en `Player`). Cuando se sustituye un provisorio por el jugador real (o se corrige un jugador) en los **partidos**, esa fila del `RankingEntry` **no se actualiza sola**. Resultado: el ranking final (que para Panamericano se lee de `RankingEntry`) queda con los playerId provisorios, con 0 puntos, y el bracket se arma desde ese top 8 incorrecto.
+
+**Reparación manual aplicada a Tercera (circuit 33)** — quedó documentado como PROCEDIMIENTO por si pasa antes del fix de fondo:
+1. Diagnóstico: comparar `RankingEntry` vs jugadores reales de los partidos `nac-serie-*`. Los playerId "NO jugaron" son provisorios a reemplazar.
+2. UPDATE de cada fila provisoria al playerId real: `UPDATE "RankingEntry" SET "playerId"=<real> WHERE "circuitId"=33 AND "playerId"=<provisorio>;`
+3. `POST /api/matches/recalcular-puntos-series/33` (asigna los points 8/6/4/2 por serie).
+4. `POST /api/rankings/recalcular-stats/33` (re-suma sets y REORDENA posiciones).
+5. Regenerar bracket: `POST /api/matches/regenerar-bracket/33` — **DESPUÉS del paso 4**, si no el bracket toma posiciones desordenadas. Orden crítico: puntos → stats → bracket.
+Los endpoints se dispararon desde la consola del navegador con `fetch(..., {headers:{Authorization:'Bearer '+localStorage.getItem('token')}})`.
+
+**FIX DE FONDO (para que no pase en Segunda/Primera)** — `src/routes/rankings.ts`, endpoint `recalcular-stats`: ahora **sincroniza automáticamente** el `RankingEntry` antes de recalcular. Detecta las filas cuyo jugador NO jugó ninguna serie (`nac-serie-*`) y las reemplaza por los jugadores reales que sí jugaron y no tienen fila; los provisorios sobrantes los elimina. Devuelve `sincronizados: N`. Con esto, el flujo para las próximas categorías es solo: recalcular-puntos-series → recalcular-stats (que ahora sincroniza solo) → regenerar-bracket. **Ya deployado.**
+
+**FIX hora en publicación de cruces** — `src/pages/AdminPublicacionesPage.tsx` (`PlantillaCrucesNacional`): el header de cada partido (PARTIDO 1/2/3/4) NO mostraba la hora ni la mesa, aunque el backend sí las envía (`hora`/`mesa` desde `scheduledAt`). Agregado el render de `🕐 {p.hora}  M.{p.mesa}` en el header. BUILD_TAG `pub-2026-07-04-hora-cruces-nacional`. La función `hora()` del backend estaba OK (las series ya mostraban bien la hora); el "12:00" que se vio era un render viejo antes de reasignar/deploy. Nota: la hora de la publicación de **cruces** es automática (viene del `scheduledAt` del partido, no editable en la publicación); la del **bracket** se sigue cargando a mano en los campos de la interfaz.
+
+### PENDIENTE (post-Panamericano)
+- Automatizar la hora de la publicación de **bracket** para que la tome del `scheduledAt` (hoy es manual), como ya hace cruces.
+
 ## ESTADO AL 01/07/2026
 
 ### COMPLETADO (01/07) — Bug crítico de carga de sets con 2 jueces en paralelo (se pisaba el set anterior)
@@ -304,6 +327,8 @@ Ver prompt preparado en sesión 27/06.
 *Actualizado 01/07/2026 (pendiente) — Agregados a OTROS PENDIENTES: (1) etiquetas "NAC" del bracket del Panamericano (cosmético, cambiar slots visibles a "Gan. Cuartos N" sin tocar serieId); (2) pantalla de entrada única en la PWA instalada (que sirva para público y para juez/admin con credenciales, sin ir a /login a mano). Ambos post-Panamericano, no tocar en torneo en vivo.*
 
 *Actualizado 01/07/2026 (sets) — Fix bug crítico: con 2 jueces cargando en paralelo, el modal de resultado abría con un match stale de la lista (refrescada por sockets) y al guardar pisaba el set anterior. openResultModal ahora trae el partido fresco por GET /matches/:id y handleSaveSet re-sincroniza sets desde la respuesta del backend. BUILD_TAG matches-2026-07-01-set-fresh-fetch. Los jueces deben recargar 1 vez. Pendiente verificar en torneo de prueba.*
+
+*Actualizado 04/07/2026 — Reparación del ranking final de Tercera (circuit 33): los provisorios "Qualy" no se sincronizaban al RankingEntry tras sustituirlos en los partidos → ranking y bracket mal. FIX DE FONDO en rankings.ts (recalcular-stats ahora sincroniza el RankingEntry con los jugadores reales de las series antes de recalcular; devuelve sincronizados:N). Procedimiento manual documentado (UPDATE playerId → recalcular-puntos-series → recalcular-stats → regenerar-bracket, en ese orden). FIX hora/mesa en publicación de cruces (AdminPublicacionesPage PlantillaCrucesNacional, BUILD_TAG pub-2026-07-04-hora-cruces-nacional). Pendiente: automatizar hora del bracket desde scheduledAt.*
 
 *Actualizado 01/07/2026 (mesas) — Vista de mesas de /publico: eliminada la frase "tocá una mesa para ver detalle", las tarjetas ya no son clickeables y se removió por completo el modal de mesa (mostraba historial residual de Nacionales por serieId). El detalle en vivo dentro de la tarjeta se conserva. PUBLIC_BUILD pub-public-2026-07-01-mesas-sin-modal.*
 
