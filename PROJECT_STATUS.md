@@ -282,6 +282,7 @@ Ver prompt preparado en sesión 27/06.
 
 ### OTROS PENDIENTES
 
+- **Pantalla de entrada única en la PWA instalada (mejora post-Panamericano).** Hoy la app instalada ("FBU Torneos") abre directo en `/publico` (start_url), pensada para el público → un juez con credenciales NO puede loguearse desde el ícono: tiene que ir manualmente a `/login`. Se quiere que la app instalada tenga UNA puerta que sirva para todos: el público ve el torneo sin login y el que tiene credenciales entra a su panel (juez/admin). Como el público no tiene contraseña, mostrar el acceso a login no da acceso a nada. Opciones a evaluar: (a) pantalla de entrada con dos botones "Ver torneo" / "Ingresar" ; (b) mantener start_url `/publico` pero con un acceso a login visible desde ahí; (c) que si el usuario YA está logueado, la raíz lo lleve a su panel. Muy útil para reutilizar en cualquier torneo cuando cambien sedes y jueces. NO tocar durante un torneo en vivo: implementar con calma y probar en el torneo de prueba. Afecta ruteo (`App.tsx`, raíz `/`, `/login`, `/publico`) y quizá el manifest.
 - PNG export en publicaciones: monitorear que no reaparezcan cortes al cambiar textos.
 - Mesas liberación: `UPDATE "Table" SET "status"='libre' WHERE id IN (60,61,62,63,64,65)`
 
@@ -298,6 +299,8 @@ Ver prompt preparado en sesión 27/06.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 - **Provisorios "Qualy" = jugadores reales en `Player`** (no slots de texto). Sustituir por el real con `PUT /matches/:id/jugador` desde el ✏️ en `/admin/partidos` (conserva mesa y horario).
 - **Vista de mesas de `/publico` filtra por torneo elegido** (deriva de `allMatches`, no de `GET /tables` ni de venueId fijo). Una mesa sin partidos del torneo no aparece.
+
+*Actualizado 01/07/2026 (pendiente) — Agregado a OTROS PENDIENTES: pantalla de entrada única en la PWA instalada (que sirva para público y para juez/admin con credenciales, sin tener que ir a /login a mano). Mejora post-Panamericano, no tocar en torneo en vivo.*
 
 *Actualizado 01/07/2026 (sets) — Fix bug crítico: con 2 jueces cargando en paralelo, el modal de resultado abría con un match stale de la lista (refrescada por sockets) y al guardar pisaba el set anterior. openResultModal ahora trae el partido fresco por GET /matches/:id y handleSaveSet re-sincroniza sets desde la respuesta del backend. BUILD_TAG matches-2026-07-01-set-fresh-fetch. Los jueces deben recargar 1 vez. Pendiente verificar en torneo de prueba.*
 
