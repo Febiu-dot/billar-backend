@@ -20,6 +20,27 @@
 
 ## ESTADO AL 01/07/2026
 
+### COMPLETADO (01/07) — Bug crítico de carga de sets con 2 jueces en paralelo (se pisaba el set anterior)
+
+**Síntoma:** durante el Panamericano en curso, dos jueces cargando resultados a la vez. Un juez cargaba un set de un partido (apretando Guardar), pasaba a otro, y al volver al primero el set anterior "no se conservaba" en pantalla → los obligaba a cargar todo junto al final, matando el tiempo real del público.
+
+**Causa:** el modal de resultado (`MatchesPage.tsx`) inicializaba los sets desde el objeto `match` de la lista renderizada. Con 2 jueces, los sockets (`match:updated` de cualquier mesa) refrescan la lista constantemente, así que al reabrir un partido el modal podía tomar un objeto **stale** (sin el último set guardado) → al guardar el siguiente set con `setNumber: index+1` sobre un array que arrancó vacío, se **pisaba** el set 1. (El set SÍ quedaba en la base; era un problema de recarga/desincronización del modal, no de persistencia.)
+
+**Fix (solo frontend, `MatchesPage.tsx`):**
+- `openResultModal` ahora es async y trae el partido **fresco del backend** (`GET /matches/:id`, que ya incluye `sets`) antes de armar el modal, en vez de confiar en el objeto de la lista. Fallback al objeto de lista si el fetch falla.
+- `handleSaveSet`: tras `PUT /matches/:id/set`, re-sincroniza `sets` y `resultModal` desde la **respuesta del backend** (fuente de verdad), en vez del estado local. El endpoint `/set` ya devolvía el match completo con todos los sets.
+- `BUILD_TAG = matches-2026-07-01-set-fresh-fetch`. Typecheck `tsc --noEmit` limpio.
+- Tras deploy, los jueces deben **recargar una vez** (caché SW) para tomar el bundle. Los sets ya cargados antes del fix estaban guardados en la base (no se perdió nada). ⚠️ Pendiente de verificar en el torneo de prueba (no se pudo probar en vivo por estar los partidos reales en curso). Si tras el deploy aún se pierde algún set, la segunda capa a revisar es el `upsert` por `setNumber` en el backend (`PUT /:id/set`, matches.ts ~872).
+
+### COMPLETADO (01/07) — Vista de mesas en /publico: sin modal ni frase de "tocar para ver detalle"
+
+Durante el Panamericano de Tercera se detectó que las tarjetas de mesa (que ya muestran jugadores, categoría y marcador en vivo) tenían: (a) una frase "Tocá una mesa en juego para ver el detalle del partido" innecesaria, y (b) al tocar la mesa abría un modal con historial que mostraba partidos viejos de Nacionales (por serieId reutilizado / datos residuales). Cambio (`PublicPage.tsx`):
+- Eliminada la frase.
+- Las tarjetas de mesa ya NO son clickeables (quitado `onClick={handleMesaClick}` y el `cursor-pointer hover:bg-orange/10`).
+- Eliminados por completo la función `handleMesaClick`, el estado `mesaModal`/`setMesaModal` y todo el bloque JSX del modal de mesa. Typecheck limpio.
+- El detalle en vivo dentro de cada tarjeta se conserva intacto.
+- `PUBLIC_BUILD = pub-public-2026-07-01-mesas-sin-modal`.
+
 ### COMPLETADO (01/07) — Selectores de torneo del admin (Fixture y Partidos) filtran solo torneos activos
 
 Los modales/selectores de torneo en `/admin/fixture` (`FixturePage.tsx`) y `/admin/partidos` (`MatchesPage.tsx`) cargaban **todos** los torneos con `GET /tournaments` sin filtrar, así que los Nacionales finalizados seguían apareciendo y estorbaban al trabajar en el Panamericano. Cambio (solo frontend):
@@ -277,6 +298,10 @@ Ver prompt preparado en sesión 27/06.
 - **Si una serie nacional/panamericana queda con slot sin resolver** (placeholder "Per. SX-PY" con playerId null): correr `POST /matches/trigger-reparar-series/:phaseId`.
 - **Provisorios "Qualy" = jugadores reales en `Player`** (no slots de texto). Sustituir por el real con `PUT /matches/:id/jugador` desde el ✏️ en `/admin/partidos` (conserva mesa y horario).
 - **Vista de mesas de `/publico` filtra por torneo elegido** (deriva de `allMatches`, no de `GET /tables` ni de venueId fijo). Una mesa sin partidos del torneo no aparece.
+
+*Actualizado 01/07/2026 (sets) — Fix bug crítico: con 2 jueces cargando en paralelo, el modal de resultado abría con un match stale de la lista (refrescada por sockets) y al guardar pisaba el set anterior. openResultModal ahora trae el partido fresco por GET /matches/:id y handleSaveSet re-sincroniza sets desde la respuesta del backend. BUILD_TAG matches-2026-07-01-set-fresh-fetch. Los jueces deben recargar 1 vez. Pendiente verificar en torneo de prueba.*
+
+*Actualizado 01/07/2026 (mesas) — Vista de mesas de /publico: eliminada la frase "tocá una mesa para ver detalle", las tarjetas ya no son clickeables y se removió por completo el modal de mesa (mostraba historial residual de Nacionales por serieId). El detalle en vivo dentro de la tarjeta se conserva. PUBLIC_BUILD pub-public-2026-07-01-mesas-sin-modal.*
 
 *Actualizado 01/07/2026 — Selectores de torneo del admin (FixturePage y MatchesPage) ahora filtran solo torneos con active=true, para no ver los Nacionales finalizados mientras se trabaja en el Panamericano. No se borra nada: los inactivos quedan en la base con su historial y reaparecen si se reactivan (UPDATE Tournament SET active=true). BUILD_TAG fixture-2026-07-01-solo-activos / matches-2026-07-01-solo-activos. Mismo mecanismo active ya usado en Vista Pública y para ocultar Juvenil (torneo 24) / Femenino (torneo 25).*
 
