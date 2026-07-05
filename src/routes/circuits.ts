@@ -359,6 +359,24 @@ router.put('/:id/config-torneo', async (req: Request, res: Response) => {
   }
 });
 
+
+// ── PATCH /api/circuits/:id/sala-fecha ───────────────────────────────
+// Guarda salaPublica y fechaPublica en configTorneo sin pisar otros campos
+router.patch('/:id/sala-fecha', async (req: Request, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.id);
+    const { salaPublica, fechaPublica } = req.body;
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+    const existing = (circuit.configTorneo as any) ?? {};
+    const updated = { ...existing, salaPublica: salaPublica ?? '', fechaPublica: fechaPublica ?? '' };
+    await prisma.circuit.update({ where: { id: circuitId }, data: { configTorneo: updated as any } });
+    res.json({ ok: true, salaPublica: updated.salaPublica, fechaPublica: updated.fechaPublica });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── POST /api/circuits/:id/players ───────────────────────────────────
 router.post('/:id/players', async (req: Request, res: Response) => {
   const circuitId = parseInt(req.params.id);
