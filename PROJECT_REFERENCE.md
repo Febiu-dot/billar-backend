@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 04/07/2026 — v5.1
+## Última actualización: 05/07/2026 — v5.2
 
 ---
 
@@ -254,7 +254,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **`public/sw.js`**: `CACHE_NAME = febiu-billar-v3` (bumpear en cada cambio que deba invalidar caché). Precachea `/publico`. Registro inline en `index.html`, scope `/`, header `Service-Worker-Allowed:/` en `vercel.json`.
 - **`src/App.tsx`**: raíz `/` redirige por rol (admin→`/admin`, juez→`/juez`, sin sesión→`/publico`); ya NO pasa por `ProtectedRoute`. Rutas admin/juez siguen protegidas. `/login` solo para admin/juez.
 - **Link/QR público:** `billar-frontend-blue.vercel.app/publico`. Reinstalar limpio: desinstalar PWA vieja → cerrar navegador → reabrir `/publico` → instalar.
-- **Mesas (RESUELTO 30/06 + refinado 01/07):** "Estado de Mesas" de `/publico` muestra tarjetas por mesa filtradas por el torneo elegido (deriva de `allMatches`, no de venueId fijo), con jugadores/categoría/marcador en vivo dentro de la tarjeta. Las tarjetas NO son clickeables y NO hay modal de mesa (se removió: mostraba historial residual de Nacionales por serieId). PUBLIC_BUILD `pub-public-2026-07-01-mesas-sin-modal`.
+- **Mesas (RESUELTO 30/06 + refinado 01/07):** "Estado de Mesas" de `/publico` muestra tarjetas por mesa filtradas por el torneo elegido (deriva de `allMatches`, no de venueId fijo), con jugadores/categoría/marcador en vivo dentro de la tarjeta. Las tarjetas NO son clickeables y NO hay modal de mesa (se removió: mostraba historial residual de Nacionales por serieId). PUBLIC_BUILD `pub-public-2026-07-05-sala-fecha-publica`.
 
 ### Publicaciones Panamericano — título/subtítulo independientes del nombre del torneo
 - **Título** grande fijo en Panamericano: `'TORNEO PANAMERICANO'` (`data.esPanamericano ? 'TORNEO PANAMERICANO' : data.torneo`, en `PubHeader` moderno+departamental y en bracket `bk-h1`). NO usa el nombre real del torneo.
@@ -288,7 +288,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 1b. **Backend TypeScript (tsconfig strict: true)**: el repo está en **0 errores de TS** desde 30/06/2026. Antes había 77 TS7006. Para evitar reintroducirlos: siempre anotar parámetros de callbacks con tipo explícito (`.map((p: any) => ...)`, `.find((m: any) => ...)`, etc.) en vez de dejar el parámetro sin tipo.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-07-04-hora-cruces-nacional`. `PublicPage.tsx` usa `// PUBLIC_BUILD = ...` (actual `pub-public-2026-07-01-mesas-sin-modal`); `FixturePage.tsx` usa `fixture-2026-07-01-solo-activos` y `MatchesPage.tsx` `matches-2026-07-01-set-fresh-fetch`. El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-07-05-sala-fecha-publica`. `PublicPage.tsx` usa `// PUBLIC_BUILD = ...` (actual `pub-public-2026-07-05-sala-fecha-publica`); `FixturePage.tsx` usa `fixture-2026-07-01-solo-activos` y `MatchesPage.tsx` `matches-2026-07-01-set-fresh-fetch`. El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -317,6 +317,16 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 ---
 
 *Sistema FEBIU v5.1 — Federación de Billar del Uruguay*
-*Actualizado 04/07/2026 — Provisorios "Qualy" no sincronizaban al RankingEntry al sustituirlos en los partidos → ranking final y bracket mal (reparado en Tercera circuit 33). FIX DE FONDO: recalcular-stats (rankings.ts) ahora sincroniza el RankingEntry con los jugadores reales de las series. Flujo al cerrar series (ORDEN CRÍTICO): recalcular-puntos-series → recalcular-stats → regenerar-bracket. FIX hora/mesa en publicación de cruces (PlantillaCrucesNacional, BUILD_TAG pub-2026-07-04-hora-cruces-nacional). Pendiente: automatizar hora del bracket desde scheduledAt.*
-*Actualizado 01/07/2026 — (1) Fix crítico carga de sets con 2 jueces en paralelo: el modal abría con match stale de la lista y pisaba el set anterior; openResultModal ahora trae el partido fresco por GET /matches/:id y handleSaveSet re-sincroniza desde la respuesta del backend (BUILD_TAG matches-2026-07-01-set-fresh-fetch; pendiente verificar en torneo de prueba). (2) Vista de mesas de /publico sin frase de "tocar detalle", tarjetas no clickeables, modal de mesa removido (PUBLIC_BUILD pub-public-2026-07-01-mesas-sin-modal). (3) Selectores de torneo del admin (Fixture y Partidos) filtran solo torneos active=true.*
+*Actualizado 04/07/2026 — Provisorios "Qualy" no sincronizaban al RankingEntry al sustituirlos en los partidos → ranking final y bracket mal (reparado en Tercera circuit 33). FIX DE FONDO: recalcular-stats (rankings.ts) ahora sincroniza el RankingEntry con los jugadores reales de las series. Flujo al cerrar series (ORDEN CRÍTICO): recalcular-puntos-series → recalcular-stats → regenerar-bracket. FIX hora/mesa en publicación de cruces (PlantillaCrucesNacional, BUILD_TAG pub-2026-07-05-sala-fecha-publica). Pendiente: automatizar hora del bracket desde scheduledAt.*
+*Actualizado 01/07/2026 — (1) Fix crítico carga de sets con 2 jueces en paralelo: el modal abría con match stale de la lista y pisaba el set anterior; openResultModal ahora trae el partido fresco por GET /matches/:id y handleSaveSet re-sincroniza desde la respuesta del backend (BUILD_TAG matches-2026-07-01-set-fresh-fetch; pendiente verificar en torneo de prueba). (2) Vista de mesas de /publico sin frase de "tocar detalle", tarjetas no clickeables, modal de mesa removido (PUBLIC_BUILD pub-public-2026-07-05-sala-fecha-publica). (3) Selectores de torneo del admin (Fixture y Partidos) filtran solo torneos active=true.*
 *Actualizado 29/06/2026 (noche tardía) — configTorneo OBLIGATORIO en circuitos Nacional/Panamericano: al replicar el Panamericano a categorías nuevas queda vacío → se arma esquema departamental equivocado; setear por SQL clonando el de Máxima (tipo panamericano, formato 16, ruleSetSeries 1, ruleSetCruces 2). Publicaciones Panamericano: título fijo "TORNEO PANAMERICANO" + subtítulo reconstruido, independientes del nombre del torneo (categoría del nombre del circuito). BUILD_TAG pub-2026-06-29-subtitulo-limpio. Regla nueva: DNI duplicado en carga de ranking pierde 1 inscripto. Misma noche, antes: entrada del público + PWA (manifest start_url/scope /publico, sw.js v3, raíz / sin login a /publico, link removido del LoginPage), selector de torneos desde allMatches. PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente: rediseño de la vista de mesas.*
+
+---
+
+## TAB BRACKET EN VISTA PÚBLICA (05/07/2026)
+
+- **`src/components/BracketNacional.tsx`** (frontend, nuevo): extracción de `PlantillaBracketNacional` de `AdminPublicacionesPage.tsx`. Props `sala`, `fechaBracket`, `horas` opcionales. Zoom CSS responsive: `@media(max-width:900px){zoom:0.72}`, `600px→0.48`, `400px→0.36`.
+- **`PublicPage.tsx`** — nueva tab `🏟 Bracket` en `SeccionNacional`. Llama `GET /publicaciones/:circuitId/bracket-nacional`. Pasa `bracket.salaPublica` y `bracket.fechaPublica` como props.
+- **`PATCH /api/circuits/:id/sala-fecha`** — guarda `salaPublica`/`fechaPublica` en `configTorneo` (merge, no reemplaza). Solo admin.
+- **`GET /publicaciones/:circuitId/bracket-nacional`** — ahora incluye `salaPublica` y `fechaPublica` en la respuesta.
+- **Flujo**: admin llena Sala/Fecha en Publicaciones → presiona "💾 Guardar sede y fecha para vista pública" → público ve los datos en la tab Bracket sin poder editarlos.
