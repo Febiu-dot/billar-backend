@@ -305,6 +305,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const hayOctavos = octavos.some(m => m !== null);
       const tamano = hayOctavos ? 16 : 8;
 
+      const cfg = (circuit.configTorneo as any) ?? {};
       return res.json({
         ...base,
         tipo: 'bracket-nacional',
@@ -314,6 +315,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         tamano,         // ← NUEVO (8 ó 16)
         formato: '',
         fechaPrincipal: fechaLarga(pf),
+        salaPublica:   cfg.salaPublica   ?? '',
+        fechaPublica:  cfg.fechaPublica  ?? '',
         campeon,
         octavos,
         cuartos,
