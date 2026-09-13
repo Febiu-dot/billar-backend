@@ -42,12 +42,15 @@ enum CategoryName {
 }
 
 model Departamento {
-  id          Int          @id @default(autoincrement())
-  nombre      String       @unique
+  id          Int            @id @default(autoincrement())
+  nombre      String         @unique
+  parentId    Int?
+  parent      Departamento?  @relation("DeptoJerarquia", fields: [parentId], references: [id])
+  hijos       Departamento[] @relation("DeptoJerarquia")
   players     Player[]
   venues      Venue[]
   tournaments Tournament[]
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime       @default(now())
 }
 
 model User {
