@@ -4,6 +4,54 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
+const PREFIJOS_DEPARTAMENTO: Record<string, string> = {
+  'Artigas': 'ART',
+  'Canelones': 'CAN',
+  'Canelones Este': 'CAE',
+  'Canelones Oeste': 'CAO',
+  'Cerro Largo': 'CER',
+  'Colonia': 'COL',
+  'Durazno': 'DUR',
+  'Flores': 'FLS',
+  'Florida': 'FLA',
+  'Lavalleja': 'LAV',
+  'Maldonado': 'MAL',
+  'Montevideo': 'MON',
+  'Paysandú': 'PAY',
+  'Río Negro': 'RIO',
+  'Rivera': 'RIV',
+  'Rocha': 'ROC',
+  'Salto': 'SAL',
+  'San José': 'SJO',
+  'Soriano': 'SOR',
+  'Tacuarembó': 'TAC',
+  'Treinta y Tres': 'TYT',
+};
+
+async function generarCI(departamentoId?: number | null): Promise<string> {
+  let prefijo = 'FEB';
+  if (departamentoId) {
+    const depto = await prisma.departamento.findUnique({ where: { id: departamentoId } });
+    if (depto) {
+      prefijo = PREFIJOS_DEPARTAMENTO[depto.nombre] ?? depto.nombre.substring(0, 3).toUpperCase();
+    }
+  }
+  const existentes = await prisma.player.findMany({
+    where: { dni: { startsWith: prefijo } },
+    select: { dni: true },
+  });
+  let maxNum = 0;
+  for (const p of existentes) {
+    const match = p.dni?.match(new RegExp(`^${prefijo}(\\d+)$`));
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  }
+  const siguiente = String(maxNum + 1).padStart(3, '0');
+  return `${prefijo}${siguiente}`;
+}
+
 router.get('/', async (req, res: Response) => {
   const { categoryId, active, departamentoId } = req.query;
   const players = await prisma.player.findMany({
@@ -42,15 +90,17 @@ router.get('/:id', async (req, res: Response) => {
 
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   const { firstName, lastName, dni, categoryId, club, pais, departamentoId } = req.body;
+  const depId = departamentoId ? Number(departamentoId) : undefined;
+  const ciFinal = dni && String(dni).trim() ? dni : await generarCI(depId);
   const player = await prisma.player.create({
     data: {
       firstName,
       lastName,
-      dni,
+      dni: ciFinal,
       categoryId,
       club,
       pais: pais || 'Uruguay',
-      departamentoId: departamentoId ? Number(departamentoId) : undefined,
+      departamentoId: depId,
     },
     include: { category: true, departamento: true },
   });
@@ -81,15 +131,17 @@ router.post('/bulk', authenticate, requireRole('admin'), async (req: AuthRequest
   for (let i = 0; i < players.length; i++) {
     const p = players[i];
     try {
+      const depId = p.departamentoId ? Number(p.departamentoId) : undefined;
+      const ciFinal = p.dni && String(p.dni).trim() ? p.dni : await generarCI(depId);
       const player = await prisma.player.create({
         data: {
           firstName: p.firstName,
           lastName: p.lastName,
-          dni: p.dni || undefined,
+          dni: ciFinal,
           categoryId: Number(p.categoryId),
           club: p.club || undefined,
           pais: p.pais || 'Uruguay',
-          departamentoId: p.departamentoId ? Number(p.departamentoId) : undefined,
+          departamentoId: depId,
         },
         include: { category: true, departamento: true },
       });
