@@ -177,4 +177,32 @@ router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, 
   res.json(player);
 });
 
+// DELETE /api/players/:id — borrado definitivo. Solo permitido si el jugador
+// NUNCA jugó (sin partidos, sin inscripciones a circuitos ni ranking). Si tiene
+// historial, se bloquea y se sugiere desactivar en vez de borrar.
+router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  const id = Number(req.params.id);
+  try {
+    const [matchesA, matchesB, circuitPlayers, rankingEntries, rankingAcumulados] = await Promise.all([
+      prisma.match.count({ where: { playerAId: id } }),
+      prisma.match.count({ where: { playerBId: id } }),
+      prisma.circuitPlayer.count({ where: { playerId: id } }),
+      prisma.rankingEntry.count({ where: { playerId: id } }),
+      prisma.rankingAcumulado.count({ where: { playerId: id } }),
+    ]);
+    const tieneHistorial = matchesA > 0 || matchesB > 0 || circuitPlayers > 0 || rankingEntries > 0 || rankingAcumulados > 0;
+    if (tieneHistorial) {
+      res.status(409).json({
+        error: 'Este jugador tiene historial (partidos, inscripciones o ranking) y no se puede eliminar. Desactivalo en su lugar.',
+        detalle: { matchesA, matchesB, circuitPlayers, rankingEntries, rankingAcumulados },
+      });
+      return;
+    }
+    await prisma.player.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
