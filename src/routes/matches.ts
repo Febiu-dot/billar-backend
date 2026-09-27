@@ -855,7 +855,10 @@ router.get('/', async (req, res: Response) => {
       ...(phaseId      ? { phaseId: Number(phaseId) }   : {}),
       ...(status       ? { status: status as any }       : {}),
       ...(tableId      ? { tableId: Number(tableId) }    : {}),
-      ...(venueId      ? { table: { venueId: Number(venueId) } } : {}),
+      // venueId: matchea por la mesa asignada (partidos ya en mesa) O por la
+      // sede ya "fijada" en la fase (partidos pendientes de la misma serie,
+      // que heredan la sede del primer partido asignado en esa fase).
+      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, { phase: { venueId: Number(venueId) } }] } : {}),
       ...(circuitId    ? { phase: { circuitId: Number(circuitId) } } : {}),
       ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
@@ -926,9 +929,27 @@ router.put('/:id/jugador', authenticate, requireRole('admin'), async (req: AuthR
 
 router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const { tableId } = req.body; const matchId = Number(req.params.id);
-  await prisma.table.update({ where: { id: tableId }, data: { status: 'ocupada' } });
+
+  const table = await prisma.table.findUnique({ where: { id: Number(tableId) } });
+  if (!table) return res.status(404).json({ error: 'Mesa no encontrada' }) as any;
+
+  // un juez_sede solo puede asignar mesas de SU sede
+  if (req.user?.role === 'juez_sede' && req.user.venueId && table.venueId !== req.user.venueId) {
+    return res.status(403).json({ error: 'Esa mesa no pertenece a tu sede' }) as any;
+  }
+
+  await prisma.table.update({ where: { id: table.id }, data: { status: 'ocupada' } });
+
+  const matchActual = await prisma.match.findUnique({ where: { id: matchId }, select: { phaseId: true } });
+  if (matchActual) {
+    // fija/actualiza la sede de la fase con la de esta mesa: asi los proximos
+    // partidos de la misma serie (generados sin mesa aun) heredan la sede
+    // y el juez de esa sede los ve en su panel sin que el admin intervenga.
+    await prisma.phase.update({ where: { id: matchActual.phaseId }, data: { venueId: table.venueId } });
+  }
+
   const match = await prisma.match.update({
-    where: { id: matchId }, data: { tableId, status: 'asignado' },
+    where: { id: matchId }, data: { tableId: table.id, status: 'asignado' },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
   emitMatchUpdate(io, match);
@@ -940,10 +961,14 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
 // y libera la mesa (solo si no quedo otro partido ocupandola). No borra el partido.
 router.put('/:id/desasignar', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
-  const actual = await prisma.match.findUnique({ where: { id: matchId } });
+  const actual = await prisma.match.findUnique({ where: { id: matchId }, include: { table: true } });
   if (!actual) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
   if (actual.status === 'en_juego' || actual.status === 'finalizado') {
     return res.status(409).json({ error: 'No se puede quitar la mesa de un partido en juego o finalizado' }) as any;
+  }
+  // un juez_sede solo puede desasignar partidos de mesas de SU sede
+  if (req.user?.role === 'juez_sede' && req.user.venueId && actual.table && actual.table.venueId !== req.user.venueId) {
+    return res.status(403).json({ error: 'Ese partido no pertenece a tu sede' }) as any;
   }
   const tableIdPrev = actual.tableId;
 
