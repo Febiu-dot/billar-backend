@@ -168,6 +168,7 @@ model Phase {
   order     Int
   matches   Match[]
   config    FaseConfig?
+  venueId   Int?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 }
