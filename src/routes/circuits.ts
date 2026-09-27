@@ -523,11 +523,16 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     }));
 
     const crucesReduccion: any[] = [];
+    let directosClasif = 0;
     if (numClasificados > cuposDesdeClasif) {
-      for (let i = 0; i < numSeries; i++) {
-        crucesReduccion.push({ cruce: i + 1, slotA: `Clasificado #${i + 1}`, slotB: `Clasificado #${numClasificados - i}` });
+      const numReduccion = numClasificados - cuposDesdeClasif;
+      directosClasif = numClasificados - 2 * numReduccion; // 2*cuposDesdeClasif - numClasificados
+      for (let i = 0; i < numReduccion; i++) {
+        crucesReduccion.push({ cruce: i + 1, slotA: `Clasificado #${directosClasif + i + 1}`, slotB: `Clasificado #${numClasificados - i}` });
       }
-      crucesReduccion.push({ cruce: numSeries + 1, slotA: `Ganador Cruce ${cuposDesdeClasif}`, slotB: `Ganador Cruce ${cuposDesdeClasif + 1}`, esRepechaje: true });
+      if (directosClasif === 0) {
+        crucesReduccion.push({ cruce: numReduccion + 1, slotA: `Ganador Cruce ${cuposDesdeClasif}`, slotB: `Ganador Cruce ${cuposDesdeClasif + 1}`, esRepechaje: true });
+      }
     }
 
     const slotsClasif = Array.from({ length: cuposDesdeClasif }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
@@ -569,7 +574,7 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
     res.json({
       config,
       inscriptos: { total: master.length + primera.length + segunda.length + clasif.length, master: master.length, primera: primera.length, segunda: segunda.length, tercera: clasif.length },
-      clasificatorio: { totalJugadores: jugConLibre.length, totalSeries: numSeries, totalClasificados: numClasificados, necesitaReduccion: numClasificados > cuposDesdeClasif, series: seriesClasif, crucesReduccion },
+      clasificatorio: { totalJugadores: jugConLibre.length, totalSeries: numSeries, totalClasificados: numClasificados, necesitaReduccion: numClasificados > cuposDesdeClasif, directos: directosClasif, series: seriesClasif, crucesReduccion },
       segundaPreview: { totalJugadores: N2, totalSeries: numSeriesSegunda, totalClasificados: numClasifSegunda, series: seriesSegunda },
       primeraPreview: { totalJugadores: totalPrimera, totalCruces: crucesPrimera.length, totalClasificados: numClasifPrimera, cruces: crucesPrimera },
       masterPreview:  { totalJugadores: NM, totalCruces: crucesMaster.length, cruces: crucesMaster },
@@ -702,16 +707,24 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       }
 
       if (numClasificados > cuposDesdeClasif) {
-        for (let i = 0; i < numSeries; i++) {
+        // Esquema hibrido: los mejores "directos" del ranking pasan sin jugar
+        // reduccion; el resto (numReduccion*2 jugadores) juega en espejo entre si.
+        // Si numClasificados == 2*cuposDesdeClasif, directos=0 y es el esquema
+        // original (todos juegan reduccion, con repechaje para el ultimo cruce).
+        const numReduccion = numClasificados - cuposDesdeClasif;
+        const directos = numClasificados - 2 * numReduccion; // = 2*cuposDesdeClasif - numClasificados
+        for (let i = 0; i < numReduccion; i++) {
           matchesCreados.push(mkMatch(phaseClasif.id, null, null, numSeries * 10 + i + 1,
-            `Clasificado #${i + 1}`, `Clasificado #${numClasificados - i}`,
+            `Clasificado #${directos + i + 1}`, `Clasificado #${numClasificados - i}`,
             `clasif-reduccion-${i + 1}`, RULESET_SERIES
           ));
         }
-        matchesCreados.push(mkMatch(phaseClasif.id, null, null, numSeries * 10 + numSeries + 1,
-          `Ganador Cruce ${cuposDesdeClasif}`, `Ganador Cruce ${cuposDesdeClasif + 1}`,
-          'clasif-repechaje', RULESET_SERIES
-        ));
+        if (directos === 0) {
+          matchesCreados.push(mkMatch(phaseClasif.id, null, null, numSeries * 10 + numReduccion + 1,
+            `Ganador Cruce ${cuposDesdeClasif}`, `Ganador Cruce ${cuposDesdeClasif + 1}`,
+            'clasif-repechaje', RULESET_SERIES
+          ));
+        }
       }
     }
 
