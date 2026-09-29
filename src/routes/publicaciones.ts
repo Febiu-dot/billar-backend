@@ -270,7 +270,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         esPanamericano,
         fase: tipoFase === 'inicial-nacional' ? `FIXTURE INICIAL — ${circuit.tournament.name.toUpperCase()}` : `ETAPA DE SERIES — ${circuit.tournament.name.toUpperCase()}`,
         formato: formatoTxt,
-        fechaPrincipal: fechaLarga(pf),
+        fechaPrincipal: '',
         series, top16
       });
     }
@@ -381,7 +381,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         esPanamericano, // ← NUEVO
         tamano,         // ← NUEVO
         fase: `ETAPA DE CRUCES — ${circuit.tournament.name.toUpperCase()}`,
-        fechaPrincipal: fechaLarga(pf),
+        fechaPrincipal: '',
         formato: '',
         octavos, cuartos, semis, final: finalM, campeon,
       });
@@ -418,14 +418,14 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         return { serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'), p1: pts.find(p => p.round === rb) ? mkP(pts.find(p => p.round === rb)!) : null, p2: pts.find(p => p.round === rb + 1) ? mkP(pts.find(p => p.round === rb + 1)!) : null };
       }).sort((a, b) => a.numero - b.numero);
       const pf = sm.find((m: any) => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: fechaLarga(pf), series });
+      return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: '', series });
     }
 
     if (tipoFase === 'reduccion') {
       const rm = matches.filter((m: any) => m.serieId && (m.serieId.includes('reduccion') || m.serieId.includes('repechaje')));
       const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
       const pf = rm.find((m: any) => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: fechaLarga(pf), cruces });
+      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: '', cruces });
     }
 
     const getEtapa = (round: number) => {
@@ -436,7 +436,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     };
     const cruces = matches.map((m: any) => ({ round: m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
     const pf = matches.find((m: any) => m.scheduledAt)?.scheduledAt;
-    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', formato, fechaPrincipal: fechaLarga(pf), cruces });
+    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
