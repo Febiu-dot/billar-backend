@@ -891,15 +891,29 @@ router.post('/recalcular-puntos-series/:circuitId', authenticate, requireRole('a
 
 router.get('/', async (req, res: Response) => {
   const { phaseId, status, tableId, venueId, circuitId, tournamentId } = req.query;
+
+  // venueId: matchea por la mesa ya asignada (partidos ya en mesa) O por
+  // pertenecer a una SERIE que ya tiene otro partido con mesa de esa sede
+  // (así el partido 3/4/5 de una serie, generado sin mesa aún, hereda la
+  // sede correcta). El herencia es por SERIE, no por fase completa: una
+  // fase departamental/nacional puede agrupar series de VARIAS sedes a la
+  // vez, así que heredar a nivel de fase mezclaría partidos de otras sedes.
+  let serieIdsDeLaSede: string[] = [];
+  if (venueId) {
+    const conMesaEnSede = await prisma.match.findMany({
+      where: { table: { venueId: Number(venueId) }, serieId: { not: null } },
+      select: { serieId: true },
+      distinct: ['serieId'],
+    });
+    serieIdsDeLaSede = conMesaEnSede.map(m => m.serieId).filter((s): s is string => !!s);
+  }
+
   const matches = await prisma.match.findMany({
     where: {
       ...(phaseId      ? { phaseId: Number(phaseId) }   : {}),
       ...(status       ? { status: status as any }       : {}),
       ...(tableId      ? { tableId: Number(tableId) }    : {}),
-      // venueId: matchea por la mesa asignada (partidos ya en mesa) O por la
-      // sede ya "fijada" en la fase (partidos pendientes de la misma serie,
-      // que heredan la sede del primer partido asignado en esa fase).
-      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, { phase: { venueId: Number(venueId) } }] } : {}),
+      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, { serieId: { in: serieIdsDeLaSede } }] } : {}),
       ...(circuitId    ? { phase: { circuitId: Number(circuitId) } } : {}),
       ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
@@ -981,13 +995,10 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
 
   await prisma.table.update({ where: { id: table.id }, data: { status: 'ocupada' } });
 
-  const matchActual = await prisma.match.findUnique({ where: { id: matchId }, select: { phaseId: true } });
-  if (matchActual) {
-    // fija/actualiza la sede de la fase con la de esta mesa: asi los proximos
-    // partidos de la misma serie (generados sin mesa aun) heredan la sede
-    // y el juez de esa sede los ve en su panel sin que el admin intervenga.
-    await prisma.phase.update({ where: { id: matchActual.phaseId }, data: { venueId: table.venueId } });
-  }
+  // La herencia de sede para los próximos partidos de la misma serie
+  // (generados sin mesa aún) se resuelve al leer /matches?venueId=X por
+  // serieId, no guardando la sede a nivel de fase (una fase puede agrupar
+  // series de varias sedes a la vez).
 
   const match = await prisma.match.update({
     where: { id: matchId }, data: { tableId: table.id, status: 'asignado' },
