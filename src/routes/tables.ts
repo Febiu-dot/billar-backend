@@ -7,13 +7,27 @@ import { emitTableUpdate } from '../services/socketService';
 const router = Router();
 
 router.get('/', async (req, res: Response) => {
-  const { venueId } = req.query;
+  const { venueId, cola } = req.query;
+  // cola=1 (panel del juez): devuelve TODOS los partidos jugables de cada mesa
+  // (asignados / en juego, con ambos jugadores definidos y torneo activo), no solo uno.
+  // Sin cola: comportamiento original (un solo partido por mesa).
+  const matchesWhere: any = cola
+    ? {
+        status: { in: ['asignado', 'en_juego'] },
+        playerAId: { not: null },
+        playerBId: { not: null },
+        phase: { circuit: { tournament: { active: true } } },
+      }
+    : { status: { in: ['asignado', 'en_juego'] } };
+  const matchesExtra: any = cola
+    ? { orderBy: [{ scheduledAt: 'asc' }, { round: 'asc' }, { id: 'asc' }] }
+    : { take: 1 };
   const tables = await prisma.table.findMany({
     where: venueId ? { venueId: Number(venueId) } : undefined,
     include: {
       venue: true,
       matches: {
-        where: { status: { in: ['asignado', 'en_juego'] } },
+        where: matchesWhere,
         include: {
           playerA: { include: { category: true } },
           playerB: { include: { category: true } },
@@ -21,7 +35,7 @@ router.get('/', async (req, res: Response) => {
           result: true,
           ruleSet: true,
         },
-        take: 1,
+        ...matchesExtra,
       },
     },
     orderBy: [{ venueId: 'asc' }, { number: 'asc' }],
