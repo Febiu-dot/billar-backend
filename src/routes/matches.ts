@@ -728,17 +728,19 @@ async function repararSeriesNacionales(phaseId: number) {
     const partidos = await prisma.match.findMany({ where: { phaseId, serieId: match.serieId }, include: { result: true }, orderBy: { round: 'asc' } });
     const p1 = partidos.find((p: any) => p.round === roundBase); const p2 = partidos.find((p: any) => p.round === roundBase + 1);
     const p3 = partidos.find((p: any) => p.round === roundBase + 2); const p4 = partidos.find((p: any) => p.round === roundBase + 3);
-    const tableId = p1?.tableId ?? null; const ruleSetId = p1?.ruleSetId ?? null;
+    // Los partidos 3/4/5 se crean PENDIENTES y sin mesa: el juez de la sede (o el admin)
+    // les asigna mesa desde su panel. La sede se hereda por serieId (ver GET /matches?venueId).
+    const ruleSetId = p1?.ruleSetId ?? null;
     if (posEnSerie <= 1 && p1?.result?.winnerId && p2?.result?.winnerId && !p3) {
       const newP3 = await prisma.match.create({
-        data: { phaseId, playerAId: p1.result!.winnerId!, playerBId: p2.result!.winnerId!, round: roundBase + 2, status: 'asignado', serieId: match.serieId, tableId, ruleSetId },
+        data: { phaseId, playerAId: p1.result!.winnerId!, playerBId: p2.result!.winnerId!, round: roundBase + 2, status: 'pendiente', serieId: match.serieId, tableId: null, ruleSetId },
         include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
       });
       const p1LoserId = p1.playerAId === p1.result!.winnerId ? p1.playerBId : p1.playerAId;
       const p2LoserId = p2.playerAId === p2.result!.winnerId ? p2.playerBId : p2.playerAId;
       if (p1LoserId && p2LoserId) {
         const newP4 = await prisma.match.create({
-          data: { phaseId, playerAId: p1LoserId, playerBId: p2LoserId, round: roundBase + 3, status: 'asignado', serieId: match.serieId, tableId, ruleSetId },
+          data: { phaseId, playerAId: p1LoserId, playerBId: p2LoserId, round: roundBase + 3, status: 'pendiente', serieId: match.serieId, tableId: null, ruleSetId },
           include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
         });
         emitMatchUpdate(io, newP4);
@@ -749,7 +751,7 @@ async function repararSeriesNacionales(phaseId: number) {
       const p3LoserId = p3!.playerAId === p3!.result!.winnerId ? p3!.playerBId : p3!.playerAId;
       if (p3LoserId && p4!.result!.winnerId) {
         const newP5 = await prisma.match.create({
-          data: { phaseId, playerAId: p3LoserId, playerBId: p4!.result!.winnerId!, round: roundBase + 4, status: 'asignado', serieId: match.serieId, tableId, ruleSetId },
+          data: { phaseId, playerAId: p3LoserId, playerBId: p4!.result!.winnerId!, round: roundBase + 4, status: 'pendiente', serieId: match.serieId, tableId: null, ruleSetId },
           include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
         });
         emitMatchUpdate(io, newP5);
