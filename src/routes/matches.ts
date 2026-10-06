@@ -31,6 +31,18 @@ async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cup
   } catch { return { circuitId: 0, cuposDesdeClasif: 16, esNacional: false, formato: '32' }; }
 }
 
+// Busca el partido que espera un lugar ("Clasificado Clasif. #7", etc.) SOLO dentro del
+// mismo circuito/torneo que la fase de origen. Sin este límite, dos torneos con los mismos
+// textos de lugar se pisarían entre sí (ej. Montevideo y Canelones Este).
+async function buscarPorSlot(phaseIdOrigen: number, slotLabel: string) {
+  const { circuitId } = await getCircuitInfo(phaseIdOrigen);
+  if (!circuitId) return null;
+  return prisma.match.findFirst({
+    where: { phase: { circuitId }, OR: [{ slotA: slotLabel }, { slotB: slotLabel }] },
+    orderBy: { id: 'asc' },
+  });
+}
+
 async function sumarPuntosRanking(playerId: number, circuitId: number, puntos: number) {
   if (!playerId || !circuitId || puntos === 0) return;
   try { await prisma.rankingEntry.updateMany({ where: { playerId, circuitId }, data: { points: { increment: puntos } } }); }
@@ -453,7 +465,7 @@ async function rellenarSlotMasterConGanadorPrimera(matchId: number) {
     const pos = todosPrimera.findIndex((m: any) => m.id === matchId) + 1;
     if (pos === 0) return;
     const slotLabel = `Clasificado Primera #${pos}`; const winnerId = match.result.winnerId;
-    const masterMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+    const masterMatch = await buscarPorSlot(match.phaseId, slotLabel);
     if (!masterMatch) return;
     const esSlotA = masterMatch.slotA === slotLabel;
     await prisma.match.update({ where: { id: masterMatch.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
@@ -473,7 +485,7 @@ async function rellenarSlotsMaster(phaseId: number) {
     for (const match of matchesPrimera) {
       if (!match.result?.winnerId) { pos++; continue; }
       const slotLabel = `Clasificado Primera #${pos}`; const winnerId = match.result.winnerId;
-      const masterMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+      const masterMatch = await buscarPorSlot(phaseId, slotLabel);
       if (!masterMatch) { pos++; continue; }
       const esSlotA = masterMatch.slotA === slotLabel;
       await prisma.match.update({ where: { id: masterMatch.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
@@ -518,7 +530,7 @@ async function rellenarSlotsPrimera(phaseId: number) {
     clasificados.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
     for (let i = 0; i < clasificados.length; i++) {
       const slotLabel = `Clasificado Segunda #${i + 1}`; const winnerId = clasificados[i].playerId;
-      const primeraMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+      const primeraMatch = await buscarPorSlot(phaseId, slotLabel);
       if (!primeraMatch) continue;
       const esSlotA = primeraMatch.slotA === slotLabel;
       await prisma.match.update({ where: { id: primeraMatch.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
@@ -554,7 +566,7 @@ async function rellenarSlotSegunda(matchId: number) {
       slotLabel = `Clasificado Clasif. #${cruceNum}`;
     }
     const winnerId = match.result.winnerId;
-    const segundaMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+    const segundaMatch = await buscarPorSlot(match.phaseId, slotLabel);
     if (!segundaMatch) return;
     const esSlotA = segundaMatch.slotA === slotLabel;
     await prisma.match.update({ where: { id: segundaMatch.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
@@ -570,7 +582,7 @@ async function rellenarSlotSegundaConRepechaje(winnerId: number, phaseId: number
   try {
     const cuposDesdeClasif = await getCuposDesdeClasif(phaseId);
     const slotLabel = `Clasificado Clasif. #${cuposDesdeClasif}`;
-    const segundaMatch = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+    const segundaMatch = await buscarPorSlot(phaseId, slotLabel);
     if (!segundaMatch) return;
     const esSlotA = segundaMatch.slotA === slotLabel;
     await prisma.match.update({ where: { id: segundaMatch.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
@@ -649,7 +661,7 @@ async function rellenarCrucesReduccion(phaseId: number) {
       const jug = clasificados[i];
       if (!jug) continue;
       const slotLabel = `Clasificado Clasif. #${i + 1}`;
-      const destino = await prisma.match.findFirst({ where: { OR: [{ slotA: slotLabel }, { slotB: slotLabel }] } });
+      const destino = await buscarPorSlot(phaseId, slotLabel);
       if (!destino) continue;
       const esSlotA = destino.slotA === slotLabel;
       await prisma.match.update({ where: { id: destino.id }, data: esSlotA ? { playerAId: jug.playerId, slotA: null } : { playerBId: jug.playerId, slotB: null } });
@@ -900,14 +912,18 @@ router.get('/', async (req, res: Response) => {
   // sede correcta). El herencia es por SERIE, no por fase completa: una
   // fase departamental/nacional puede agrupar series de VARIAS sedes a la
   // vez, así que heredar a nivel de fase mezclaría partidos de otras sedes.
-  let serieIdsDeLaSede: string[] = [];
+  // La herencia se limita a la misma FASE: los serieId ("clasif-serie-1") se repiten entre
+  // torneos distintos, así que se compara el par (fase, serie), nunca solo el serieId.
+  let seriesDeLaSede: any[] = [];
   if (venueId) {
     const conMesaEnSede = await prisma.match.findMany({
-      where: { table: { venueId: Number(venueId) }, serieId: { not: null } },
-      select: { serieId: true },
-      distinct: ['serieId'],
+      where: { table: { venueId: Number(venueId) }, serieId: { not: null }, phase: { circuit: { tournament: { active: true } } } },
+      select: { phaseId: true, serieId: true },
+      distinct: ['phaseId', 'serieId'],
     });
-    serieIdsDeLaSede = conMesaEnSede.map(m => m.serieId).filter((s): s is string => !!s);
+    const porFase: Record<number, string[]> = {};
+    for (const m of conMesaEnSede) { if (!m.serieId) continue; if (!porFase[m.phaseId]) porFase[m.phaseId] = []; porFase[m.phaseId].push(m.serieId); }
+    seriesDeLaSede = Object.entries(porFase).map(([ph, ids]) => ({ phaseId: Number(ph), serieId: { in: ids } }));
   }
 
   const matches = await prisma.match.findMany({
@@ -915,7 +931,7 @@ router.get('/', async (req, res: Response) => {
       ...(phaseId      ? { phaseId: Number(phaseId) }   : {}),
       ...(status       ? { status: status as any }       : {}),
       ...(tableId      ? { tableId: Number(tableId) }    : {}),
-      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, { serieId: { in: serieIdsDeLaSede } }] } : {}),
+      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, ...seriesDeLaSede] } : {}),
       ...(circuitId    ? { phase: { circuitId: Number(circuitId) } } : {}),
       ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
