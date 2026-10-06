@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
+import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -101,17 +102,25 @@ router.get('/circuitos', async (_req, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE /api/publicaciones/reset
-router.delete('/reset', async (_req, res: Response) => {
+// DELETE /api/publicaciones/reset?circuitId=X
+// Vacía SOLO el circuito indicado (ranking del circuito, ranking final de su torneo y
+// reportes de sus fases). Nunca global: hay varios torneos en curso a la vez.
+router.delete('/reset', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
+    const circuitId = parseInt(String(req.query.circuitId ?? ''));
+    if (!circuitId) { res.status(400).json({ error: 'Indicá el circuito a vaciar (circuitId).' }); return; }
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, include: { phases: true } });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+    const phaseIds = circuit.phases.map((p: any) => p.id);
     const [reportes, acumulado, rankings] = await Promise.all([
-      prisma.report.deleteMany({}),
-      prisma.rankingAcumulado.deleteMany({}),
+      prisma.report.deleteMany({ where: { phaseId: { in: phaseIds } } }),
+      prisma.rankingAcumulado.deleteMany({ where: { tournamentId: circuit.tournamentId } }),
       prisma.rankingEntry.updateMany({
+        where: { circuitId },
         data: { position: null, points: 0, matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 }
       }),
     ]);
-    res.json({ ok: true, message: 'Todo vaciado correctamente', reportes_borrados: reportes.count, acumulado_borrado: acumulado.count, rankings_reseteados: rankings.count });
+    res.json({ ok: true, message: `Circuito "${circuit.name}" vaciado correctamente`, reportes_borrados: reportes.count, acumulado_borrado: acumulado.count, rankings_reseteados: rankings.count });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
