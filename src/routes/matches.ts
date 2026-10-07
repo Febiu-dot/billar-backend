@@ -19,6 +19,7 @@ interface ClasificadoStats {
   playerId: number;
   puntos: number;
   setsGanados: number;
+  setsPerdidos?: number;
   tantosAFavor: number;
   tantosEnContra: number;
 }
@@ -629,21 +630,26 @@ async function rellenarCrucesReduccion(phaseId: number) {
     }
     // 1º = ganador del P3 (final de ganadores); 2º = ganador del P5. Se define por ESTRUCTURA de la serie
     // (antes se ordenaba por victorias y habia empates 2-2 entre ganador P3 y ganador P5 que daban 1º/2º invertidos).
-    const calcular = (modo: 'estructural' | 'legacy'): ClasificadoStats[] => {
+    const calcular = (modo: 'estructural' | 'legacy', orden: 'oficial' | 'previo' = 'oficial'): ClasificadoStats[] => {
       const out: ClasificadoStats[] = [];
       for (const serieId of Object.keys(seriesMap)) {
         const partidos = seriesMap[serieId];
         const roundBase = Math.min(...partidos.map((p: any) => p.round));
         const jugadoresIds: Set<number> = new Set();
         for (const p of partidos) { if (p.playerAId) jugadoresIds.add(p.playerAId); if (p.playerBId) jugadoresIds.add(p.playerBId); }
-        const statsJugador: Record<number, PlayerStats> = {};
-        for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
+        const statsJugador: Record<number, PlayerStats & { setsLost: number }> = {};
+        for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, setsLost: 0, ptsFor: 0, ptsAgainst: 0 };
+        // Mismo criterio que el ranking oficial (rankings.ts addSetsAndTantos): si hay detalle de sets se usa; si no, el resultado.
         for (const partido of partidos) {
           if (!partido.result) continue;
-          const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
           const pA = partido.playerAId; const pB = partido.playerBId;
-          if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += setsA; statsJugador[pA].ptsFor += pointsA; statsJugador[pA].ptsAgainst += pointsB; }
-          if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += setsB; statsJugador[pB].ptsFor += pointsB; statsJugador[pB].ptsAgainst += pointsA; }
+          let sA = 0, sB = 0, tA = 0, tB = 0;
+          if (partido.sets && partido.sets.length > 0) {
+            for (const st of partido.sets) { tA += st.pointsA; tB += st.pointsB; if (st.pointsA > st.pointsB) sA++; else if (st.pointsB > st.pointsA) sB++; }
+          } else { sA = partido.result.setsA; sB = partido.result.setsB; tA = partido.result.pointsA; tB = partido.result.pointsB; }
+          const winnerId = partido.result.winnerId;
+          if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += sA; statsJugador[pA].setsLost += sB; statsJugador[pA].ptsFor += tA; statsJugador[pA].ptsAgainst += tB; }
+          if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += sB; statsJugador[pB].setsLost += sA; statsJugador[pB].ptsFor += tB; statsJugador[pB].ptsAgainst += tA; }
         }
         let primero: number | undefined; let segundo: number | undefined;
         if (modo === 'estructural') {
@@ -657,13 +663,17 @@ async function rellenarCrucesReduccion(phaseId: number) {
           });
           primero = ord[0]; segundo = ord[1];
         }
-        if (primero && statsJugador[primero]) { const s = statsJugador[primero]; out.push({ playerId: primero, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
-        if (segundo && statsJugador[segundo]) { const s = statsJugador[segundo]; out.push({ playerId: segundo, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
+        if (primero && statsJugador[primero]) { const s = statsJugador[primero]; out.push({ playerId: primero, puntos: 8, setsGanados: s.sets, setsPerdidos: s.setsLost, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
+        if (segundo && statsJugador[segundo]) { const s = statsJugador[segundo]; out.push({ playerId: segundo, puntos: 6, setsGanados: s.sets, setsPerdidos: s.setsLost, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
       }
-      return out.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
+      // Orden oficial (igual a sortAlternativa4 de rankings.ts): puntos > diferencia de sets > promedio de tantos (favor/contra).
+      const prom = (x: ClasificadoStats) => x.tantosEnContra > 0 ? x.tantosAFavor / x.tantosEnContra : (x.tantosAFavor > 0 ? 99999 : 0);
+      // Orden usado por versiones anteriores (solo para reconocer y reparar lo ya cargado).
+      if (orden === 'previo') return out.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
+      return out.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; const dA = a.setsGanados - (a.setsPerdidos ?? 0); const dB = b.setsGanados - (b.setsPerdidos ?? 0); if (dB !== dA) return dB - dA; return prom(b) - prom(a); });
     };
     const clasificados = calcular('estructural');
-    const clasificadosLegacy = calcular('legacy');
+    const previos = [calcular('estructural', 'previo'), calcular('legacy', 'previo')];
     const crucesReduccion = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'clasif-reduccion-' } }, orderBy: { round: 'asc' } });
     const N = clasificados.length;
     const cuposDesdeClasif = await getCuposDesdeClasif(phaseId);
@@ -681,10 +691,13 @@ async function rellenarCrucesReduccion(phaseId: number) {
       const slotLabel = `Clasificado Clasif. #${i + 1}`;
       const porSlot = await buscarPorSlot(phaseId, slotLabel);
       if (porSlot) { destinos.push({ matchId: porSlot.id, lado: porSlot.slotA === slotLabel ? 'A' : 'B', jugadorId: jug.playerId }); continue; }
-      const viejo = clasificadosLegacy[i]?.playerId;
-      if (!viejo || viejo === jug.playerId || idsSegunda.length === 0) continue;
-      const m = await prisma.match.findFirst({ where: { phaseId: { in: idsSegunda }, status: { in: ['pendiente', 'asignado'] }, OR: [{ playerAId: viejo }, { playerBId: viejo }] }, orderBy: { id: 'asc' } });
-      if (m) destinos.push({ matchId: m.id, lado: m.playerAId === viejo ? 'A' : 'B', jugadorId: jug.playerId });
+      if (idsSegunda.length === 0) continue;
+      for (const lista of previos) {
+        const viejo = lista[i]?.playerId;
+        if (!viejo || viejo === jug.playerId) continue;
+        const m = await prisma.match.findFirst({ where: { phaseId: { in: idsSegunda }, status: { in: ['pendiente', 'asignado'] }, OR: [{ playerAId: viejo }, { playerBId: viejo }] }, orderBy: { id: 'asc' } });
+        if (m) { destinos.push({ matchId: m.id, lado: m.playerAId === viejo ? 'A' : 'B', jugadorId: jug.playerId }); break; }
+      }
     }
     for (const d of destinos) {
       await prisma.match.update({ where: { id: d.matchId }, data: d.lado === 'A' ? { playerAId: d.jugadorId, slotA: null } : { playerBId: d.jugadorId, slotB: null } });
