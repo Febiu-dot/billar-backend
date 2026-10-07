@@ -404,13 +404,13 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, orderBy: { position: 'asc' } });
     }
 
-    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', segunda: 'segunda', primera: 'primera', master: 'master' };
+    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', segunda: 'segunda', primera: 'primera', master: 'master' };
     const phase = circuit.phases.find((p: any) => p.type === phaseTypeMap[tipoFase]);
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
     const matches = await prisma.match.findMany({
       where: { phaseId: phase.id },
-      include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true },
+      include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true, sets: true },
       orderBy: { round: 'asc' }
     });
     if (matches.length === 0) { res.status(404).json({ error: 'No hay partidos generados para esta fase. Generalos desde Fixture.' }); return; }
@@ -428,6 +428,53 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       }).sort((a, b) => a.numero - b.numero);
       const pf = sm.find((m: any) => m.scheduledAt)?.scheduledAt;
       return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: '', series });
+    }
+
+    // ── RANKING DEL CLASIFICATORIO (puestos 1..N tras las series) ─────────
+    // 1º = ganador del P3, 2º = ganador del P5 de cada serie. Orden oficial: puntos > dif. sets > promedio tantos.
+    if (tipoFase === 'ranking-clasificatorio') {
+      const porSerie: Record<string, any[]> = {};
+      for (const m of matches) { if (m.serieId?.startsWith('clasif-serie-')) (porSerie[m.serieId] ??= []).push(m); }
+      const filas: any[] = [];
+      let pendientes = 0;
+      for (const [sid, ms] of Object.entries(porSerie)) {
+        const base = Math.min(...ms.map((m: any) => m.round));
+        const p3 = ms.find((m: any) => m.round === base + 2); const p5 = ms.find((m: any) => m.round === base + 4);
+        if (!p3?.result?.winnerId || !p5?.result?.winnerId) { pendientes++; continue; }
+        const info: Record<number, any> = {};
+        const get = (pl: any) => (info[pl.id] ??= { pl, sg: 0, sp: 0, tf: 0, tc: 0 });
+        for (const m of ms) {
+          if (!m.result) continue;
+          let sA = 0, sB = 0, tA = 0, tB = 0;
+          if (m.sets && m.sets.length > 0) { for (const st of m.sets) { tA += st.pointsA; tB += st.pointsB; if (st.pointsA > st.pointsB) sA++; else if (st.pointsB > st.pointsA) sB++; } }
+          else { sA = m.result.setsA; sB = m.result.setsB; tA = m.result.pointsA; tB = m.result.pointsB; }
+          if (m.playerA) { const a = get(m.playerA); a.sg += sA; a.sp += sB; a.tf += tA; a.tc += tB; }
+          if (m.playerB) { const b = get(m.playerB); b.sg += sB; b.sp += sA; b.tf += tB; b.tc += tA; }
+        }
+        const serieNum = parseInt(sid.replace('clasif-serie-', ''));
+        for (const [wid, pts] of [[p3.result.winnerId, 8], [p5.result.winnerId, 6]] as [number, number][]) {
+          const x = info[wid]; if (!x) continue;
+          filas.push({ serie: serieNum, puntos: pts, setsGanados: x.sg, setsPerdidos: x.sp, tantos: x.tf, tantosContra: x.tc, player: x.pl });
+        }
+      }
+      if (filas.length === 0) { res.status(404).json({ error: 'Todavía no hay series finalizadas en el clasificatorio.' }); return; }
+      const prom = (f: any) => f.tantosContra > 0 ? f.tantos / f.tantosContra : (f.tantos > 0 ? 99999 : 0);
+      filas.sort((a, b) => b.puntos - a.puntos || ((b.setsGanados - b.setsPerdidos) - (a.setsGanados - a.setsPerdidos)) || (prom(b) - prom(a)));
+      const numCruces = matches.filter((m: any) => m.serieId?.startsWith('clasif-reduccion-')).length;
+      const directos = Math.max(0, filas.length - 2 * numCruces);
+      const jugadores = filas.map((f, i) => ({
+        posicion: i + 1,
+        nombre: `${f.player.lastName}, ${f.player.firstName}`,
+        club: abrev(f.player.club),
+        pais: f.player.pais ?? 'Uruguay',
+        serie: f.serie,
+        puntos: f.puntos,
+        setsGanados: f.setsGanados, setsPerdidos: f.setsPerdidos, difSets: f.setsGanados - f.setsPerdidos,
+        tantos: f.tantos, tantosContra: f.tantosContra,
+        promedio: parseFloat(prom(f) > 9999 ? '99.99' : prom(f).toFixed(2)),
+        destino: numCruces === 0 ? '' : (i < directos ? 'SERIES DE SEGUNDA' : 'REDUCCIÓN')
+      }));
+      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: pendientes > 0 ? `Parcial: faltan ${pendientes} series` : '', directos, jugadores });
     }
 
     if (tipoFase === 'reduccion') {
