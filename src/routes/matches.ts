@@ -627,29 +627,43 @@ async function rellenarCrucesReduccion(phaseId: number) {
       const p5 = partidos.find((p: any) => { const rb = Math.floor(p.round / 10) * 10 + 1; return p.round === rb + 4; });
       if (!p5 || !p5.result?.winnerId) return;
     }
-    const clasificados: ClasificadoStats[] = [];
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const jugadoresIds: Set<number> = new Set();
-      for (const p of partidos) { if (p.playerAId) jugadoresIds.add(p.playerAId); if (p.playerBId) jugadoresIds.add(p.playerBId); }
-      const statsJugador: Record<number, PlayerStats> = {};
-      for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-      for (const partido of partidos) {
-        if (!partido.result) continue;
-        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
-        const pA = partido.playerAId; const pB = partido.playerBId;
-        if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += setsA; statsJugador[pA].ptsFor += pointsA; statsJugador[pA].ptsAgainst += pointsB; }
-        if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += setsB; statsJugador[pB].ptsFor += pointsB; statsJugador[pB].ptsAgainst += pointsA; }
+    // 1º = ganador del P3 (final de ganadores); 2º = ganador del P5. Se define por ESTRUCTURA de la serie
+    // (antes se ordenaba por victorias y habia empates 2-2 entre ganador P3 y ganador P5 que daban 1º/2º invertidos).
+    const calcular = (modo: 'estructural' | 'legacy'): ClasificadoStats[] => {
+      const out: ClasificadoStats[] = [];
+      for (const serieId of Object.keys(seriesMap)) {
+        const partidos = seriesMap[serieId];
+        const roundBase = Math.min(...partidos.map((p: any) => p.round));
+        const jugadoresIds: Set<number> = new Set();
+        for (const p of partidos) { if (p.playerAId) jugadoresIds.add(p.playerAId); if (p.playerBId) jugadoresIds.add(p.playerBId); }
+        const statsJugador: Record<number, PlayerStats> = {};
+        for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
+        for (const partido of partidos) {
+          if (!partido.result) continue;
+          const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
+          const pA = partido.playerAId; const pB = partido.playerBId;
+          if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += setsA; statsJugador[pA].ptsFor += pointsA; statsJugador[pA].ptsAgainst += pointsB; }
+          if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += setsB; statsJugador[pB].ptsFor += pointsB; statsJugador[pB].ptsAgainst += pointsA; }
+        }
+        let primero: number | undefined; let segundo: number | undefined;
+        if (modo === 'estructural') {
+          primero = partidos.find((p: any) => p.round === roundBase + 2)?.result?.winnerId ?? undefined;
+          segundo = partidos.find((p: any) => p.round === roundBase + 4)?.result?.winnerId ?? undefined;
+        } else {
+          const ord = Array.from(jugadoresIds).filter(id => statsJugador[id]).sort((a, b) => {
+            const sa = statsJugador[a]; const sb = statsJugador[b];
+            if (sb.wins !== sa.wins) return sb.wins - sa.wins; if (sb.sets !== sa.sets) return sb.sets - sa.sets;
+            if (sb.ptsFor !== sa.ptsFor) return sb.ptsFor - sa.ptsFor; return sa.ptsAgainst - sb.ptsAgainst;
+          });
+          primero = ord[0]; segundo = ord[1];
+        }
+        if (primero && statsJugador[primero]) { const s = statsJugador[primero]; out.push({ playerId: primero, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
+        if (segundo && statsJugador[segundo]) { const s = statsJugador[segundo]; out.push({ playerId: segundo, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
       }
-      const jugadoresOrdenados = Array.from(jugadoresIds).filter(id => statsJugador[id]).sort((a, b) => {
-        const sa = statsJugador[a]; const sb = statsJugador[b];
-        if (sb.wins !== sa.wins) return sb.wins - sa.wins; if (sb.sets !== sa.sets) return sb.sets - sa.sets;
-        if (sb.ptsFor !== sa.ptsFor) return sb.ptsFor - sa.ptsFor; return sa.ptsAgainst - sb.ptsAgainst;
-      });
-      if (jugadoresOrdenados[0]) { const s = statsJugador[jugadoresOrdenados[0]]; clasificados.push({ playerId: jugadoresOrdenados[0], puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
-      if (jugadoresOrdenados[1]) { const s = statsJugador[jugadoresOrdenados[1]]; clasificados.push({ playerId: jugadoresOrdenados[1], puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
-    }
-    clasificados.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
+      return out.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
+    };
+    const clasificados = calcular('estructural');
+    const clasificadosLegacy = calcular('legacy');
     const crucesReduccion = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'clasif-reduccion-' } }, orderBy: { round: 'asc' } });
     const N = clasificados.length;
     const cuposDesdeClasif = await getCuposDesdeClasif(phaseId);
@@ -657,18 +671,29 @@ async function rellenarCrucesReduccion(phaseId: number) {
     // Ej: 22 clasificados, cupos=16, 6 cruces de reduccion -> directos = 16-6 = 10 (puestos 1-10).
     const directos = Math.max(0, cuposDesdeClasif - crucesReduccion.length);
 
+    // Ubicar destinos de los directos: por slot-label (primera vez) o por el jugador que dejo una corrida
+    // anterior (reparacion). Se ubican todos ANTES de modificar para evitar pisarse.
+    const fasesSegunda = await prisma.phase.findMany({ where: { type: 'segunda', circuit: { phases: { some: { id: phaseId } } } }, select: { id: true } });
+    const idsSegunda = fasesSegunda.map((f: any) => f.id);
+    const destinos: { matchId: number; lado: 'A' | 'B'; jugadorId: number }[] = [];
     for (let i = 0; i < directos; i++) {
-      const jug = clasificados[i];
-      if (!jug) continue;
+      const jug = clasificados[i]; if (!jug) continue;
       const slotLabel = `Clasificado Clasif. #${i + 1}`;
-      const destino = await buscarPorSlot(phaseId, slotLabel);
-      if (!destino) continue;
-      const esSlotA = destino.slotA === slotLabel;
-      await prisma.match.update({ where: { id: destino.id }, data: esSlotA ? { playerAId: jug.playerId, slotA: null } : { playerBId: jug.playerId, slotB: null } });
-      const actualizado = await prisma.match.findUnique({ where: { id: destino.id } });
+      const porSlot = await buscarPorSlot(phaseId, slotLabel);
+      if (porSlot) { destinos.push({ matchId: porSlot.id, lado: porSlot.slotA === slotLabel ? 'A' : 'B', jugadorId: jug.playerId }); continue; }
+      const viejo = clasificadosLegacy[i]?.playerId;
+      if (!viejo || viejo === jug.playerId || idsSegunda.length === 0) continue;
+      const m = await prisma.match.findFirst({ where: { phaseId: { in: idsSegunda }, status: { in: ['pendiente', 'asignado'] }, OR: [{ playerAId: viejo }, { playerBId: viejo }] }, orderBy: { id: 'asc' } });
+      if (m) destinos.push({ matchId: m.id, lado: m.playerAId === viejo ? 'A' : 'B', jugadorId: jug.playerId });
+    }
+    for (const d of destinos) {
+      await prisma.match.update({ where: { id: d.matchId }, data: d.lado === 'A' ? { playerAId: d.jugadorId, slotA: null } : { playerBId: d.jugadorId, slotB: null } });
+    }
+    for (const d of destinos) {
+      const actualizado = await prisma.match.findUnique({ where: { id: d.matchId } });
       if (actualizado?.playerAId && actualizado?.playerBId) {
-        await prisma.match.update({ where: { id: destino.id }, data: { status: actualizado.tableId ? 'asignado' : 'pendiente' } });
-        await checkAndEmitMatch(destino.id);
+        await prisma.match.update({ where: { id: d.matchId }, data: { status: actualizado.tableId ? 'asignado' : 'pendiente' } });
+        await checkAndEmitMatch(d.matchId);
       }
     }
 
