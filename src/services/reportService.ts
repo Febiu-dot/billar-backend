@@ -8,7 +8,7 @@ function pn(player: any): string {
 function formatFecha(date: Date | string | null | undefined): string {
   if (!date) return '';
   return new Date(date).toLocaleString('es-UY', {
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    timeZone: 'America/Montevideo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
   }) + 'hs';
 }
 

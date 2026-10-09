@@ -2,6 +2,10 @@ import { Router, Response } from 'express';
 import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
+// Fechas de calendario (inicio/fin): se guardan a las 12:00 UTC del dia elegido. Asi el dia no cambia
+// al verlo en ningun huso horario (a medianoche UTC se veia el dia anterior/siguiente en Uruguay).
+const diaCalendario = (s: string): Date => new Date(`${String(s).slice(0, 10)}T12:00:00.000Z`);
+
 const router = Router();
 
 // ── Helper: cascade delete de un circuito ────────────────────────────
@@ -137,8 +141,8 @@ router.post('/:id/circuits', authenticate, requireRole('admin'), async (req: Aut
         name: String(name).trim(),
         order: parseInt(String(order), 10),
         tournamentId: Number(req.params.id),
-        startDate: startDate && startDate !== '' ? new Date(startDate) : undefined,
-        endDate:   endDate   && endDate   !== '' ? new Date(endDate)   : undefined,
+        startDate: startDate && startDate !== '' ? diaCalendario(startDate) : undefined,
+        endDate:   endDate   && endDate   !== '' ? diaCalendario(endDate)   : undefined,
       },
     });
     res.status(201).json(circuit);
@@ -157,8 +161,8 @@ router.put('/circuits/:circuitId', authenticate, requireRole('admin'), async (re
         name,
         order: order !== undefined ? parseInt(String(order), 10) : undefined,
         active,
-        startDate: startDate && startDate !== '' ? new Date(startDate) : null,
-        endDate:   endDate   && endDate   !== '' ? new Date(endDate)   : null,
+        startDate: startDate && startDate !== '' ? diaCalendario(startDate) : null,
+        endDate:   endDate   && endDate   !== '' ? diaCalendario(endDate)   : null,
       },
     });
     res.json(circuit);
