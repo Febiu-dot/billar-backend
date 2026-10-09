@@ -30,15 +30,28 @@ const hora = (dt?: any) => {
   return uyDate.toISOString().slice(11, 16);
 };
 
-const fecha = (dt?: any) =>
-  dt ? new Date(dt).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+// Fecha en horario de Uruguay (UTC-3). El servidor corre en UTC: sin esto, un partido a las 21:00 UY
+// (= 00:00 UTC del dia siguiente) se publicaba con la fecha del dia siguiente.
+const partesUY = (dt: any) => {
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' }).formatToParts(new Date(dt));
+  const g = (t: string) => f.find(x => x.type === t)?.value ?? '';
+  return { d: g('day'), m: g('month'), y: g('year') };
+};
+
+const fecha = (dt?: any) => {
+  if (!dt) return '';
+  const { d, m, y } = partesUY(dt);
+  return `${d}/${m}/${y}`;
+};
 
 const fechaLarga = (dt?: any) => {
   if (!dt) return '';
-  const d = new Date(dt);
+  const { d, m, y } = partesUY(dt);
+  // dia de la semana calculado sobre la fecha local de Uruguay
+  const dow = new Date(Date.UTC(parseInt(y), parseInt(m) - 1, parseInt(d))).getUTCDay();
   const dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-  return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
+  return `${dias[dow]} ${parseInt(d)} de ${meses[parseInt(m) - 1]} de ${y}`;
 };
 
 const esNacionalTorneo = (nombreTorneo?: string | null): boolean =>
