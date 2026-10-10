@@ -798,6 +798,73 @@ router.post('/trigger-segunda/:phaseId', authenticate, requireRole('admin'), asy
   try { await rellenarSlotsPrimera(parseInt(req.params.phaseId)); res.json({ message: 'Slots de Primera rellenados correctamente' }); }
   catch (error: any) { res.status(500).json({ error: error.message }); }
 });
+// Corrige en los cruces de Primera el orden de los clasificados de Segunda segun el ranking oficial
+// (puntos > diferencia de sets > promedio de tantos). Solo reordena a los MISMOS jugadores entre
+// sus lugares; si hay algo raro (otros jugadores, cruces ya jugados) no toca nada y avisa.
+// Sin ?aplicar=true solo muestra el plan (no cambia nada).
+router.post('/reordenar-primera/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const aplicar = req.query.aplicar === 'true';
+    const fases = await prisma.phase.findMany({ where: { circuitId } });
+    const fSegunda = fases.find((f: any) => f.type === 'segunda');
+    const fPrimera = fases.find((f: any) => f.type === 'primera');
+    if (!fSegunda || !fPrimera) { res.status(404).json({ error: 'Este circuito no tiene fase de Segunda y de Primera.' }); return; }
+
+    const matchesSegunda = await prisma.match.findMany({
+      where: { phaseId: fSegunda.id, serieId: { startsWith: 'segunda-serie-' } },
+      include: { result: true, sets: true, playerA: true, playerB: true }, orderBy: { round: 'asc' }
+    });
+    const { filas, pendientes } = calcularRankingSeries(matchesSegunda, 'segunda-serie-');
+    if (pendientes > 0 || filas.length === 0) { res.status(409).json({ error: 'Todavia no terminaron todas las series de Segunda.' }); return; }
+    const oficial = ordenarFilasRanking(filas);
+
+    const cruces = await prisma.match.findMany({
+      where: { phaseId: fPrimera.id, serieId: { startsWith: 'primera-cruce-' } },
+      include: { result: true, playerA: true, playerB: true }, orderBy: { round: 'asc' }
+    });
+    const M = cruces.length; const total = 2 * M; const n = oficial.length; const p = total - n;
+    if (M === 0 || p < 0) { res.status(409).json({ error: 'Los cruces de Primera no tienen la forma esperada. No se toco nada.' }); return; }
+
+    const nombre = (j: any) => (j ? `${j.lastName}, ${j.firstName}` : '—');
+    const plan = oficial.map((f: any, i: number) => {
+      const idx = p + i;
+      const lado = idx < M ? 'A' : 'B';
+      const cruce: any = lado === 'A' ? cruces[idx] : cruces[total - 1 - idx];
+      const actualJ: any = lado === 'A' ? cruce.playerA : cruce.playerB;
+      return {
+        puesto: i + 1, cruceId: cruce.id, cruceNumero: lado === 'A' ? idx + 1 : total - idx, lado,
+        actual: { id: actualJ?.id ?? null, nombre: nombre(actualJ) },
+        oficial: { id: f.playerId, nombre: nombre(f.player) },
+        cambia: (actualJ?.id ?? null) !== f.playerId,
+        yaJugado: !!cruce.result || !['pendiente', 'asignado'].includes(cruce.status),
+      };
+    });
+
+    // Seguridad 1: en esos lugares tienen que estar exactamente los mismos clasificados
+    const idsActuales: Set<number> = new Set(); const idsOficiales: Set<number> = new Set();
+    for (const it of plan) { if (it.actual.id) idsActuales.add(it.actual.id); idsOficiales.add(it.oficial.id); }
+    const mismos = idsActuales.size === n && idsOficiales.size === n && Array.from(idsOficiales).every((id: number) => idsActuales.has(id));
+    if (!mismos) { res.status(409).json({ error: 'Los jugadores que hoy estan en los cruces de Primera no coinciden con los clasificados de Segunda. No se toco nada: hay que revisarlo a mano.', plan }); return; }
+
+    const cambios = plan.filter((it: any) => it.cambia);
+    // Seguridad 2: no tocar cruces que ya empezaron o tienen resultado
+    const bloqueados = cambios.filter((it: any) => it.yaJugado);
+    if (bloqueados.length > 0) { res.status(409).json({ error: 'Hay cruces de Primera que ya empezaron o tienen resultado. No se toco nada.', bloqueados, plan }); return; }
+
+    if (!aplicar || cambios.length === 0) { res.json({ aplicado: false, cambios: cambios.length, plan: cambios }); return; }
+
+    const porCruce: Record<number, any> = {};
+    for (const it of cambios) {
+      if (!porCruce[it.cruceId]) porCruce[it.cruceId] = {};
+      if (it.lado === 'A') porCruce[it.cruceId].playerAId = it.oficial.id; else porCruce[it.cruceId].playerBId = it.oficial.id;
+    }
+    const ids: number[] = Object.keys(porCruce).map((k: string) => parseInt(k));
+    await prisma.$transaction(ids.map((id: number) => prisma.match.update({ where: { id }, data: porCruce[id] })));
+    for (const id of ids) await checkAndEmitMatch(id);
+    res.json({ aplicado: true, cambios: cambios.length, plan: cambios });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
 router.post('/trigger-primera/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try { await rellenarSlotsMaster(parseInt(req.params.phaseId)); res.json({ message: 'Slots de Master rellenados correctamente' }); }
   catch (error: any) { res.status(500).json({ error: error.message }); }
