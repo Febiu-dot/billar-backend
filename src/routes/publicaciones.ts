@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
+import { calcularRankingSeries, ordenarFilasRanking, compararFilas, promedioTantos } from '../services/rankingSerie';
 
 const router = Router();
 
@@ -417,7 +418,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, orderBy: { position: 'asc' } });
     }
 
-    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', segunda: 'segunda', primera: 'primera', master: 'master' };
+    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', primera: 'primera', master: 'master' };
     const phase = circuit.phases.find((p: any) => p.type === phaseTypeMap[tipoFase]);
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
@@ -488,6 +489,35 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         destino: numCruces === 0 ? '' : (i < directos ? 'SERIES DE SEGUNDA' : 'REDUCCIÓN')
       }));
       return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: pendientes > 0 ? `Parcial: faltan ${pendientes} series` : '', directos, jugadores });
+    }
+
+    // ── RANKING DE SEGUNDA (1° y 2° de cada serie, para cruzar contra Primera) ──────
+    // Primero todos los 1° de serie (8 pts) ordenados, despues todos los 2° (6 pts) ordenados.
+    // Criterio oficial: puntos > diferencia de sets > promedio de tantos.
+    if (tipoFase === 'ranking-segunda') {
+      const { filas, totalSeries, pendientes } = calcularRankingSeries(matches, 'segunda-serie-');
+      if (filas.length === 0) { res.status(404).json({ error: 'Todavía no hay series finalizadas en Segunda.' }); return; }
+      const ordenadas = ordenarFilasRanking(filas);
+      const primeros = ordenadas.filter((f: any) => f.puestoEnSerie === 1).length;
+      const jugadores = ordenadas.map((f: any, i: number) => ({
+        posicion: i + 1,
+        nombre: f.player ? `${f.player.lastName}, ${f.player.firstName}` : '—',
+        club: abrev(f.player?.club),
+        pais: f.player?.pais ?? 'Uruguay',
+        serie: f.serie,
+        puntos: f.puntos,
+        setsGanados: f.setsGanados, setsPerdidos: f.setsPerdidos, difSets: f.setsGanados - f.setsPerdidos,
+        tantos: f.tantos, tantosContra: f.tantosContra,
+        promedio: parseFloat(promedioTantos(f) > 9999 ? '99.99' : promedioTantos(f).toFixed(2)),
+        destino: i < primeros ? '1ROS DE SERIE' : '2DOS DE SERIE'
+      }));
+      // Avisos: empates que el criterio oficial no logra desempatar (hay que definirlos a mano)
+      const empates: number[] = [];
+      for (let i = 1; i < ordenadas.length; i++) { if (compararFilas(ordenadas[i - 1], ordenadas[i]) === 0) empates.push(i, i + 1); }
+      const avisos: string[] = [];
+      if (pendientes > 0) avisos.push(`Parcial: faltan ${pendientes} de ${totalSeries} series`);
+      if (empates.length > 0) avisos.push(`Empate total entre puestos ${Array.from(new Set(empates)).join(', ')}: definir`);
+      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DE SEGUNDA — CLASIFICADOS A CRUCES', fechaPrincipal: avisos.join(' · '), empates: Array.from(new Set(empates)), pendientes, jugadores });
     }
 
     if (tipoFase === 'reduccion') {

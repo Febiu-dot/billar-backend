@@ -5,6 +5,7 @@ import { io } from '../index';
 import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 import { generarReporteCruce, generarReporteSerie } from '../services/reportService';
 import { calcularYGuardarAcumulado } from './rankingAcumulado';
+import { calcularRankingSeries, ordenarFilasRanking } from '../services/rankingSerie';
 
 const router = Router();
 
@@ -502,33 +503,12 @@ async function rellenarSlotsMaster(phaseId: number) {
 
 async function rellenarSlotsPrimera(phaseId: number) {
   try {
-    const todasLasSeries = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'segunda-serie-' } }, include: { result: true }, orderBy: { round: 'asc' } });
-    const seriesMap: Record<string, any[]> = {};
-    for (const m of todasLasSeries) { if (!m.serieId) continue; if (!seriesMap[m.serieId]) seriesMap[m.serieId] = []; seriesMap[m.serieId].push(m); }
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId]; const roundBase = Math.min(...partidos.map((p: any) => p.round));
-      const p5 = partidos.find((p: any) => p.round === roundBase + 4);
-      if (!p5 || !p5.result?.winnerId) return;
-    }
-    const clasificados: ClasificadoStats[] = [];
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId]; const roundBase = Math.min(...partidos.map((p: any) => p.round));
-      const jugadoresIds: Set<number> = new Set();
-      for (const p of partidos) { if (p.playerAId) jugadoresIds.add(p.playerAId); if (p.playerBId) jugadoresIds.add(p.playerBId); }
-      const statsJugador: Record<number, PlayerStats> = {};
-      for (const id of jugadoresIds) statsJugador[id] = { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 };
-      for (const partido of partidos) {
-        if (!partido.result) continue;
-        const { winnerId, setsA, setsB, pointsA, pointsB } = partido.result;
-        const pA = partido.playerAId; const pB = partido.playerBId;
-        if (pA && statsJugador[pA]) { statsJugador[pA].wins += winnerId === pA ? 1 : 0; statsJugador[pA].sets += setsA; statsJugador[pA].ptsFor += pointsA; statsJugador[pA].ptsAgainst += pointsB; }
-        if (pB && statsJugador[pB]) { statsJugador[pB].wins += winnerId === pB ? 1 : 0; statsJugador[pB].sets += setsB; statsJugador[pB].ptsFor += pointsB; statsJugador[pB].ptsAgainst += pointsA; }
-      }
-      const p3 = partidos.find((p: any) => p.round === roundBase + 2); const p5 = partidos.find((p: any) => p.round === roundBase + 4);
-      if (p3?.result?.winnerId) { const s = statsJugador[p3.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 }; clasificados.push({ playerId: p3.result.winnerId, puntos: 8, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
-      if (p5?.result?.winnerId) { const s = statsJugador[p5.result.winnerId] ?? { wins: 0, sets: 0, ptsFor: 0, ptsAgainst: 0 }; clasificados.push({ playerId: p5.result.winnerId, puntos: 6, setsGanados: s.sets, tantosAFavor: s.ptsFor, tantosEnContra: s.ptsAgainst }); }
-    }
-    clasificados.sort((a, b) => { if (b.puntos !== a.puntos) return b.puntos - a.puntos; if (b.setsGanados !== a.setsGanados) return b.setsGanados - a.setsGanados; if (b.tantosAFavor !== a.tantosAFavor) return b.tantosAFavor - a.tantosAFavor; return a.tantosEnContra - b.tantosEnContra; });
+    const todasLasSeries = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'segunda-serie-' } }, include: { result: true, sets: true }, orderBy: { round: 'asc' } });
+    // Espera a que terminen TODAS las series de Segunda; ranking con el criterio oficial
+    // (puntos > diferencia de sets > promedio de tantos): primero todos los 1°, despues todos los 2°.
+    const { filas, pendientes } = calcularRankingSeries(todasLasSeries, 'segunda-serie-');
+    if (pendientes > 0 || filas.length === 0) return;
+    const clasificados = ordenarFilasRanking(filas);
     for (let i = 0; i < clasificados.length; i++) {
       const slotLabel = `Clasificado Segunda #${i + 1}`; const winnerId = clasificados[i].playerId;
       const primeraMatch = await buscarPorSlot(phaseId, slotLabel);
