@@ -836,6 +836,7 @@ router.post('/reordenar-primera/:circuitId', authenticate, requireRole('admin'),
         puesto: i + 1, cruceId: cruce.id, cruceNumero: lado === 'A' ? idx + 1 : total - idx, lado,
         actual: { id: actualJ?.id ?? null, nombre: nombre(actualJ) },
         oficial: { id: f.playerId, nombre: nombre(f.player) },
+        rival: nombre(lado === 'A' ? cruce.playerB : cruce.playerA),
         cambia: (actualJ?.id ?? null) !== f.playerId,
         yaJugado: !!cruce.result || !['pendiente', 'asignado'].includes(cruce.status),
       };
@@ -847,7 +848,7 @@ router.post('/reordenar-primera/:circuitId', authenticate, requireRole('admin'),
     const mismos = idsActuales.size === n && idsOficiales.size === n && Array.from(idsOficiales).every((id: number) => idsActuales.has(id));
     if (!mismos) { res.status(409).json({ error: 'Los jugadores que hoy estan en los cruces de Primera no coinciden con los clasificados de Segunda. No se toco nada: hay que revisarlo a mano.', plan }); return; }
 
-    const cambios = plan.filter((it: any) => it.cambia);
+    const cambios = plan.filter((it: any) => it.cambia).sort((a: any, b: any) => a.cruceNumero - b.cruceNumero);
     // Seguridad 2: no tocar cruces que ya empezaron o tienen resultado
     const bloqueados = cambios.filter((it: any) => it.yaJugado);
     if (bloqueados.length > 0) { res.status(409).json({ error: 'Hay cruces de Primera que ya empezaron o tienen resultado. No se toco nada.', bloqueados, plan }); return; }
