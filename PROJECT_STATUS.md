@@ -18,6 +18,35 @@
 
 ---
 
+## ESTADO AL 10/10/2026
+
+### COMPLETADO (10/10) — Ranking de Segunda (1° y 2° de serie → cruces de Primera) + corrección de cruces
+
+**Contexto:** en el Departamental de Canelones Este (torneo 27, circuito 37, fases: clasificatorio 103 / segunda 104 / primera 105 / master 106) terminaron las series de Segunda (12 series). Clasifican a cruzar contra Primera los 1° y 2° de cada serie (24), y hacía falta un ranking de ellos: **primero todos los 1° ordenados (puestos 1–12), después todos los 2° ordenados (13–24)**, y poder publicarlo.
+
+**Criterio oficial (único para todo el sistema):** puntos → diferencia de sets (ganados − perdidos) → promedio de tantos (a favor / en contra). Los sets y tantos de cada jugador cuentan sobre TODOS los partidos de su serie. 1° de serie = 8 pts (ganador P3), 2° = 6 pts (ganador P5).
+
+**Backend:**
+- **`src/services/rankingSerie.ts` (nuevo):** `calcularRankingSeries(matches, prefijo)`, `ordenarFilasRanking`, `compararFilas`, `promedioTantos`. Fuente única del cálculo. Devuelve también `pendientes` (series sin terminar). Empates totales en los 3 criterios se ordenan por número de serie y se **avisan** (no se desempatan solos).
+- **`publicaciones.ts`:** nueva publicación `GET /publicaciones/:circuitId/ranking-segunda` (tipo de respuesta `ranking-clasif`, grupos `1ROS DE SERIE` / `2DOS DE SERIE`). Si faltan series sale como parcial (`fechaPrincipal` con "Parcial: faltan N de M series") y si hay empate total lo avisa (`empates`).
+- **`matches.ts` → `rellenarSlotsPrimera`:** ahora usa el mismo cálculo oficial. ⚠️ ANTES ordenaba por puntos → sets ganados → tantos a favor → tantos en contra (criterio viejo, distinto al oficial). Solo rellena cuando TODAS las series de Segunda terminaron.
+- **`matches.ts` → `POST /matches/reordenar-primera/:circuitId` (nuevo, admin):** reubica a los clasificados de Segunda en los cruces de Primera (`primera-cruce-N`) según el ranking oficial. Sin `?aplicar=true` solo devuelve el plan (cruce, rival de Primera, quién debe ir, quién estaba). Con `?aplicar=true` lo aplica en una transacción y emite sockets. **Seguridad:** no toca nada si (a) no terminaron las series de Segunda, (b) los jugadores que hoy están en esos cruces no son EXACTAMENTE los 24 clasificados, o (c) algún cruce a cambiar ya tiene resultado o no está `pendiente`/`asignado`. Solo mueve a los mismos jugadores entre sus lugares (no cambia mesa/hora/serieId). Posición del puesto k en los cruces: `idx = (total−n) + k−1`; si `idx < M` es jugador A del cruce `idx+1`, si no es jugador B del cruce `total−idx` (total = 2·M cruces, n = clasificados). Verificado contra la lógica de generación (8+24 y 12+20).
+
+**Frontend (`AdminPublicacionesPage.tsx`, BUILD_TAG `pub-2026-10-10-corregir-primera-tabla`):**
+- Nueva publicación `ranking-segunda` en `FASES` (📋 Ranking de Segunda (1° y 2° → cruces)), tema bordeaux como Segunda; reusa `PlantillaRankingClasif` (el color del grupo `2DOS DE SERIE` usa el acento).
+- Con esa publicación seleccionada aparece **🔧 Ver cómo quedarían los cruces de Primera**: abre un panel con tabla (cruce / jugador de Primera / rival de Segunda que le toca / puesto / quién estaba antes) y botones **✅ Aplicar estos cambios** / Cancelar. No cambia nada hasta aplicar. (Primera versión usaba `confirm()` con lista suelta y no se entendía → se reemplazó por la tabla.)
+
+**Resultado en Canelones Este (circuito 37):** los cruces de Primera ya se habían llenado automáticamente con el criterio viejo; se corrigieron con el botón y el usuario confirmó que quedaron bien (ej. cruce 1 = Vesgas, Enzo vs Long, Alfredo).
+
+**Lecciones:**
+- Dos lugares calculaban "el ranking de los clasificados" con criterios distintos (el relleno automático de Primera y la publicación). Ahora ambos usan `services/rankingSerie.ts`; si se cambia el criterio, tocarlo SOLO ahí.
+- Para diagnosticar sin la contraseña de admin: los GET públicos (`/api/publicaciones/circuitos`, `/api/publicaciones/:circuitId/ranking-segunda`, `/api/publicaciones/:circuitId/primera`) se pueden consultar y comparar; los POST de admin se verifican con `http-requests` de Railway (si no hay requests, el usuario no llegó a aplicar).
+- Un `confirm()` con texto largo no sirve para que un usuario no técnico revise cambios: usar un panel con tabla.
+
+### PENDIENTE
+- El ranking de Segunda NO está en la vista pública `/publico` (ahí solo hay Nacionales/Panamericanos); se publica como PNG desde el panel de Publicaciones. Ofrecido al usuario, sin pedir todavía.
+- Los desempates totales (mismos puntos, dif. de sets y promedio) se avisan pero hay que definirlos a mano.
+
 ## ESTADO AL 04/07/2026
 
 ### COMPLETADO (04/07) — Reparación del ranking final de Tercera (Qualy no sincronizados) + fix de fondo + hora en cruces
@@ -341,3 +370,5 @@ Ver prompt preparado en sesión 27/06.
 *Actualizado 29/06/2026 (noche tardía) — configTorneo faltante en categorías nuevas del Panamericano (Segunda/Tercera/Juvenil/Femenino quedaban en esquema departamental): setear por SQL clonando el de Máxima (tipo panamericano, formato 16, ruleSetSeries 1, ruleSetCruces 2). Publicaciones Panamericano: título fijo "TORNEO PANAMERICANO" + subtítulo reconstruido "<TIPO> — CATEGORÍA <X>", independientes del nombre del torneo. BUILD_TAG pub-2026-06-29-subtitulo-limpio. Regla nueva: DNI duplicado en carga de ranking pierde 1 inscripto. (Misma noche, antes: entrada del público + PWA → start_url/scope /publico, sw.js v3, raíz / sin login a /publico, link removido del LoginPage; selector de torneos desde allMatches. PUBLIC_BUILD pub-public-2026-06-29-selector-allmatches. Pendiente: rediseño vista de mesas.)*
 
 *Actualizado 05/07/2026 (tarde) — Tab 🏟 Bracket en vista pública. Componente `BracketNacional.tsx` extraído de `AdminPublicacionesPage.tsx` e importado en `PublicPage.tsx`. Nueva tab "🏟 Bracket" en `SeccionNacional` que aparece cuando hay cuartos/semis/final disponibles. Zoom CSS responsive: 72% tablet, 48% celular, 36% celular chico. Sede y fecha persistentes: nuevo endpoint `PATCH /circuits/:id/sala-fecha` guarda `salaPublica`/`fechaPublica` en `configTorneo` sin pisar otros campos; endpoint `bracket-nacional` los devuelve; botón "💾 Guardar sede y fecha para vista pública" en AdminPublicacionesPage sección bracket. PUBLIC_BUILD pub-public-2026-07-05-sala-fecha-publica / BUILD_TAG pub-2026-07-05-sala-fecha-publica.*
+
+*Actualizado 10/10/2026 — Ranking de Segunda (1° y 2° de las series → puestos 1–24, primero los 1° y después los 2°) con criterio oficial único (puntos → dif. de sets → promedio de tantos) en `services/rankingSerie.ts`. Publicación `ranking-segunda` + relleno automático de Primera ahora con el criterio oficial (antes usaba otro). Endpoint nuevo `POST /matches/reordenar-primera/:circuitId` + botón con tabla en Publicaciones para corregir cruces de Primera ya armados con el criterio viejo (no toca cruces jugados). BUILD_TAG pub-2026-10-10-corregir-primera-tabla. Aplicado y confirmado en Canelones Este (circuito 37).*

@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 05/07/2026 — v5.2
+## Última actualización: 10/10/2026 — v5.3
 
 ---
 
@@ -44,6 +44,8 @@ Necesito SIEMPRE:
 - ⚠️ **Provisorios "Qualy" NO sincronizan al RankingEntry (ranking final Panamericano)**: el `RankingEntry` se crea al armar las series con los 16 slots iniciales (incluidos provisorios "Qualy", que son `Player` reales). Al sustituir un provisorio por el jugador real (o corregir un jugador) en los **partidos**, la fila del `RankingEntry` NO se actualiza sola → el ranking final (que para Panamericano se lee de `RankingEntry`) queda con playerId provisorios y 0 puntos, y el bracket sale mal. **FIX (04/07):** `recalcular-stats` (rankings.ts) ahora sincroniza automáticamente: reemplaza las filas cuyo jugador no jugó ninguna serie por los reales faltantes y borra los provisorios sobrantes. **Flujo correcto al cerrar series de una categoría (ORDEN CRÍTICO):** 1) `POST /api/matches/recalcular-puntos-series/:cid` → 2) `POST /api/rankings/recalcular-stats/:cid` (sincroniza + reordena) → 3) `POST /api/matches/regenerar-bracket/:cid`. El bracket SIEMPRE al final (si no, toma posiciones desordenadas). Disparar por consola del navegador: `fetch(url,{method:'POST',headers:{Authorization:'Bearer '+localStorage.getItem('token')}}).then(r=>r.json()).then(console.log)`.
 - ⚠️ **Carga de sets con varios jueces en paralelo**: el modal de resultado (`MatchesPage.tsx`) debe abrir SIEMPRE con el partido fresco del backend (`GET /matches/:id`, incluye `sets`), NO con el objeto de la lista renderizada. Con 2+ jueces, los sockets `match:updated` refrescan la lista y el objeto de lista queda stale → al guardar un set con `setNumber: index+1` sobre un array que arrancó vacío, se pisaba el set anterior. `handleSaveSet` re-sincroniza `sets`/`resultModal` desde la respuesta de `PUT /:id/set` (que devuelve el match completo). El set siempre se persiste bien en la base; el bug era de recarga en el modal. Fix 01/07, BUILD_TAG `matches-2026-07-01-set-fresh-fetch`.
 - ⚠️ **Carga de ranking por Excel + DNI duplicado**: la carga hace `findFirst` por DNI. Si dos jugadores en `Player` comparten DNI (o dos filas del Excel tienen el mismo DNI), ambas filas resuelven al MISMO player → el `upsert` solo actualiza, no crea inscripto nuevo → quedan menos `CircuitPlayer` que filas (reporta "N cargados" pero hay N-1 inscriptos; aparece 1 LIBRE al generar partidos). Diagnóstico: buscar qué `position` falta en `RankingEntry`. Solución: corregir el DNI duplicado en `Player` y recargar.
+- ⚠️ **Ranking de los clasificados de Segunda (1° y 2° de serie) — UN SOLO CRITERIO**: se calcula únicamente en `src/services/rankingSerie.ts` (`calcularRankingSeries` + `ordenarFilasRanking`): puntos (1° = 8, 2° = 6) → diferencia de sets → promedio de tantos; primero todos los 1° (puestos 1…N/2) y después todos los 2°. Lo usan la publicación `ranking-segunda` (`publicaciones.ts`), el relleno automático de Primera (`rellenarSlotsPrimera` en `matches.ts`) y `POST /matches/reordenar-primera/:circuitId`. NO volver a ordenar por otro lado. Si cambia el criterio, tocar solo ese archivo. Un empate total en los 3 criterios se avisa y se define a mano.
+- ⚠️ **Cruces de Primera ya armados con orden equivocado**: `POST /matches/reordenar-primera/:circuitId` (admin; sin `?aplicar=true` solo muestra el plan, con `?aplicar=true` aplica). Se usa desde el botón "🔧 Ver cómo quedarían los cruces de Primera" en Publicaciones → Ranking de Segunda (muestra tabla, luego "Aplicar"). Se niega a tocar nada si no terminaron las series de Segunda, si los jugadores en los cruces no son exactamente los clasificados, o si algún cruce a cambiar ya tiene resultado / no está `pendiente`/`asignado`. Solo mueve jugadores (no cambia mesa, hora ni serieId).
 
 ---
 
@@ -78,6 +80,9 @@ Necesito SIEMPRE:
 | C1 Panamericano de Primera | circuitId=31, phaseId=84 |
 | Willy Billar Club | venueId=25, tableIds 60–65 |
 | RuleSet Series 5×60 (nacional primera) | id=2 |
+| Dep. Canelones Este | tournamentId=27, circuito 37 (fases: clasificatorio 103, segunda 104, primera 105, master 106) |
+| Dep. Canelones Oeste | tournamentId=28 (sin circuitos aún) |
+| Dep. Montevideo 26-27 | tournamentId=30, circuito 39 (fases 111–114) |
 
 ---
 
@@ -95,6 +100,8 @@ Necesito SIEMPRE:
 | `rankings.ts` | `/api/rankings` | Rankings por circuito |
 | `publicaciones.ts` | `/api/publicaciones` | Publicaciones gráficas |
 | `rankingAcumulado.ts` | `/api/acumulado` | Ranking acumulado entre circuitos |
+
+**Servicios (`src/services/`):** `rankingSerie.ts` — cálculo único del ranking de clasificados de series (ver REGLAS CRÍTICAS); `reportService.ts`, `socketService.ts`, `prisma.ts`.
 
 ---
 
@@ -194,6 +201,8 @@ const esNac = /nacional/i.test(circ?.torneoNombre ?? '') || /panamericano/i.test
 | `bracket-nacional` | 🏟 Bracket Nacional |
 | `ranking-acumulado-nacional` | 🏆 Ranking Final |
 
+**Departamentales:** además de series/reducción/cruces existe `ranking-segunda` (📋 Ranking de Segunda (1° y 2° → cruces)): ranking 1–24 de los clasificados de Segunda; con ese tipo seleccionado el admin tiene el botón de corregir cruces de Primera.
+
 ### Panamericano — apócope de país
 - El backend `publicaciones.ts` detecta `esPanamericano` leyendo `circuit.configTorneo.tipo === 'panamericano'`
 - Envía `esPanamericano: true/false` en el response
@@ -275,6 +284,8 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - `PUT /matches/:id/desasignar` — anula la asignación de mesa: deja el partido `pendiente` con `tableId` null y libera la mesa (a `libre`) solo si no quedó otro partido `asignado`/`en_juego` en ella. 409 si el partido está `en_juego`/`finalizado`. No borra el partido. Botón "Quitar mesa" en `/admin/partidos`. admin/juez_sede.
 - `POST /matches/regenerar-bracket/:circuitId` — genera bracket espejo desde RankingEntry
 - `POST /matches/trigger-reparar-series/:phaseId` — repara slots de series nacionales/panamericanas (P5.slotA=perdedor P3, P5.slotB=ganador P4) sin depender del orden de carga
+- `POST /matches/reordenar-primera/:circuitId` — reubica a los clasificados de Segunda en los cruces de Primera (`primera-cruce-N`) según el ranking oficial. Sin `?aplicar=true` devuelve solo el plan `[{puesto, cruceNumero, rival, actual, oficial}]`; con `?aplicar=true` lo aplica en transacción. Solo admin. Guardas de seguridad: ver REGLAS CRÍTICAS.
+- `GET /publicaciones/:circuitId/ranking-segunda` — ranking de los 1° y 2° de las series de Segunda (`tipo: 'ranking-clasif'`, `destino` = `1ROS DE SERIE` / `2DOS DE SERIE`); marca parcial si faltan series y avisa empates totales.
 - `GET /rankings/final?circuitId=X` — para nacionales/panamericanos lee de RankingEntry (incluye `pais` del jugador)
 - `POST /rankings/recalcular-stats/:circuitId` — recalcula stats (filtra `nac-serie-*` para nacionales)
 - `DELETE /rankings/limpiar/:circuitId` — limpia rankings (**usar en vez de /reset**)
@@ -288,7 +299,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 1. **TypeScript Sets**: siempre `const s: Set<number> = new Set()`.
 1b. **Backend TypeScript (tsconfig strict: true)**: el repo está en **0 errores de TS** desde 30/06/2026. Antes había 77 TS7006. Para evitar reintroducirlos: siempre anotar parámetros de callbacks con tipo explícito (`.map((p: any) => ...)`, `.find((m: any) => ...)`, etc.) en vez de dejar el parámetro sin tipo.
 2. **Railway SQL**: una sentencia a la vez. No LIMIT en subqueries de UPDATE.
-3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-07-05-sala-fecha-publica`. `PublicPage.tsx` usa `// PUBLIC_BUILD = ...` (actual `pub-public-2026-07-05-sala-fecha-publica`); `FixturePage.tsx` usa `fixture-2026-07-01-solo-activos` y `MatchesPage.tsx` `matches-2026-07-01-set-fresh-fetch`. El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
+3. **Vercel bundle viejo**: si un cambio no se ve, modificar algo real para cambiar el hash del chunk. Verificar con `data-build` en el DOM. La constante `BUILD_TAG` (en AdminPublicacionesPage.tsx) sirve justamente para esto: cambiarla fuerza chunk hash nuevo. Valor actual: `pub-2026-10-10-corregir-primera-tabla`. `PublicPage.tsx` usa `// PUBLIC_BUILD = ...` (actual `pub-public-2026-07-05-sala-fecha-publica`); `FixturePage.tsx` usa `fixture-2026-07-01-solo-activos` y `MatchesPage.tsx` `matches-2026-07-01-set-fresh-fetch`. El SW (`sw.js`) tiene su propio `CACHE_NAME` (actual `febiu-billar-v3`): bumpearlo invalida la caché del Service Worker.
 4. **Service Worker**: si el login se cuelga → Application → Borrar datos de sitios → Ctrl+Shift+R.
 5. **Mesas**: el backend NO actualiza `Table.status` automáticamente.
 6. **recalcular-stats para nacionales**: filtra `serieId: { startsWith: 'nac-serie-' }`.
@@ -330,3 +341,14 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **`PATCH /api/circuits/:id/sala-fecha`** — guarda `salaPublica`/`fechaPublica` en `configTorneo` (merge, no reemplaza). Solo admin.
 - **`GET /publicaciones/:circuitId/bracket-nacional`** — ahora incluye `salaPublica` y `fechaPublica` en la respuesta.
 - **Flujo**: admin llena Sala/Fecha en Publicaciones → presiona "💾 Guardar sede y fecha para vista pública" → público ve los datos en la tab Bracket sin poder editarlos.
+
+---
+
+## RANKING DE SEGUNDA Y CRUCES DE PRIMERA (10/10/2026)
+
+- **Qué es:** en los departamentales, clasifican de Segunda los 1° y 2° de cada serie. Se ordenan 1…N: primero todos los 1° y después todos los 2°, con criterio oficial (puntos → dif. de sets → promedio de tantos). Esos puestos se cruzan contra Primera (`primera-cruce-N`: jugador i vs jugador total−1−i; Primera ocupa los primeros lugares y los clasificados de Segunda `Clasificado Segunda #k` los últimos).
+- **Cálculo:** `src/services/rankingSerie.ts`. Sets y tantos de cada jugador = suma de TODOS los partidos de su serie (usa `sets` si existen, si no `result`). 1° = ganador P3 (8 pts), 2° = ganador P5 (6 pts).
+- **Publicación:** Publicaciones → circuito → "📋 Ranking de Segunda" → Ver publicación → exportar PNG. Parcial si faltan series.
+- **Corregir cruces de Primera:** en esa misma pantalla, botón "🔧 Ver cómo quedarían los cruces de Primera" → tabla → "✅ Aplicar estos cambios". Endpoint `POST /matches/reordenar-primera/:circuitId`.
+- **Historia:** `rellenarSlotsPrimera` usaba antes otro desempate (sets ganados totales, tantos a favor, tantos en contra) y llenó mal los cruces de Canelones Este (circuito 37); se unificó al criterio oficial y se corrigió con el botón (confirmado 11/10).
+- **No incluido:** el ranking de Segunda no se muestra en `/publico`.
