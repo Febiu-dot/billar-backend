@@ -800,6 +800,8 @@ router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async
   try {
     const aplicar = req.query.aplicar === 'true';
     const descartar = req.query.descartarResultado === 'true';
+    const conservar = req.query.conservarResultado === 'true';
+    if (descartar && conservar) { res.status(400).json({ error: 'Elegir una sola opcion: descartarResultado o conservarResultado.' }); return; }
     const base: any = await prisma.match.findUnique({ where: { id: Number(req.params.matchId) } });
     if (!base || !base.serieId) { res.status(404).json({ error: 'Partido no encontrado o sin serie.' }); return; }
     const sid: string = base.serieId;
@@ -843,19 +845,29 @@ router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async
     for (const x of plan) {
       if (!x.cambia) { texto.push(`${x.etiqueta} (partido ${x.partidoId}): ya esta bien -> ${x.antes}`); continue; }
       texto.push(`${x.etiqueta} (partido ${x.partidoId}, ${x.estado}${x.mesa ? ', mesa ' + x.mesa : ''}): ${x.antes}  ==>  ${x.despues}`);
-      if (x.debeDescartar) texto.push(`   OJO: este partido ya tiene ${x.resultadoActual ? 'resultado ' + x.resultadoActual : 'sets cargados'}; para corregirlo hay que descartarlo (descartarResultado=true).`);
+      if (x.debeDescartar) texto.push(`   OJO: este partido ya tiene ${x.resultadoActual ? 'resultado ' + x.resultadoActual : 'sets cargados'}. Opciones: conservarResultado=true (cambia solo el nombre del jugador y MANTIENE los sets/resultado, pasando al jugador nuevo lo que era del reemplazado) o descartarResultado=true (BORRA los sets/resultado).`);
     }
     if (cambios.length === 0) { res.json({ aplicado: false, texto: [...texto, 'Nada para corregir.'], plan }); return; }
     if (p5) { res.status(409).json({ error: 'Ya existe el P5 de esta serie, que depende de P3 y P4. No se toco nada: hay que revisarlo a mano.', texto, plan }); return; }
-    const faltaDescartar = cambios.some((x: any) => x.debeDescartar) && !descartar;
-    if (!aplicar) { res.json({ aplicado: false, requiereDescartar: cambios.some((x: any) => x.debeDescartar), texto, plan }); return; }
-    if (faltaDescartar) { res.status(409).json({ error: 'Hay partidos con resultado o sets que habria que descartar. No se toco nada; repetir con descartarResultado=true si corresponde.', texto, plan }); return; }
+    const faltaDecision = cambios.some((x: any) => x.debeDescartar) && !descartar && !conservar;
+    if (!aplicar) { res.json({ aplicado: false, requiereDecision: cambios.some((x: any) => x.debeDescartar), texto, plan }); return; }
+    if (faltaDecision) { res.status(409).json({ error: 'Hay partidos con resultado o sets. No se toco nada; repetir con conservarResultado=true (mantiene los sets/resultado) o descartarResultado=true (los borra).', texto, plan }); return; }
 
     const mesasTocadas: Set<number> = new Set();
     for (const x of cambios) {
       const dm: any = partidos.find((m: any) => m.id === x.partidoId);
       if (dm.tableId) mesasTocadas.add(dm.tableId);
-      if (x.debeDescartar) {
+      if (x.debeDescartar && conservar) {
+        // Cambia solo los jugadores y mantiene sets y resultado: lo que era del jugador reemplazado pasa al nuevo (por lado A/B)
+        const mapa = (id: number | null): number | null => (id === dm.playerAId ? x.A : id === dm.playerBId ? x.B : id);
+        await prisma.match.update({ where: { id: x.partidoId }, data: { playerAId: x.A, playerBId: x.B, slotA: null, slotB: null } });
+        if (dm.result) {
+          await prisma.matchResult.update({ where: { matchId: x.partidoId }, data: { winnerId: dm.result.winnerId == null ? null : mapa(dm.result.winnerId), woPlayerId: dm.result.woPlayerId == null ? null : mapa(dm.result.woPlayerId) } });
+        }
+        for (const st of dm.sets) {
+          await prisma.setResult.update({ where: { id: st.id }, data: { winnerId: st.pointsA > st.pointsB ? x.A : x.B } });
+        }
+      } else if (x.debeDescartar) {
         await prisma.setResult.deleteMany({ where: { matchId: x.partidoId } });
         await prisma.matchResult.deleteMany({ where: { matchId: x.partidoId } });
         await prisma.match.update({ where: { id: x.partidoId }, data: { playerAId: x.A, playerBId: x.B, slotA: null, slotB: null, status: 'pendiente', tableId: null, startedAt: null, finishedAt: null } });
@@ -865,7 +877,7 @@ router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async
     }
 
     // Si se descarto algun resultado, rehacer las estadisticas del circuito (misma logica que al editar un resultado)
-    if (cambios.some((x: any) => x.debeDescartar)) {
+    if (cambios.some((x: any) => x.debeDescartar && (descartar || x.estado === 'finalizado' || x.estado === 'wo'))) {
       const { circuitId: circId } = await getCircuitInfo(base.phaseId);
       if (circId) {
         const circuit = await prisma.circuit.findUnique({ where: { id: circId }, select: { configTorneo: true } });
