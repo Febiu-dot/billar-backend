@@ -790,6 +790,119 @@ async function repararSeriesNacionales(phaseId: number) {
   } catch (error) { console.error('Error generando siguiente partido de serie:', error); }
 }
 
+// Repara los partidos 3 y 4 de una serie (clasif-serie-N / segunda-serie-N) que se armaron con un resultado
+// equivocado del P1/P2 que despues se corrigio (la app arma P3/P4 una sola vez, apenas se cargan P1 y P2).
+//   P3 = ganador P1 vs ganador P2      P4 = perdedor P1 vs perdedor P2   (con los resultados ACTUALES)
+// Sin ?aplicar=true solo muestra el plan. Con ?aplicar=true cambia los jugadores.
+// Si el partido a corregir ya tiene sets o resultado, hace falta ademas ?descartarResultado=true (los borra).
+// Se niega a actuar si ya existe el P5 de la serie. Recibe el id de CUALQUIER partido de la serie.
+router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const aplicar = req.query.aplicar === 'true';
+    const descartar = req.query.descartarResultado === 'true';
+    const base: any = await prisma.match.findUnique({ where: { id: Number(req.params.matchId) } });
+    if (!base || !base.serieId) { res.status(404).json({ error: 'Partido no encontrado o sin serie.' }); return; }
+    const sid: string = base.serieId;
+    if (!(sid.startsWith('clasif-serie-') || sid.startsWith('segunda-serie-'))) { res.status(400).json({ error: 'Solo sirve para series del clasificatorio o de Segunda (clasif-serie-N / segunda-serie-N).' }); return; }
+
+    const partidos: any[] = await prisma.match.findMany({
+      where: { phaseId: base.phaseId, serieId: sid },
+      include: { result: true, sets: true, playerA: true, playerB: true }, orderBy: { round: 'asc' }
+    });
+    const rb = Math.min(...partidos.map((m: any) => m.round));
+    const P = (n: number) => partidos.find((m: any) => m.round === rb + n);
+    const p1 = P(0), p2 = P(1), p3 = P(2), p4 = P(3), p5 = P(4);
+    if (!p1?.result?.winnerId || !p2?.result?.winnerId) { res.status(409).json({ error: 'El P1 y el P2 de esta serie todavia no tienen ganador.' }); return; }
+    if (!p3 || !p4) { res.status(409).json({ error: 'Esta serie todavia no tiene P3 y P4 generados; no hay nada para reparar.' }); return; }
+
+    const perdedor = (m: any): number | null => (m.playerAId === m.result.winnerId ? m.playerBId : m.playerAId);
+    const nombre = (j: any) => (j ? `${j.lastName}, ${j.firstName}` : '—');
+    const jug: Record<number, any> = {};
+    for (const m of partidos) { if (m.playerA) jug[m.playerA.id] = m.playerA; if (m.playerB) jug[m.playerB.id] = m.playerB; }
+    const nom = (id: number | null) => (id && jug[id] ? nombre(jug[id]) : '—');
+
+    const esperados = [
+      { etiqueta: 'P3', m: p3, A: p1.result.winnerId as number, B: p2.result.winnerId as number },
+      { etiqueta: 'P4', m: p4, A: perdedor(p1) as number, B: perdedor(p2) as number },
+    ];
+    const plan = esperados.map((e: any) => {
+      const tieneSets = e.m.sets.length > 0; const tieneResultado = !!e.m.result;
+      const cambia = e.m.playerAId !== e.A || e.m.playerBId !== e.B;
+      return {
+        etiqueta: e.etiqueta, partidoId: e.m.id, estado: e.m.status, mesa: e.m.tableId,
+        antes: `${nom(e.m.playerAId)} vs ${nom(e.m.playerBId)}`,
+        despues: `${nom(e.A)} vs ${nom(e.B)}`,
+        cambia, tieneSets, tieneResultado,
+        resultadoActual: tieneResultado ? `${e.m.result.setsA}-${e.m.result.setsB} (ganador ${nom(e.m.result.winnerId)})` : null,
+        debeDescartar: cambia && (tieneSets || tieneResultado),
+        A: e.A, B: e.B,
+      };
+    });
+    const cambios = plan.filter((x: any) => x.cambia);
+    const texto: string[] = [];
+    for (const x of plan) {
+      if (!x.cambia) { texto.push(`${x.etiqueta} (partido ${x.partidoId}): ya esta bien -> ${x.antes}`); continue; }
+      texto.push(`${x.etiqueta} (partido ${x.partidoId}, ${x.estado}${x.mesa ? ', mesa ' + x.mesa : ''}): ${x.antes}  ==>  ${x.despues}`);
+      if (x.debeDescartar) texto.push(`   OJO: este partido ya tiene ${x.resultadoActual ? 'resultado ' + x.resultadoActual : 'sets cargados'}; para corregirlo hay que descartarlo (descartarResultado=true).`);
+    }
+    if (cambios.length === 0) { res.json({ aplicado: false, texto: [...texto, 'Nada para corregir.'], plan }); return; }
+    if (p5) { res.status(409).json({ error: 'Ya existe el P5 de esta serie, que depende de P3 y P4. No se toco nada: hay que revisarlo a mano.', texto, plan }); return; }
+    const faltaDescartar = cambios.some((x: any) => x.debeDescartar) && !descartar;
+    if (!aplicar) { res.json({ aplicado: false, requiereDescartar: cambios.some((x: any) => x.debeDescartar), texto, plan }); return; }
+    if (faltaDescartar) { res.status(409).json({ error: 'Hay partidos con resultado o sets que habria que descartar. No se toco nada; repetir con descartarResultado=true si corresponde.', texto, plan }); return; }
+
+    const mesasTocadas: Set<number> = new Set();
+    for (const x of cambios) {
+      const dm: any = partidos.find((m: any) => m.id === x.partidoId);
+      if (dm.tableId) mesasTocadas.add(dm.tableId);
+      if (x.debeDescartar) {
+        await prisma.setResult.deleteMany({ where: { matchId: x.partidoId } });
+        await prisma.matchResult.deleteMany({ where: { matchId: x.partidoId } });
+        await prisma.match.update({ where: { id: x.partidoId }, data: { playerAId: x.A, playerBId: x.B, slotA: null, slotB: null, status: 'pendiente', tableId: null, startedAt: null, finishedAt: null } });
+      } else {
+        await prisma.match.update({ where: { id: x.partidoId }, data: { playerAId: x.A, playerBId: x.B, slotA: null, slotB: null } });
+      }
+    }
+
+    // Si se descarto algun resultado, rehacer las estadisticas del circuito (misma logica que al editar un resultado)
+    if (cambios.some((x: any) => x.debeDescartar)) {
+      const { circuitId: circId } = await getCircuitInfo(base.phaseId);
+      if (circId) {
+        const circuit = await prisma.circuit.findUnique({ where: { id: circId }, select: { configTorneo: true } });
+        const tipoT = (circuit?.configTorneo as any)?.tipo;
+        const esNac = tipoT === 'nacional' || tipoT === 'panamericano';
+        await prisma.rankingEntry.updateMany({ where: { circuitId: circId }, data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 } });
+        const fin: any[] = await prisma.match.findMany({
+          where: { phase: { circuitId: circId }, status: { in: ['finalizado', 'wo'] }, ...(esNac ? { serieId: { startsWith: 'nac-serie-' } } : {}) },
+          include: { result: true }
+        });
+        for (const m of fin) {
+          if (!m.result || !m.playerAId || !m.playerBId) continue;
+          const { setsA, setsB, pointsA, pointsB, winnerId: wId } = m.result;
+          await prisma.rankingEntry.updateMany({ where: { playerId: m.playerAId, circuitId: circId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wId === m.playerAId ? 1 : 0 }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } } });
+          await prisma.rankingEntry.updateMany({ where: { playerId: m.playerBId, circuitId: circId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wId === m.playerBId ? 1 : 0 }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } } });
+        }
+      }
+    }
+
+    // Mesas: si al cerrar el partido equivocado se libero una mesa donde hay otro partido en curso, dejarla ocupada
+    for (const tid of Array.from(mesasTocadas)) {
+      const activo = await prisma.match.findFirst({ where: { tableId: tid, status: { in: ['asignado', 'en_juego'] } } });
+      if (activo) {
+        const mesa = await prisma.table.update({ where: { id: tid }, data: { status: 'ocupada' }, include: { venue: true } });
+        emitTableUpdate(io, mesa);
+      }
+    }
+    for (const x of cambios) {
+      const full: any = await prisma.match.findUnique({
+        where: { id: x.partidoId },
+        include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } }
+      });
+      if (full) emitMatchUpdate(io, full);
+    }
+    res.json({ aplicado: true, texto: [...texto, `Listo: se corrigieron ${cambios.length} partidos.`], plan });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
 router.post('/trigger-reduccion/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try { await rellenarCrucesReduccion(parseInt(req.params.phaseId)); res.json({ message: 'Cruces de reducción rellenados correctamente' }); }
   catch (error: any) { res.status(500).json({ error: error.message }); }
