@@ -260,48 +260,17 @@ async function main() {
     console.error('⚠️  No se pudo corregir el nombre de fase (se ignora):', e);
   }
 
-  // Correccion de datos 13/10: cruce Montes de Oca vs Camarote debe ser Montes de Oca vs Lapaz (Lapaz le gano a Camarote tras corregir el resultado).
-  // Solo actua si hay UN unico cruce sin jugar Montes de Oca vs Camarote y UN unico partido finalizado ganado por Lapaz contra Camarote. Idempotente.
+  // Correccion de datos 13/10: el cruce 3507 (Montes de Oca vs Camarotte) debe ser Montes de Oca vs Lapaz, porque Lapaz le gano a Camarotte (partido 3497) tras corregir el resultado.
+  // Solo actua si el cruce sigue sin jugar con Camarotte (396) y el partido 3497 lo ganó Lapaz (384). Idempotente.
   try {
-    const sinJugar = await prisma.match.findMany({
-      where: { status: { in: ['pendiente', 'asignado'] }, result: { is: null }, sets: { none: {} },
-        OR: [
-          { playerA: { lastName: { contains: 'montes', mode: 'insensitive' } }, playerB: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
-          { playerB: { lastName: { contains: 'montes', mode: 'insensitive' } }, playerA: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
-        ] },
-      include: { playerA: true, playerB: true },
-    });
-    const ganados = await prisma.match.findMany({
-      where: { status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: { not: null } } },
-        OR: [
-          { playerA: { lastName: { contains: 'lapaz', mode: 'insensitive' } }, playerB: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
-          { playerB: { lastName: { contains: 'lapaz', mode: 'insensitive' } }, playerA: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
-        ] },
-      include: { playerA: true, playerB: true, result: true },
-    });
-    if (sinJugar.length === 0 || ganados.length === 0) {
-      const ju = await prisma.player.findMany({ where: { OR: [{ lastName: { contains: 'monte', mode: 'insensitive' } }, { lastName: { contains: 'camarot', mode: 'insensitive' } }, { lastName: { contains: 'paz', mode: 'insensitive' } }, { firstName: { contains: 'lapaz', mode: 'insensitive' } }] } });
-      console.log(`ℹ️  Diag Montes/Lapaz: sinJugar=${sinJugar.length} ganados=${ganados.length} jugadores=` + ju.map((x: any) => `${x.id}:${x.firstName}|${x.lastName}`).join('; '));
-      for (const x of ju) {
-        const ms = await prisma.match.findMany({ where: { OR: [{ playerAId: x.id }, { playerBId: x.id }] }, include: { result: true }, orderBy: { id: 'desc' }, take: 4 });
-        console.log(`ℹ️  Diag jugador ${x.id} ${x.lastName}: ` + ms.map((m: any) => `m${m.id}[${m.status} ${m.playerAId}v${m.playerBId} w=${m.result?.winnerId ?? '-'}]`).join(' '));
-      }
-    }
-    if (sinJugar.length === 1 && ganados.length === 1) {
-      const c: any = sinJugar[0]; const g: any = ganados[0];
-      const lapazId = g.result.winnerId;
-      const lapaz = g.playerAId === lapazId ? g.playerA : g.playerB;
-      const camarote = g.playerAId === lapazId ? g.playerB : g.playerA;
-      if (/lapaz/i.test(lapaz.lastName) && /camarote/i.test(camarote.lastName)) {
-        const data = c.playerAId === camarote.id ? { playerAId: lapaz.id } : { playerBId: lapaz.id };
-        await prisma.match.update({ where: { id: c.id }, data });
-        console.log(`✏️  Cruce ${c.id} corregido: ${camarote.firstName} ${camarote.lastName} -> ${lapaz.firstName} ${lapaz.lastName}`);
-      }
-    } else if (sinJugar.length > 0 || ganados.length > 0) {
-      console.log(`ℹ️  Correccion Montes de Oca/Lapaz omitida (sinJugar=${sinJugar.length}, ganados=${ganados.length})`);
+    const cruce = await prisma.match.findUnique({ where: { id: 3507 }, include: { result: true, sets: true } });
+    const previo = await prisma.match.findUnique({ where: { id: 3497 }, include: { result: true } });
+    if (cruce && previo && previo.result?.winnerId === 384 && !cruce.result && cruce.sets.length === 0 && (cruce.status === 'pendiente' || cruce.status === 'asignado') && (cruce.playerAId === 396 || cruce.playerBId === 396) && cruce.playerAId !== 384 && cruce.playerBId !== 384) {
+      await prisma.match.update({ where: { id: 3507 }, data: cruce.playerAId === 396 ? { playerAId: 384 } : { playerBId: 384 } });
+      console.log('✏️  Cruce 3507 corregido: Camarotte -> Lapaz');
     }
   } catch (e) {
-    console.error('⚠️  No se pudo corregir el cruce Montes de Oca/Lapaz (se ignora):', e);
+    console.error('⚠️  No se pudo corregir el cruce 3507 (se ignora):', e);
   }
 
   console.log('');
