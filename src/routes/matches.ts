@@ -832,6 +832,44 @@ async function repropagarCruce(matchId: number, ganadorAnterior: number, ganador
   return { avisos, cambios };
 }
 
+// Igual que reparar-cruce pero buscando por apellido del GANADOR (toma su partido finalizado mas reciente).
+// Ej: POST /matches/reparar-cruce-jugador?q=lapaz  (solo muestra)  ->  agregar &aplicar=true para aplicar.
+router.post('/reparar-cruce-jugador', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const q = String(req.query.q ?? '').trim();
+    if (q.length < 3) return res.status(400).json({ error: 'Falta ?q= con el apellido del ganador (mínimo 3 letras)' }) as any;
+    const recientes = await prisma.match.findMany({
+      where: { status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: { not: null } } } },
+      include: { result: true, playerA: true, playerB: true, phase: true },
+      orderBy: { finishedAt: 'desc' }, take: 300
+    });
+    const norm = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const candidatos = recientes.filter((m: any) => {
+      const g = m.result.winnerId === m.playerAId ? m.playerA : m.playerB;
+      return g && norm(`${g.firstName} ${g.lastName}`).includes(norm(q));
+    }).slice(0, 3);
+    if (candidatos.length === 0) return res.status(404).json({ error: 'No encontré partidos finalizados ganados por ese jugador' }) as any;
+    const m: any = candidatos[0];
+    const ganador = m.result.winnerId;
+    const perdedor = m.playerAId === ganador ? m.playerBId : m.playerAId;
+    const nombre = (p: any) => p ? `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() : '';
+    const aplicar = req.query.aplicar === 'true';
+    const r = await repropagarCruce(m.id, perdedor, ganador, m.finishedAt, aplicar);
+    const detalle = [];
+    for (const c of r.cambios) {
+      const cm: any = await prisma.match.findUnique({ where: { id: c.partidoId }, include: { playerA: true, playerB: true, phase: true } });
+      detalle.push({ ...c, fase: cm?.phase?.name, jugadorA: nombre(cm?.playerA), jugadorB: nombre(cm?.playerB) });
+    }
+    res.json({
+      aplicado: aplicar,
+      partidoCorregido: { id: m.id, fase: m.phase?.name, ronda: m.round, jugadorA: nombre(m.playerA), jugadorB: nombre(m.playerB), ganador: nombre(m.playerAId === ganador ? m.playerA : m.playerB), finalizado: m.finishedAt },
+      cruceAReemplazar: detalle,
+      avisos: r.avisos,
+      otrosCandidatos: candidatos.slice(1).map((x: any) => ({ id: x.id, fase: x.phase?.name, jugadorA: nombre(x.playerA), jugadorB: nombre(x.playerB), finalizado: x.finishedAt })),
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Repara a mano un cruce siguiente que quedo armado con el PERDEDOR de este partido (ya corregido).
 // Sin ?aplicar=true solo muestra que cambiaria. Con ?aplicar=true lo cambia por el ganador actual.
 router.post('/reparar-cruce/:matchId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
