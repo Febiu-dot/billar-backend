@@ -260,6 +260,42 @@ async function main() {
     console.error('⚠️  No se pudo corregir el nombre de fase (se ignora):', e);
   }
 
+  // Correccion de datos 13/10: cruce Montes de Oca vs Camarote debe ser Montes de Oca vs Lapaz (Lapaz le gano a Camarote tras corregir el resultado).
+  // Solo actua si hay UN unico cruce sin jugar Montes de Oca vs Camarote y UN unico partido finalizado ganado por Lapaz contra Camarote. Idempotente.
+  try {
+    const sinJugar = await prisma.match.findMany({
+      where: { status: { in: ['pendiente', 'asignado'] }, result: { is: null }, sets: { none: {} },
+        OR: [
+          { playerA: { lastName: { contains: 'montes', mode: 'insensitive' } }, playerB: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
+          { playerB: { lastName: { contains: 'montes', mode: 'insensitive' } }, playerA: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
+        ] },
+      include: { playerA: true, playerB: true },
+    });
+    const ganados = await prisma.match.findMany({
+      where: { status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: { not: null } } },
+        OR: [
+          { playerA: { lastName: { contains: 'lapaz', mode: 'insensitive' } }, playerB: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
+          { playerB: { lastName: { contains: 'lapaz', mode: 'insensitive' } }, playerA: { lastName: { contains: 'camarote', mode: 'insensitive' } } },
+        ] },
+      include: { playerA: true, playerB: true, result: true },
+    });
+    if (sinJugar.length === 1 && ganados.length === 1) {
+      const c: any = sinJugar[0]; const g: any = ganados[0];
+      const lapazId = g.result.winnerId;
+      const lapaz = g.playerAId === lapazId ? g.playerA : g.playerB;
+      const camarote = g.playerAId === lapazId ? g.playerB : g.playerA;
+      if (/lapaz/i.test(lapaz.lastName) && /camarote/i.test(camarote.lastName)) {
+        const data = c.playerAId === camarote.id ? { playerAId: lapaz.id } : { playerBId: lapaz.id };
+        await prisma.match.update({ where: { id: c.id }, data });
+        console.log(`✏️  Cruce ${c.id} corregido: ${camarote.firstName} ${camarote.lastName} -> ${lapaz.firstName} ${lapaz.lastName}`);
+      }
+    } else if (sinJugar.length > 0 || ganados.length > 0) {
+      console.log(`ℹ️  Correccion Montes de Oca/Lapaz omitida (sinJugar=${sinJugar.length}, ganados=${ganados.length})`);
+    }
+  } catch (e) {
+    console.error('⚠️  No se pudo corregir el cruce Montes de Oca/Lapaz (se ignora):', e);
+  }
+
   console.log('');
   console.log('🎱 Seed completado!');
   console.log('   admin / admin123');
