@@ -790,6 +790,67 @@ async function repararSeriesNacionales(phaseId: number) {
   } catch (error) { console.error('Error generando siguiente partido de serie:', error); }
 }
 
+// Cuando se CORRIGE el resultado de un partido ya finalizado de una serie, los partidos siguientes (P3/P4/P5) que
+// ya estaban armados con el ganador anterior se actualizan solos, siempre que todavia no se hayan jugado:
+//   P3 = ganador P1 vs ganador P2    P4 = perdedor P1 vs perdedor P2    P5 = perdedor P3 vs ganador P4
+// Solo toca partidos pendientes/asignados SIN sets ni resultado. Si el partido siguiente ya empezo o termino no lo toca
+// y devuelve un aviso (para resolverlo a mano con reparar-serie). Nunca lanza error.
+async function repropagarSerie(matchId: number): Promise<string[]> {
+  const avisos: string[] = [];
+  try {
+    const match = await prisma.match.findUnique({ where: { id: matchId } });
+    if (!match || !match.serieId) return avisos;
+    const roundBase = Math.floor(match.round / 10) * 10 + 1;
+    const partidos = await prisma.match.findMany({
+      where: { phaseId: match.phaseId, serieId: match.serieId },
+      include: { result: true, sets: true }
+    });
+    const por = (n: number) => partidos.find((p: any) => p.round === roundBase + n);
+    const ganador = (m: any): number | null => m?.result?.winnerId ?? null;
+    const perdedor = (m: any): number | null => {
+      const w = ganador(m); if (!w || !m) return null;
+      return m.playerAId === w ? m.playerBId : m.playerAId;
+    };
+    const p1 = por(0), p2 = por(1), p3 = por(2), p4 = por(3), p5 = por(4);
+    const esperados: Array<{ m: any; nombre: string; a: number | null; b: number | null }> = [
+      { m: p3, nombre: 'partido 3', a: ganador(p1), b: ganador(p2) },
+      { m: p4, nombre: 'partido 4', a: perdedor(p1), b: perdedor(p2) },
+    ];
+    for (const e of esperados) {
+      if (!e.m || !e.a || !e.b) continue;
+      if (e.m.playerAId === e.a && e.m.playerBId === e.b) continue;
+      if (e.m.playerAId === e.b && e.m.playerBId === e.a) continue;
+      const sinJugar = (e.m.status === 'pendiente' || e.m.status === 'asignado') && !e.m.result && (!e.m.sets || e.m.sets.length === 0);
+      if (!sinJugar) { avisos.push(`El ${e.nombre} de la serie ya se jugó o está en juego y quedó con jugadores que no corresponden: corregilo con reparar-serie (partido ${e.m.id}).`); continue; }
+      const upd = await prisma.match.update({
+        where: { id: e.m.id }, data: { playerAId: e.a, playerBId: e.b },
+        include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
+      });
+      emitMatchUpdate(io, upd);
+      console.log(`🔁 Serie ${match.serieId}: ${e.nombre} (id ${e.m.id}) actualizado por resultado corregido`);
+    }
+    // P5 depende de P3 y P4 (solo existe si ambos terminaron)
+    if (p5 && ganador(p3) && ganador(p4)) {
+      const a = perdedor(p3), b = ganador(p4);
+      if (a && b && !((p5.playerAId === a && p5.playerBId === b) || (p5.playerAId === b && p5.playerBId === a))) {
+        const sinJugar = (p5.status === 'pendiente' || p5.status === 'asignado') && !p5.result && (!p5.sets || p5.sets.length === 0);
+        if (!sinJugar) { avisos.push(`El partido 5 de la serie ya se jugó o está en juego y quedó con jugadores que no corresponden: corregilo a mano (partido ${p5.id}).`); }
+        else {
+          const upd = await prisma.match.update({
+            where: { id: p5.id }, data: { playerAId: a, playerBId: b },
+            include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
+          });
+          emitMatchUpdate(io, upd);
+          console.log(`🔁 Serie ${match.serieId}: partido 5 (id ${p5.id}) actualizado por resultado corregido`);
+        }
+      }
+    } else if (p5 && (!ganador(p3) || !ganador(p4))) {
+      avisos.push(`El partido 5 de la serie existe pero uno de sus partidos previos ya no tiene ganador: revisalo (partido ${p5.id}).`);
+    }
+  } catch (error) { console.error('Error re-propagando serie (no crítico):', error); avisos.push('No se pudo actualizar automáticamente los partidos siguientes de la serie.'); }
+  return avisos;
+}
+
 // Repara los partidos 3 y 4 de una serie (clasif-serie-N / segunda-serie-N) que se armaron con un resultado
 // equivocado del P1/P2 que despues se corrigio (la app arma P3/P4 una sola vez, apenas se cargan P1 y P2).
 //   P3 = ganador P1 vs ganador P2      P4 = perdedor P1 vs perdedor P2   (con los resultados ACTUALES)
@@ -1320,6 +1381,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     if (finalSetsA >= setsToWin) winnerId = existingMatch.playerAId;
     else if (finalSetsB >= setsToWin) winnerId = existingMatch.playerBId;
   }
+  const ganadorAnterior = (await prisma.matchResult.findUnique({ where: { matchId }, select: { winnerId: true } }))?.winnerId ?? null;
   const result = await prisma.matchResult.upsert({
     where: { matchId },
     create: { matchId, setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
@@ -1405,6 +1467,8 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   emitMatchUpdate(io, updatedMatch);
 
   if (esPartidoDeSerie) { await generarSiguientePartidoSerie(matchId); }
+  let avisosSerie: string[] = [];
+  if (esPartidoDeSerie && eraFinalizado && ganadorAnterior !== winnerId) { avisosSerie = await repropagarSerie(matchId); }
   if (esNacionalSerie)  { await propagarSerieNacional(matchId); }
   if (phaseType === 'clasificatorio' && serieId.startsWith('clasif-serie-') && posEnSerie === 4) { await rellenarCrucesReduccion(existingMatch.phaseId); }
   if (phaseType === 'segunda' && serieId.startsWith('segunda-serie-') && posEnSerie === 4) { await rellenarSlotsPrimera(existingMatch.phaseId); }
@@ -1446,7 +1510,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     }
   } catch (reportError) { console.error('Error generando reporte (no crítico):', reportError); }
 
-  res.json({ match: updatedMatch, result });
+  res.json({ match: updatedMatch, result, ...(avisosSerie.length ? { avisos: avisosSerie } : {}) });
 });
 
 router.post('/auto-assign', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
