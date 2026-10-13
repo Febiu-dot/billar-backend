@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 10/10/2026 — v5.3
+## Última actualización: 12/10/2026 — v5.4
 
 ---
 
@@ -46,6 +46,7 @@ Necesito SIEMPRE:
 - ⚠️ **Carga de ranking por Excel + DNI duplicado**: la carga hace `findFirst` por DNI. Si dos jugadores en `Player` comparten DNI (o dos filas del Excel tienen el mismo DNI), ambas filas resuelven al MISMO player → el `upsert` solo actualiza, no crea inscripto nuevo → quedan menos `CircuitPlayer` que filas (reporta "N cargados" pero hay N-1 inscriptos; aparece 1 LIBRE al generar partidos). Diagnóstico: buscar qué `position` falta en `RankingEntry`. Solución: corregir el DNI duplicado en `Player` y recargar.
 - ⚠️ **Ranking de los clasificados de Segunda (1° y 2° de serie) — UN SOLO CRITERIO**: se calcula únicamente en `src/services/rankingSerie.ts` (`calcularRankingSeries` + `ordenarFilasRanking`): puntos (1° = 8, 2° = 6) → diferencia de sets → promedio de tantos; primero todos los 1° (puestos 1…N/2) y después todos los 2°. Lo usan la publicación `ranking-segunda` (`publicaciones.ts`), el relleno automático de Primera (`rellenarSlotsPrimera` en `matches.ts`) y `POST /matches/reordenar-primera/:circuitId`. NO volver a ordenar por otro lado. Si cambia el criterio, tocar solo ese archivo. Un empate total en los 3 criterios se avisa y se define a mano.
 - ⚠️ **Cruces de Primera ya armados con orden equivocado**: `POST /matches/reordenar-primera/:circuitId` (admin; sin `?aplicar=true` solo muestra el plan, con `?aplicar=true` aplica). Se usa desde el botón "🔧 Ver cómo quedarían los cruces de Primera" en Publicaciones → Ranking de Segunda (muestra tabla, luego "Aplicar"). Se niega a tocar nada si no terminaron las series de Segunda, si los jugadores en los cruces no son exactamente los clasificados, o si algún cruce a cambiar ya tiene resultado / no está `pendiente`/`asignado`. Solo mueve jugadores (no cambia mesa, hora ni serieId).
+- ⚠️ **Series con P3/P4/P5 generados con jugadores equivocados**: `generarSiguientePartidoSerie` crea P3/P4/P5 una sola vez y NO los actualiza si después se corrige el resultado de P1/P2. Para repararlo: `POST /matches/reparar-serie/:matchId` (admin; sin flags solo muestra el plan; `aplicar=true` lo aplica; `descartarResultado=true` borra el resultado del partido mal armado; `conservarResultado=true` cambia solo el jugador y conserva sets, re-mapeando ganador/W.O. por lado; son excluyentes). Devuelve 409 si ya existe P5. Se corre desde la consola del navegador con el token del admin. Pendiente: re-propagación automática al editar un resultado finalizado.
 
 ---
 
@@ -285,6 +286,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - `POST /matches/regenerar-bracket/:circuitId` — genera bracket espejo desde RankingEntry
 - `POST /matches/trigger-reparar-series/:phaseId` — repara slots de series nacionales/panamericanas (P5.slotA=perdedor P3, P5.slotB=ganador P4) sin depender del orden de carga
 - `POST /matches/reordenar-primera/:circuitId` — reubica a los clasificados de Segunda en los cruces de Primera (`primera-cruce-N`) según el ranking oficial. Sin `?aplicar=true` devuelve solo el plan `[{puesto, cruceNumero, rival, actual, oficial}]`; con `?aplicar=true` lo aplica en transacción. Solo admin. Guardas de seguridad: ver REGLAS CRÍTICAS.
+- `POST /matches/reparar-serie/:matchId` — corrige P3/P4 mal generados en una serie (`clasif-serie-N`/`segunda-serie-N`). Sin flags devuelve `{texto[], plan}`; `?aplicar=true` aplica; `descartarResultado` / `conservarResultado` (excluyentes) deciden qué pasa con el resultado ya cargado. 409 si ya existe P5. Solo admin.
 - `GET /publicaciones/:circuitId/ranking-segunda` — ranking de los 1° y 2° de las series de Segunda (`tipo: 'ranking-clasif'`, `destino` = `1ROS DE SERIE` / `2DOS DE SERIE`); marca parcial si faltan series y avisa empates totales.
 - `GET /rankings/final?circuitId=X` — para nacionales/panamericanos lee de RankingEntry (incluye `pais` del jugador)
 - `POST /rankings/recalcular-stats/:circuitId` — recalcula stats (filtra `nac-serie-*` para nacionales)
