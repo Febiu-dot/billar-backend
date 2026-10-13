@@ -243,6 +243,23 @@ async function main() {
     console.log(`⏭️  Ranking omitido — ya hay ${rankingCount} entradas`);
   }
 
+  // Correccion de datos: "CLACIFICATORIO" -> "CLASIFICATORIO" en nombres de fase (idempotente, nunca bloquea el arranque)
+  try {
+    const mal = await prisma.phase.findMany({ where: { name: { contains: 'clacif', mode: 'insensitive' } } });
+    for (const f of mal) {
+      const nuevo = f.name
+        .replace(/CLACIF/g, 'CLASIF')
+        .replace(/Clacif/g, 'Clasif')
+        .replace(/clacif/g, 'clasif');
+      if (nuevo !== f.name) {
+        await prisma.phase.update({ where: { id: f.id }, data: { name: nuevo } });
+        console.log(`✏️  Fase ${f.id} renombrada: "${f.name}" -> "${nuevo}"`);
+      }
+    }
+  } catch (e) {
+    console.error('⚠️  No se pudo corregir el nombre de fase (se ignora):', e);
+  }
+
   console.log('');
   console.log('🎱 Seed completado!');
   console.log('   admin / admin123');
