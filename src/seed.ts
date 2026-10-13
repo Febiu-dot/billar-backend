@@ -279,6 +279,14 @@ async function main() {
         ] },
       include: { playerA: true, playerB: true, result: true },
     });
+    if (sinJugar.length === 0 || ganados.length === 0) {
+      const ju = await prisma.player.findMany({ where: { OR: [{ lastName: { contains: 'monte', mode: 'insensitive' } }, { lastName: { contains: 'camarot', mode: 'insensitive' } }, { lastName: { contains: 'paz', mode: 'insensitive' } }, { firstName: { contains: 'lapaz', mode: 'insensitive' } }] } });
+      console.log(`ℹ️  Diag Montes/Lapaz: sinJugar=${sinJugar.length} ganados=${ganados.length} jugadores=` + ju.map((x: any) => `${x.id}:${x.firstName}|${x.lastName}`).join('; '));
+      for (const x of ju) {
+        const ms = await prisma.match.findMany({ where: { OR: [{ playerAId: x.id }, { playerBId: x.id }] }, include: { result: true }, orderBy: { id: 'desc' }, take: 4 });
+        console.log(`ℹ️  Diag jugador ${x.id} ${x.lastName}: ` + ms.map((m: any) => `m${m.id}[${m.status} ${m.playerAId}v${m.playerBId} w=${m.result?.winnerId ?? '-'}]`).join(' '));
+      }
+    }
     if (sinJugar.length === 1 && ganados.length === 1) {
       const c: any = sinJugar[0]; const g: any = ganados[0];
       const lapazId = g.result.winnerId;
