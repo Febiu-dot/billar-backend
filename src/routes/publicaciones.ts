@@ -418,7 +418,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, orderBy: { position: 'asc' } });
     }
 
-    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', primera: 'primera', master: 'master' };
+    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', primera: 'primera', master: 'master', 'master-final': 'master' };
     const phase = circuit.phases.find((p: any) => p.type === phaseTypeMap[tipoFase]);
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
@@ -540,9 +540,17 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (round <= 28) return 'CUARTOS DE FINAL'; if (round <= 30) return 'SEMIFINAL';
       return 'FINAL';
     };
-    const cruces = matches.map((m: any) => ({ round: m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
+    // Fase Máster se publica en DOS partes: 'master' = solo los cruces iniciales (hasta la ronda 16);
+    // 'master-final' = octavos, cuartos, semifinal y final (desde la ronda 17).
+    let partidosPub = matches;
+    if (tipoFase === 'master') partidosPub = matches.filter((m: any) => m.round <= 16);
+    if (tipoFase === 'master-final') {
+      partidosPub = matches.filter((m: any) => m.round > 16);
+      if (partidosPub.length === 0) { res.status(404).json({ error: 'Todavía no hay octavos, cuartos, semifinal ni final generados en la Fase Máster.' }); return; }
+    }
+    const cruces = partidosPub.map((m: any) => ({ round: m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
     const pf = matches.find((m: any) => m.scheduledAt)?.scheduledAt;
-    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
+    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : tipoFase === 'master-final' ? 'FASE FINAL — OCTAVOS A LA FINAL' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
