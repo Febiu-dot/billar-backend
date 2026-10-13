@@ -1,5 +1,5 @@
 # PROMPT MAESTRO FEBIU — SISTEMA INTEGRAL DE GESTIÓN DE TORNEOS
-## Última actualización: 12/10/2026 — v5.4
+## Última actualización: 13/10/2026 — v5.5
 
 ---
 
@@ -354,3 +354,5 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **Corregir cruces de Primera:** en esa misma pantalla, botón "🔧 Ver cómo quedarían los cruces de Primera" → tabla → "✅ Aplicar estos cambios". Endpoint `POST /matches/reordenar-primera/:circuitId`.
 - **Historia:** `rellenarSlotsPrimera` usaba antes otro desempate (sets ganados totales, tantos a favor, tantos en contra) y llenó mal los cruces de Canelones Este (circuito 37); se unificó al criterio oficial y se corrigió con el botón (confirmado 11/10).
 - **No incluido:** el ranking de Segunda no se muestra en `/publico`.
+
+- `POST /matches/reparar-cruce/:matchId` — (admin) reemplaza, en los partidos siguientes SIN JUGAR del circuito, al perdedor de este partido por su ganador actual. Sin `?aplicar=true` solo muestra los cambios. Automático al corregir un cruce vía `PUT /matches/:id/result` (`repropagarCruce`); series usan `repropagarSerie`.
