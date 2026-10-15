@@ -386,3 +386,5 @@ Ver prompt preparado en sesión 27/06.
 
 *Actualizado 15/10/2026 — Fix panel del juez: al volver a una mesa, el modal de resultado aparecía vacío (sets ya guardados "borrados"). Causa: `openResultModal` usaba el partido de la lista de mesas (`/tables?cola=1`), que NO traía `sets`. Arreglo: (1) `tables.ts` ahora incluye `sets` en la cola; (2) `JudgePage.openResultModal` pide SIEMPRE el partido fresco (`GET /matches/:id`) al abrir; (3) `handleSaveSet` re-sincroniza las filas desde la respuesta del servidor. Los sets nunca se borraban en la base: solo no se mostraban. Verificar en jornada con un juez llevando varias mesas.*
 
+*15/10 17h — Pendiente de verificar en la jornada de esta noche: (1) panel del juez con varias mesas (sets guardados visibles al volver a una mesa); (2) botón "Publicar en vista pública" probado con una publicación real; (3) resultados por jornada con selector de fecha en /publico. Pendiente aparte: conexión de Vercel (ver nota del 14/10).*
+
