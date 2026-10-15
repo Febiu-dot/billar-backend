@@ -1441,9 +1441,12 @@ router.put('/:id/start', authenticate, requireRole('admin', 'juez_sede'), async 
 });
 
 router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
-  const matchId = Number(req.params.id); const { setNumber, pointsA, pointsB } = req.body;
+  const matchId = Number(req.params.id); const { setNumber } = req.body;
   const existingMatch = await prisma.match.findUnique({ where: { id: matchId }, include: { ruleSet: true, sets: true } });
   if (!existingMatch) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
+  // El tope de tantos por set es siempre el del reglamento (60): si la planilla trae 61, 62... se guarda 60
+  const tope = existingMatch.ruleSet?.pointsPerSet ?? 60;
+  const pointsA = Math.min(Number(req.body.pointsA) || 0, tope); const pointsB = Math.min(Number(req.body.pointsB) || 0, tope);
   const winnerId = pointsA > pointsB ? existingMatch.playerAId : existingMatch.playerBId;
   await prisma.setResult.upsert({ where: { id: (existingMatch.sets.find((s: any) => s.setNumber === setNumber)?.id ?? 0) }, create: { matchId, setNumber, pointsA, pointsB, winnerId }, update: { pointsA, pointsB, winnerId } });
   const allSets = await prisma.setResult.findMany({ where: { matchId }, orderBy: { setNumber: 'asc' } });
@@ -1486,8 +1489,13 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
   });
   if (!isWO && sets && Array.isArray(sets) && sets.length > 0) {
+    const tope = ruleSet?.pointsPerSet ?? 60; // tope de tantos por set (60): 61, 62... se guardan como 60
+    const setsOk = sets.map((s: any) => ({ ...s, pointsA: Math.min(Number(s.pointsA) || 0, tope), pointsB: Math.min(Number(s.pointsB) || 0, tope) }));
     await prisma.setResult.deleteMany({ where: { matchId } });
-    await prisma.setResult.createMany({ data: sets.map((s: any) => ({ matchId, setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB, winnerId: s.pointsA > s.pointsB ? existingMatch.playerAId : existingMatch.playerBId })) });
+    await prisma.setResult.createMany({ data: setsOk.map((s: any) => ({ matchId, setNumber: s.setNumber, pointsA: s.pointsA, pointsB: s.pointsB, winnerId: s.pointsA > s.pointsB ? existingMatch.playerAId : existingMatch.playerBId })) });
+    const totA = setsOk.reduce((a: number, s: any) => a + s.pointsA, 0); const totB = setsOk.reduce((a: number, s: any) => a + s.pointsB, 0);
+    await prisma.matchResult.update({ where: { matchId }, data: { pointsA: totA, pointsB: totB } });
+    finalPtsA = totA; finalPtsB = totB;
   }
   const updatedMatch = await prisma.match.update({
     where: { id: matchId }, data: { status: isWO ? 'wo' : 'finalizado', finishedAt: new Date() },

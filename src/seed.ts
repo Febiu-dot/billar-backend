@@ -273,13 +273,40 @@ async function main() {
     console.error('⚠️  No se pudo corregir el cruce 3507 (se ignora):', e);
   }
 
-  // DIAGNOSTICO TEMPORAL 14/10 (2): detalle de sets de los cruces 3537-3540
+  // Correccion de datos 14/10: el tope de tantos por set es 60. Sets cargados con 61, 62... (de la planilla) pasan a 60.
+  // Solo torneos activos. Recalcula tantos del partido y estadisticas del ranking de los circuitos afectados. Idempotente.
   try {
-    const ms = await prisma.match.findMany({ where: { id: { in: [3537, 3538, 3539, 3540] } }, include: { playerA: true, playerB: true, result: true, sets: { orderBy: { setNumber: 'asc' } } }, orderBy: { id: 'asc' } });
-    for (const m of ms) {
-      console.log(`DIAG15 m${m.id} ${m.status} ${m.playerA?.lastName} vs ${m.playerB?.lastName} fin=${m.finishedAt?.toISOString()} res=${m.result ? `${m.result.setsA}-${m.result.setsB} pts ${m.result.pointsA}-${m.result.pointsB} w=${m.result.winnerId} wo=${m.result.isWO}` : '-'} sets=` + m.sets.map((x: any) => `${x.pointsA}-${x.pointsB}`).join(','));
+    const TOPE = 60;
+    const malos = await prisma.setResult.findMany({
+      where: { OR: [{ pointsA: { gt: TOPE } }, { pointsB: { gt: TOPE } }], match: { phase: { circuit: { tournament: { active: true } } } } },
+      include: { match: { include: { phase: true } } },
+    });
+    if (malos.length > 0) {
+      const matchIds = new Set<number>(); const circuitIds = new Set<number>();
+      for (const st of malos) {
+        await prisma.setResult.update({ where: { id: st.id }, data: { pointsA: Math.min(st.pointsA, TOPE), pointsB: Math.min(st.pointsB, TOPE) } });
+        matchIds.add(st.matchId); circuitIds.add(st.match.phase.circuitId);
+      }
+      for (const mid of matchIds) {
+        const sets = await prisma.setResult.findMany({ where: { matchId: mid } });
+        const res = await prisma.matchResult.findUnique({ where: { matchId: mid } });
+        if (res && !res.isWO) {
+          await prisma.matchResult.update({ where: { matchId: mid }, data: { pointsA: sets.reduce((a: number, x: any) => a + x.pointsA, 0), pointsB: sets.reduce((a: number, x: any) => a + x.pointsB, 0) } });
+        }
+      }
+      for (const cid of circuitIds) {
+        await prisma.rankingEntry.updateMany({ where: { circuitId: cid }, data: { matchesPlayed: 0, matchesWon: 0, setsWon: 0, setsLost: 0, pointsFor: 0, pointsAgainst: 0 } });
+        const ms = await prisma.match.findMany({ where: { phase: { circuitId: cid }, status: { in: ['finalizado', 'wo'] } }, include: { result: true } });
+        for (const m of ms) {
+          if (!m.result || !m.playerAId || !m.playerBId) continue;
+          const r = m.result;
+          await prisma.rankingEntry.updateMany({ where: { playerId: m.playerAId, circuitId: cid }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: r.winnerId === m.playerAId ? 1 : 0 }, setsWon: { increment: r.setsA }, setsLost: { increment: r.setsB }, pointsFor: { increment: r.pointsA ?? 0 }, pointsAgainst: { increment: r.pointsB ?? 0 } } });
+          await prisma.rankingEntry.updateMany({ where: { playerId: m.playerBId, circuitId: cid }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: r.winnerId === m.playerBId ? 1 : 0 }, setsWon: { increment: r.setsB }, setsLost: { increment: r.setsA }, pointsFor: { increment: r.pointsB ?? 0 }, pointsAgainst: { increment: r.pointsA ?? 0 } } });
+        }
+      }
+      console.log(`✏️  Tope 60: ${malos.length} sets corregidos en ${matchIds.size} partidos (circuitos ${Array.from(circuitIds).join(',')})`);
     }
-  } catch (e) { console.error('DIAG15 error', e); }
+  } catch (e) { console.error('⚠️  No se pudo aplicar el tope de 60 (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');
