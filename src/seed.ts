@@ -308,6 +308,18 @@ async function main() {
     }
   } catch (e) { console.error('⚠️  No se pudo aplicar el tope de 60 (se ignora):', e); }
 
+  // DIAGNOSTICO TEMPORAL 14/10 (3): Pratto vs Crozza
+  try {
+    const ms = await prisma.match.findMany({
+      where: { OR: [{ playerA: { lastName: { contains: 'pratto', mode: 'insensitive' } } }, { playerB: { lastName: { contains: 'pratto', mode: 'insensitive' } } }, { playerA: { lastName: { contains: 'crozza', mode: 'insensitive' } } }, { playerB: { lastName: { contains: 'crozza', mode: 'insensitive' } } }] },
+      include: { playerA: true, playerB: true, phase: true, table: { include: { venue: true } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
+      orderBy: { id: 'asc' },
+    });
+    for (const m of ms) {
+      console.log(`DIAG16 m${m.id} ${m.status} fase=${m.phase.name} r=${m.round} ${m.serieId} | ${m.playerA?.lastName} vs ${m.playerB?.lastName} | prog=${m.scheduledAt?.toISOString() ?? '-'} ini=${m.startedAt?.toISOString() ?? '-'} fin=${m.finishedAt?.toISOString() ?? '-'} | mesa=${m.table ? m.table.number + ' ' + m.table.venue?.name : '-'} | res=${m.result ? `${m.result.setsA}-${m.result.setsB} w=${m.result.winnerId} wo=${m.result.isWO}` : '-'} | sets=` + m.sets.map((x: any) => `${x.pointsA}-${x.pointsB}`).join(','));
+    }
+  } catch (e) { console.error('DIAG16 error', e); }
+
   console.log('');
   console.log('🎱 Seed completado!');
   console.log('   admin / admin123');
