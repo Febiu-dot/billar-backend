@@ -34,6 +34,7 @@ router.get('/', async (req, res: Response) => {
           phase: { include: { circuit: { include: { tournament: true } } } },
           result: true,
           ruleSet: true,
+          sets: { orderBy: { setNumber: 'asc' } },
         },
         ...matchesExtra,
       },
