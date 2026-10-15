@@ -357,4 +357,4 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 - `POST /matches/reparar-cruce/:matchId` — (admin) reemplaza, en los partidos siguientes SIN JUGAR del circuito, al perdedor de este partido por su ganador actual. Sin `?aplicar=true` solo muestra los cambios. Automático al corregir un cruce vía `PUT /matches/:id/result` (`repropagarCruce`); series usan `repropagarSerie`.
 
-*Actualizado 14/10/2026 — Se ELIMINÓ la sección "Estado de Mesas" de `/publico` (a nadie le interesa qué mesa es cuál; decisión original del proyecto). Quedan Partidos en Curso, Próximos, Últimos Resultados y Series/Rankings. PUBLIC_BUILD pub-public-2026-10-14-sin-mesas, sw.js `febiu-billar-v4`. No volver a agregar mesas a la vista pública.*
+*Actualizado 14/10/2026 — Se ELIMINÓ la sección "Estado de Mesas" de `/publico` (a nadie le interesa qué mesa es cuál; decisión original del proyecto). Quedan Partidos en Curso, Próximos, Últimos Resultados y Series/Rankings. PUBLIC_BUILD pub-public-2026-10-14-sin-mesas, sw.js `febiu-billar-v6`. No volver a agregar mesas a la vista pública.*
