@@ -116,7 +116,7 @@ Necesito SIEMPRE:
 | `MatchesPage.tsx` | `/admin/partidos` | Partidos con filtro, carga y edición de resultados |
 | `PlayersPage.tsx` | `/admin/jugadores` | Gestión de jugadores · columna y selector País |
 | `RankingFinalPage.tsx` | `/admin/ranking-final` | Ranking del circuito · botón 🔄 Aplicar Criterio Oficial · en Panamericano: columna País (apócope) en vez de Club y sin columna Categoría |
-| `PublicPage.tsx` | `/publico` | Vista pública: mesas, partidos en curso, próximos, últimos resultados |
+| `PublicPage.tsx` | `/publico` | Vista pública: partidos en curso, próximos, últimos resultados y series/rankings (SIN mesas desde 14/10) |
 | `CrucesPage.tsx` | `/admin/cruces` | Asignación de mesa/fecha a cruces (reducción/primera/master/bracket) · reconoce nacional + panamericano |
 | `ConfigTorneoPage.tsx` | `/admin/config-torneo` | Configurar tipo (Departamental/Nacional/Panamericano) |
 | `AdminPublicacionesPage.tsx` | `/admin/publicaciones` | Publicaciones gráficas + export PNG |
@@ -356,3 +356,5 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **No incluido:** el ranking de Segunda no se muestra en `/publico`.
 
 - `POST /matches/reparar-cruce/:matchId` — (admin) reemplaza, en los partidos siguientes SIN JUGAR del circuito, al perdedor de este partido por su ganador actual. Sin `?aplicar=true` solo muestra los cambios. Automático al corregir un cruce vía `PUT /matches/:id/result` (`repropagarCruce`); series usan `repropagarSerie`.
+
+*Actualizado 14/10/2026 — Se ELIMINÓ la sección "Estado de Mesas" de `/publico` (a nadie le interesa qué mesa es cuál; decisión original del proyecto). Quedan Partidos en Curso, Próximos, Últimos Resultados y Series/Rankings. PUBLIC_BUILD pub-public-2026-10-14-sin-mesas, sw.js `febiu-billar-v4`. No volver a agregar mesas a la vista pública.*
