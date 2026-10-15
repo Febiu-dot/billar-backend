@@ -116,7 +116,7 @@ Necesito SIEMPRE:
 | `MatchesPage.tsx` | `/admin/partidos` | Partidos con filtro, carga y edición de resultados |
 | `PlayersPage.tsx` | `/admin/jugadores` | Gestión de jugadores · columna y selector País |
 | `RankingFinalPage.tsx` | `/admin/ranking-final` | Ranking del circuito · botón 🔄 Aplicar Criterio Oficial · en Panamericano: columna País (apócope) en vez de Club y sin columna Categoría |
-| `PublicPage.tsx` | `/publico` | Vista pública: partidos en curso, próximos, últimos resultados y series/rankings (SIN mesas desde 14/10) |
+| `PublicPage.tsx` | `/publico` | Vista pública: partidos en curso, próximos, resultados del día (con selector de fecha) y Publicaciones del torneo (SIN mesas desde 14/10) |
 | `CrucesPage.tsx` | `/admin/cruces` | Asignación de mesa/fecha a cruces (reducción/primera/master/bracket) · reconoce nacional + panamericano |
 | `ConfigTorneoPage.tsx` | `/admin/config-torneo` | Configurar tipo (Departamental/Nacional/Panamericano) |
 | `AdminPublicacionesPage.tsx` | `/admin/publicaciones` | Publicaciones gráficas + export PNG |
@@ -364,3 +364,10 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 *Actualizado 14/10/2026 (23h) — Finalizados ordenados por hora de cierre (`finishedAt`), el más reciente primero: en `/publico` ("Últimos Resultados", ahora 10, incluye W.O.) y en admin `MatchesPage` (finalizados/W.O.). Antes salían mezclados por fase/horario programado. PUBLIC_BUILD pub-public-2026-10-14-finalizados-recientes.*
 
 *Actualizado 14/10/2026 (23h) — Panel del juez (`JudgePage.tsx`): nueva sección "✓ ÚLTIMOS FINALIZADOS" con los partidos cerrados (finalizado + W.O.) de la sede SOLO DE LA JORNADA DE HOY (se vacía al empezar el día siguiente; corte 05:00 hora de Uruguay), el último en cerrar primero, con sets y hora. Antes, al cerrar un partido desaparecía del panel (`/tables?cola=1` solo trae asignado/en_juego). Solo lectura; se actualiza por socket.*
+
+### Publicaciones en la vista pública (15/10/2026)
+- **Admin → Publicaciones:** botón "📢 Publicar en vista pública" junto a "Exportar PNG". Genera el MISMO PNG (escala 1.5) y lo guarda en el servidor; una publicación por (circuito, tipo de fase): volver a publicar la reemplaza. Debajo del botón se listan las publicadas del circuito con "Quitar".
+- **Backend:** `src/routes/publicacionesPublicas.ts`, montado en `/api/publicaciones-publicas`. `GET /` (público, solo torneos activos, `?tournamentId=`/`?circuitId=`), `GET /:id/imagen` (PNG, cache largo; la URL lleva `?v=updatedAt`), `POST /` y `DELETE /:id` (admin). La tabla `"PublicacionPublica"` se crea sola con `CREATE TABLE IF NOT EXISTS` (SQL crudo, SIN migración de Prisma ni cambio en `schema.prisma`, para no arriesgar el deploy). `express.json` ahora acepta hasta 15 MB.
+- **Vista pública:** la sección "Series y Rankings por Torneo" (`SeccionNacional`) fue reemplazada por "Publicaciones del Torneo" (`SeccionPublicaciones`): imágenes del torneo elegido arriba, tocar para ampliar/descargar. `SeccionNacional` quedó sin usar en el archivo.
+- **Resultados:** ya no son 10; se muestran TODOS los finalizados/W.O. del torneo elegido de la jornada, con botones de fecha para ver jornadas anteriores (corte de jornada 05:00 hora de Uruguay). PUBLIC_BUILD pub-public-2026-10-15-publicaciones, sw.js `febiu-billar-v7`.
+

@@ -16,6 +16,7 @@ import userRoutes from './routes/users';
 import faseconfigRoutes from './routes/faseconfig';
 import reportsRoutes from './routes/reports';
 import publicacionesRoutes from './routes/publicaciones';
+import publicacionesPublicasRoutes from './routes/publicacionesPublicas';
 import acumuladoRoutes from './routes/rankingAcumulado';
 import { setupSocketHandlers } from './services/socketService';
 
@@ -35,7 +36,7 @@ export const io = new Server(httpServer, {
   },
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -55,6 +56,7 @@ app.use('/api/users',         userRoutes);
 app.use('/api/faseconfig',    faseconfigRoutes);
 app.use('/api/reports',       reportsRoutes);
 app.use('/api/publicaciones', publicacionesRoutes);
+app.use('/api/publicaciones-publicas', publicacionesPublicasRoutes);
 app.use('/api/acumulado',     acumuladoRoutes);
 
 setupSocketHandlers(io);
