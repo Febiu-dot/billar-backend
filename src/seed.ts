@@ -273,6 +273,19 @@ async function main() {
     console.error('⚠️  No se pudo corregir el cruce 3507 (se ignora):', e);
   }
 
+  // DIAGNOSTICO TEMPORAL 14/10: ubicar los partidos de la planilla de Nuevo Malvin
+  try {
+    const ap = ['rond', 'gonz', 'coppol', 'alvez', 'alvÃ', 'sosa', 'barnech', 'moral', 'uran', 'urán'];
+    const ms = await prisma.match.findMany({
+      where: { phase: { circuit: { tournamentId: 30 } }, OR: ap.flatMap((a) => [{ playerA: { lastName: { contains: a, mode: 'insensitive' as const } } }, { playerB: { lastName: { contains: a, mode: 'insensitive' as const } } }]) },
+      include: { playerA: true, playerB: true, phase: true, table: { include: { venue: true } }, result: true },
+      orderBy: { id: 'asc' },
+    });
+    for (const m of ms) {
+      console.log(`DIAG14 m${m.id} ${m.status} fase=${m.phase.name} r=${m.round} ${m.serieId} | ${m.playerA?.lastName} ${m.playerA?.firstName} vs ${m.playerB?.lastName} ${m.playerB?.firstName} | ${m.scheduledAt?.toISOString() ?? '-'} | mesa=${m.table ? m.table.number + ' ' + m.table.venue?.name : '-'} | res=${m.result ? m.result.setsA + '-' + m.result.setsB : '-'}`);
+    }
+  } catch (e) { console.error('DIAG14 error', e); }
+
   console.log('');
   console.log('🎱 Seed completado!');
   console.log('   admin / admin123');
