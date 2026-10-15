@@ -273,18 +273,13 @@ async function main() {
     console.error('⚠️  No se pudo corregir el cruce 3507 (se ignora):', e);
   }
 
-  // DIAGNOSTICO TEMPORAL 14/10: ubicar los partidos de la planilla de Nuevo Malvin
+  // DIAGNOSTICO TEMPORAL 14/10 (2): detalle de sets de los cruces 3537-3540
   try {
-    const ap = ['rond', 'gonz', 'coppol', 'alvez', 'alvÃ', 'sosa', 'barnech', 'moral', 'uran', 'urán'];
-    const ms = await prisma.match.findMany({
-      where: { phase: { circuit: { tournamentId: 30 } }, OR: ap.flatMap((a) => [{ playerA: { lastName: { contains: a, mode: 'insensitive' as const } } }, { playerB: { lastName: { contains: a, mode: 'insensitive' as const } } }]) },
-      include: { playerA: true, playerB: true, phase: true, table: { include: { venue: true } }, result: true },
-      orderBy: { id: 'asc' },
-    });
+    const ms = await prisma.match.findMany({ where: { id: { in: [3537, 3538, 3539, 3540] } }, include: { playerA: true, playerB: true, result: true, sets: { orderBy: { setNumber: 'asc' } } }, orderBy: { id: 'asc' } });
     for (const m of ms) {
-      console.log(`DIAG14 m${m.id} ${m.status} fase=${m.phase.name} r=${m.round} ${m.serieId} | ${m.playerA?.lastName} ${m.playerA?.firstName} vs ${m.playerB?.lastName} ${m.playerB?.firstName} | ${m.scheduledAt?.toISOString() ?? '-'} | mesa=${m.table ? m.table.number + ' ' + m.table.venue?.name : '-'} | res=${m.result ? m.result.setsA + '-' + m.result.setsB : '-'}`);
+      console.log(`DIAG15 m${m.id} ${m.status} ${m.playerA?.lastName} vs ${m.playerB?.lastName} fin=${m.finishedAt?.toISOString()} res=${m.result ? `${m.result.setsA}-${m.result.setsB} pts ${m.result.pointsA}-${m.result.pointsB} w=${m.result.winnerId} wo=${m.result.isWO}` : '-'} sets=` + m.sets.map((x: any) => `${x.pointsA}-${x.pointsB}`).join(','));
     }
-  } catch (e) { console.error('DIAG14 error', e); }
+  } catch (e) { console.error('DIAG15 error', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');
