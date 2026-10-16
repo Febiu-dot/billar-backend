@@ -348,6 +348,52 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       });
     }
 
+    // ── BRACKET FINAL DEPARTAMENTAL (Fase Master: octavos → final) ─────────────────
+    // Mismo formato de datos que el bracket nacional (para reutilizar la plantilla y la edicion de sala/fecha/horas),
+    // pero con los partidos master-octavos-N / master-cuartos-N / master-semifinal-N / master-final del cuadro departamental.
+    // Orden para que el arbol se dibuje bien: octavos [1,8,4,5 | 2,7,3,6], cuartos [1,4 | 2,3], semis [1,2].
+    if (tipoFase === 'bracket-master') {
+      const phase = circuit.phases.find((p: any) => p.type === 'master');
+      if (!phase) { res.status(404).json({ error: 'Fase Master no encontrada en este circuito' }); return; }
+      const matches = await prisma.match.findMany({
+        where: { phaseId: phase.id },
+        include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true },
+        orderBy: { round: 'asc' }
+      });
+      if (matches.length === 0) { res.status(404).json({ error: 'No hay partidos de la Fase Master generados' }); return; }
+      const getM = (sid: string) => mkBracketMatch(matches.find((m: any) => m.serieId === sid));
+      const pf = matches.find((m: any) => m.scheduledAt)?.scheduledAt;
+      const o = (n: number) => getM(`master-octavos-${n}`);
+      const c = (n: number) => getM(`master-cuartos-${n}`);
+      const octavos = [o(1), o(8), o(4), o(5), o(2), o(7), o(3), o(6)];
+      const cuartos = [c(1), c(4), c(2), c(3)];
+      const semis = [getM('master-semifinal-1'), getM('master-semifinal-2')];
+      const finalMatch = matches.find((m: any) => m.serieId === 'master-final');
+      let campeon: any = null;
+      if (finalMatch?.result?.winnerId) {
+        const w = finalMatch.result.winnerId === finalMatch.playerAId ? finalMatch.playerA : finalMatch.playerB;
+        if (w) campeon = { nombre: `${w.lastName}, ${w.firstName}`, club: abrev((w as any).club), pais: (w as any).pais ?? 'Uruguay' };
+      }
+      const tamano = octavos.some(m => m !== null) ? 16 : 8;
+      const cfg = (circuit.configTorneo as any) ?? {};
+      return res.json({
+        ...base,
+        tipo: 'bracket-nacional',
+        paleta: 'master',
+        esDepartamental: true,
+        fase: `BRACKET FINAL — ${circuit.tournament.name.toUpperCase()}`,
+        categoriaFederal: categoriaFederal(circuit.tournament.name),
+        esPanamericano: false,
+        tamano,
+        formato: '',
+        fechaPrincipal: fechaLarga(pf),
+        salaPublica: cfg.salaPublica ?? '',
+        fechaPublica: cfg.fechaPublica ?? '',
+        campeon, octavos, cuartos, semis,
+        final: getM('master-final'),
+      });
+    }
+
     // ── CRUCES NACIONAL ──────────────────────────────────────────────
     if (tipoFase === 'cruces-nacional') {
       const phase = circuit.phases.find((p: any) => p.type === 'master');
