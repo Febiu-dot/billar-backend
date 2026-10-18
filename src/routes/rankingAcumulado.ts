@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
+import { sincronizarPuntosCircuito } from '../services/puntosCircuito';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -41,6 +42,9 @@ export async function calcularYGuardarAcumulado(tournamentId: number): Promise<v
   if (completedCircuits.length === 0) return;
 
   const completedIds = completedCircuits.map((c: { id: number }) => c.id);
+
+  // Los puntos de cada circuito departamental salen de la regla vigente (idempotente); asi el acumulado nunca queda con puntos viejos.
+  for (const id of completedIds) await sincronizarPuntosCircuito(id);
 
   const entries = await prisma.rankingEntry.findMany({
     where: { circuitId: { in: completedIds } }

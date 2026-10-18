@@ -1,4 +1,5 @@
 import { sincronizarPuntosCircuito } from './services/puntosCircuito';
+import { calcularYGuardarAcumulado } from './routes/rankingAcumulado';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -318,6 +319,12 @@ async function main() {
       if (r.aplicado) console.log(`✏️  Puntos recalculados en circuito ${c.id}: ${r.cambios} jugadores con cambios`);
     }
   } catch (e) { console.error('⚠️  No se pudieron recalcular los puntos (se ignora):', e); }
+
+  // El ranking acumulado se rearma con los puntos ya recalculados (solo circuitos con Master terminado).
+  try {
+    const torneos = await prisma.tournament.findMany({ where: { active: true }, select: { id: true } });
+    for (const t of torneos) await calcularYGuardarAcumulado(t.id);
+  } catch (e) { console.error('⚠️  No se pudo recalcular el acumulado (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');
