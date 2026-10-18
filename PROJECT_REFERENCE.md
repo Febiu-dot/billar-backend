@@ -389,3 +389,7 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 ### Ajuste W.O. en cruces (18/10/2026)
 En cruces de Primera/Master (puntosCircuito.ts) el ganador por W.O. suma los puntos de ganador (5, final 7); el ausente no suma. Antes no sumaba nada y quien avanzaba por W.O. quedaba rezagado (caso Lajuni, Canelones Este). Se recalcula solo al desplegar (seed) y en cada resultado.
+
+### Sets y tantos por espera (18/10/2026)
+Quien espera mientras se juega una etapa suma, ademas de los puntos (8/8/5), sets y tantos A FAVOR (sin en contra): clasificatorio +2 sets / +120 tantos; series de Segunda +2 / +120; cruces de Primera +3 / +180. Acumulativo (ingresa a Segunda 8·2·120; a Primera 16·4·240; a Master 21·7·420). Reduccion no genera nada.
+Implementacion: `BONUS_ESPERA` y `esperaPorJugador` en services/puntosCircuito.ts. `sincronizarPuntosCircuito` ahora recalcula desde los partidos points + setsWon/setsLost/pointsFor/pointsAgainst (reales + espera), idempotente. `/rankings/final` y `guardar-final` suman el mismo aporte; el acumulado se rearma en cada deploy (seed) y al terminar el Master.

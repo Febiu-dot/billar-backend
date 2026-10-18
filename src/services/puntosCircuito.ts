@@ -29,11 +29,20 @@ export const PUNTOS_ESPERA: Record<'clasificatorio' | 'segunda' | 'primera', num
   primera: 5,        // lo reciben quienes ingresan en Master
 };
 
+// Sets y tantos A FAVOR que reciben los jugadores que esperan mientras se disputa cada etapa (18/10/2026).
+// Equivale a ganar 2-0 (60-0, 60-0) en clasificatorio y series de Segunda, y 3-0 (60-0 x3) en los cruces de Primera.
+// Son acumulativos, no generan sets ni tantos en contra y NO suman puntos (los puntos ya estan en PUNTOS_ESPERA).
+export const BONUS_ESPERA: Record<'clasificatorio' | 'segunda' | 'primera', { sets: number; tantos: number }> = {
+  clasificatorio: { sets: 2, tantos: 120 },
+  segunda:        { sets: 2, tantos: 120 },
+  primera:        { sets: 3, tantos: 180 },
+};
+
 export function esConfigNacional(config: any): boolean {
   return config?.tipo === 'nacional' || config?.tipo === 'panamericano';
 }
 
-export interface PuntosJugador { resultados: number; espera: number; total: number; }
+export interface PuntosJugador { resultados: number; espera: number; total: number; setsEspera: number; tantosEspera: number; }
 
 // Puntos por resultados. `matches` = partidos finalizados/wo del circuito, con `result` y `phase`.
 export function puntosPorResultados(matches: any[]): Map<number, number> {
@@ -80,8 +89,10 @@ export function puntosPorResultados(matches: any[]): Map<number, number> {
 // Puntos por espera. Cada etapa se considera "disputada" cuando ya hay al menos un partido
 // terminado en ella (sin contar los W.O. automaticos del jugador LIBRE).
 // El jugador ingresa en la primera etapa en la que aparece en un partido.
-export function puntosPorEspera(fases: any[]): Map<number, number> {
-  const pts = new Map<number, number>();
+export interface EsperaJugador { puntos: number; sets: number; tantos: number; }
+
+export function esperaPorJugador(fases: any[]): Map<number, EsperaJugador> {
+  const out = new Map<number, EsperaJugador>();
   const matchesDe = (tipo: TipoFase): any[] =>
     fases.filter((f: any) => f.type === tipo).flatMap((f: any) => f.matches ?? []);
   const esLibre = (m: any) => m.playerA?.dni === LIBRE_DNI || m.playerB?.dni === LIBRE_DNI;
@@ -100,16 +111,28 @@ export function puntosPorEspera(fases: any[]): Map<number, number> {
     }
   });
 
-  const dClasif = disputada('clasificatorio');
-  const dSegunda = disputada('segunda');
-  const dPrimera = disputada('primera');
+  const etapas: { idxMin: number; clave: 'clasificatorio' | 'segunda' | 'primera'; disputada: boolean }[] = [
+    { idxMin: 1, clave: 'clasificatorio', disputada: disputada('clasificatorio') },
+    { idxMin: 2, clave: 'segunda',        disputada: disputada('segunda') },
+    { idxMin: 3, clave: 'primera',        disputada: disputada('primera') },
+  ];
   for (const [pid, idx] of ingreso) {
-    let n = 0;
-    if (idx >= 1 && dClasif)  n += PUNTOS_ESPERA.clasificatorio;
-    if (idx >= 2 && dSegunda) n += PUNTOS_ESPERA.segunda;
-    if (idx >= 3 && dPrimera) n += PUNTOS_ESPERA.primera;
-    if (n > 0) pts.set(pid, n);
+    const acc: EsperaJugador = { puntos: 0, sets: 0, tantos: 0 };
+    for (const e of etapas) {
+      if (idx >= e.idxMin && e.disputada) {
+        acc.puntos += PUNTOS_ESPERA[e.clave];
+        acc.sets   += BONUS_ESPERA[e.clave].sets;
+        acc.tantos += BONUS_ESPERA[e.clave].tantos;
+      }
+    }
+    if (acc.puntos > 0 || acc.sets > 0 || acc.tantos > 0) out.set(pid, acc);
   }
+  return out;
+}
+
+export function puntosPorEspera(fases: any[]): Map<number, number> {
+  const pts = new Map<number, number>();
+  for (const [pid, v] of esperaPorJugador(fases)) if (v.puntos > 0) pts.set(pid, v.puntos);
   return pts;
 }
 
@@ -131,30 +154,80 @@ export async function calcularPuntosCircuito(circuitId: number): Promise<Map<num
     .filter((m: any) => (m.status === 'finalizado' || m.status === 'wo') && m.result);
 
   const res = puntosPorResultados(terminados);
-  const esp = puntosPorEspera(fases);
+  const esp = esperaPorJugador(fases);
 
   const out = new Map<number, PuntosJugador>();
   const ids = new Set<number>([...res.keys(), ...esp.keys()]);
   for (const id of ids) {
     const r = res.get(id) ?? 0;
-    const e = esp.get(id) ?? 0;
-    out.set(id, { resultados: r, espera: e, total: r + e });
+    const e = esp.get(id);
+    out.set(id, { resultados: r, espera: e?.puntos ?? 0, total: r + (e?.puntos ?? 0), setsEspera: e?.sets ?? 0, tantosEspera: e?.tantos ?? 0 });
   }
   return out;
 }
 
 // Deja RankingEntry.points = total calculado (resultados + espera). Idempotente: se puede llamar
 // todas las veces que haga falta. No toca nada en Nacional/Panamericano.
+// Sets y tantos de cada jugador a partir de los partidos del circuito (misma seleccion de partidos y mismo criterio
+// que el ranking del circuito: parciales por set si existen, si no el resultado del partido).
+export interface StatsJugador { setsGanados: number; setsPerdidos: number; tantos: number; tantosContra: number; }
+export function estadisticasPorJugador(matches: any[]): Map<number, StatsJugador> {
+  const st = new Map<number, StatsJugador>();
+  const get = (id: number) => { let v = st.get(id); if (!v) { v = { setsGanados: 0, setsPerdidos: 0, tantos: 0, tantosContra: 0 }; st.set(id, v); } return v; };
+  const suma = (playerId: number | null | undefined, m: any, esA: boolean) => {
+    if (!playerId || !m.result) return;
+    const s = get(playerId);
+    if (m.sets && m.sets.length > 0) {
+      for (const set of m.sets) {
+        const f = esA ? set.pointsA : set.pointsB, c = esA ? set.pointsB : set.pointsA;
+        s.tantos += f; s.tantosContra += c;
+        if (f > c) s.setsGanados++; else s.setsPerdidos++;
+      }
+    } else {
+      const sf = esA ? m.result.setsA : m.result.setsB, sc = esA ? m.result.setsB : m.result.setsA;
+      s.setsGanados += sf; s.setsPerdidos += sc;
+      s.tantos += (esA ? m.result.pointsA : m.result.pointsB) ?? 0;
+      s.tantosContra += (esA ? m.result.pointsB : m.result.pointsA) ?? 0;
+    }
+  };
+  for (const m of matches) {
+    const sid: string = m.serieId ?? '';
+    const tipo = m.phase?.type;
+    const cuenta =
+      sid.startsWith('clasif-serie-') || sid.startsWith('segunda-serie-') ||
+      (sid && (sid.includes('reduccion') || sid.includes('repechaje'))) ||
+      ((tipo === 'primera' || tipo === 'master') && !!m.result?.winnerId);
+    if (!cuenta) continue;
+    suma(m.playerAId, m, true);
+    suma(m.playerBId, m, false);
+  }
+  return st;
+}
+
+// Deja RankingEntry.points = total calculado (resultados + espera) y los sets/tantos = reales + aporte por espera.
+// Idempotente: se recalcula siempre desde los partidos, nunca se suma sobre lo anterior.
+// No toca nada en Nacional/Panamericano.
 export async function sincronizarPuntosCircuito(circuitId: number): Promise<{ aplicado: boolean; cambios: number }> {
   try {
     const calculo = await calcularPuntosCircuito(circuitId);
     if (!calculo) return { aplicado: false, cambios: 0 };
+    const finalizados = await prisma.match.findMany({
+      where: { phase: { circuitId }, status: { in: ['finalizado', 'wo'] } },
+      include: { result: true, sets: { orderBy: { setNumber: 'asc' } }, phase: true },
+    });
+    const reales = estadisticasPorJugador(finalizados);
     const entradas = await prisma.rankingEntry.findMany({ where: { circuitId } });
     let cambios = 0;
     for (const e of entradas) {
-      const total = calculo.get(e.playerId)?.total ?? 0;
-      if (e.points !== total) {
-        await prisma.rankingEntry.update({ where: { id: e.id }, data: { points: total } });
+      const c = calculo.get(e.playerId);
+      const r = reales.get(e.playerId) ?? { setsGanados: 0, setsPerdidos: 0, tantos: 0, tantosContra: 0 };
+      const total = c?.total ?? 0;
+      const setsWon = r.setsGanados + (c?.setsEspera ?? 0);
+      const setsLost = r.setsPerdidos;
+      const pointsFor = r.tantos + (c?.tantosEspera ?? 0);
+      const pointsAgainst = r.tantosContra;
+      if (e.points !== total || e.setsWon !== setsWon || e.setsLost !== setsLost || e.pointsFor !== pointsFor || e.pointsAgainst !== pointsAgainst) {
+        await prisma.rankingEntry.update({ where: { id: e.id }, data: { points: total, setsWon, setsLost, pointsFor, pointsAgainst } });
         cambios++;
       }
     }

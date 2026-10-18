@@ -1053,6 +1053,7 @@ router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async
           await prisma.rankingEntry.updateMany({ where: { playerId: m.playerAId, circuitId: circId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wId === m.playerAId ? 1 : 0 }, setsWon: { increment: setsA }, setsLost: { increment: setsB }, pointsFor: { increment: pointsA ?? 0 }, pointsAgainst: { increment: pointsB ?? 0 } } });
           await prisma.rankingEntry.updateMany({ where: { playerId: m.playerBId, circuitId: circId }, data: { matchesPlayed: { increment: 1 }, matchesWon: { increment: wId === m.playerBId ? 1 : 0 }, setsWon: { increment: setsB }, setsLost: { increment: setsA }, pointsFor: { increment: pointsB ?? 0 }, pointsAgainst: { increment: pointsA ?? 0 } } });
         }
+        if (!esNac) await sincronizarPuntosCircuito(circId); // departamental: puntos + sets/tantos (incluye lo de espera)
       }
     }
 

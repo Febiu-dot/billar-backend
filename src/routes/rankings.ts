@@ -442,7 +442,7 @@ router.get('/final', async (req, res: Response) => {
     // Puntos: calculo unico (resultados + puntos por espera). Ver services/puntosCircuito.ts
     const puntosCalc = await calcularPuntosCircuito(circuitId);
     if (puntosCalc) {
-      for (const [pid, v] of puntosCalc) { const st = stats.get(pid); if (st) st.puntos = v.total; }
+      for (const [pid, v] of puntosCalc) { const st = stats.get(pid); if (st) { st.puntos = v.total; st.setsGanados += v.setsEspera; st.setsJugados += v.setsEspera; st.tantos += v.tantosEspera; } }
     }
 
     const ranking = players
@@ -648,7 +648,7 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
     // Departamental: puntos = calculo unico (resultados + puntos por espera). Ver services/puntosCircuito.ts
     if (!esNacional) {
       const calc = await calcularPuntosCircuito(circuitId);
-      if (calc) { for (const [pid, v] of calc) { const st = stats.get(pid); if (st) st.puntos = v.total; } }
+      if (calc) { for (const [pid, v] of calc) { const st = stats.get(pid); if (st) { st.puntos = v.total; st.setsGanados += v.setsEspera; st.setsJugados += v.setsEspera; st.tantos += v.tantosEspera; } } }
     }
 
     const ranked = players
@@ -734,8 +734,8 @@ router.get('/puntos-detalle/:circuitId', authenticate, requireRole('admin'), asy
     const entradas = await prisma.rankingEntry.findMany({ where: { circuitId }, include: { player: true } });
     const filas = entradas
       .map((e: any) => {
-        const v = calc.get(e.playerId) ?? { resultados: 0, espera: 0, total: 0 };
-        return { jugador: `${e.player.lastName}, ${e.player.firstName}`, playerId: e.playerId, resultados: v.resultados, espera: v.espera, total: v.total, guardado: e.points };
+        const v: any = calc.get(e.playerId) ?? { resultados: 0, espera: 0, total: 0, setsEspera: 0, tantosEspera: 0 };
+        return { jugador: `${e.player.lastName}, ${e.player.firstName}`, playerId: e.playerId, resultados: v.resultados, espera: v.espera, total: v.total, setsEspera: (v as any).setsEspera ?? 0, tantosEspera: (v as any).tantosEspera ?? 0, guardado: e.points };
       })
       .filter((f: any) => f.total > 0 || f.guardado > 0)
       .sort((a: any, b: any) => b.total - a.total);
