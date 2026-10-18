@@ -161,7 +161,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
 
     // ── RANKING / RANKING FINAL ───────────────────────────────────────
     const parteRanking = tipoFase === 'ranking-parte-1' ? 1 : tipoFase === 'ranking-parte-2' ? 2 : 0;
-    if (tipoFase === 'ranking' || tipoFase === 'ranking-final' || parteRanking) {
+    const catRanking = /^ranking-cat-(master|primera|segunda|tercera)$/.exec(tipoFase)?.[1] ?? '';
+    if (tipoFase === 'ranking' || tipoFase === 'ranking-final' || parteRanking || catRanking) {
       let entries = await prisma.rankingEntry.findMany({
         where: { circuitId, position: { not: null } },
         include: { player: { include: { category: true } } },
@@ -224,9 +225,12 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
 
       // Partes: la lista larga se parte en dos mitades (por orden de ranking) para publicarla mas facil
       const mitadRanking = Math.ceil(jugadores.length / 2);
-      const jugadoresSalida = parteRanking === 1 ? jugadores.slice(0, mitadRanking)
+      const nombreSec = SECCION_POR_CATEGORIA[catRanking] ?? '';
+      const jugadoresSalida = catRanking
+        ? jugadores.filter((j: any) => j.seccion === nombreSec).map((j: any, i: number) => ({ ...j, posicion: i + 1 }))
+        : parteRanking === 1 ? jugadores.slice(0, mitadRanking)
         : parteRanking === 2 ? jugadores.slice(mitadRanking) : jugadores;
-      const sufijoParte = parteRanking ? ` — PARTE ${parteRanking} DE 2` : '';
+      const sufijoParte = catRanking ? ` — ${nombreSec}` : parteRanking ? ` — PARTE ${parteRanking} DE 2` : '';
 
       return res.json({
         ...base,
@@ -237,7 +241,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
           : `RANKING — ${circuit.name.toUpperCase()}${sufijoParte}`,
         fechaPrincipal: '',
         ...(esNacional || esPanamericano ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}),
-        ...(parteRanking ? { parte: parteRanking, listaPlana: true } : {}),
+        ...(parteRanking || catRanking ? { parte: parteRanking, listaPlana: true } : {}),
         jugadores: jugadoresSalida
       });
     }
