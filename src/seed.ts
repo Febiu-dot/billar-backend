@@ -1,3 +1,4 @@
+import { aplicarAltaLaSala } from './migraciones/laSala';
 import { sincronizarPuntosCircuito } from './services/puntosCircuito';
 import { calcularYGuardarAcumulado } from './routes/rankingAcumulado';
 import { PrismaClient } from '@prisma/client';
@@ -325,6 +326,8 @@ async function main() {
     const torneos = await prisma.tournament.findMany({ where: { active: true }, select: { id: true } });
     for (const t of torneos) await calcularYGuardarAcumulado(t.id);
   } catch (e) { console.error('⚠️  No se pudo recalcular el acumulado (se ignora):', e); }
+
+  try { await aplicarAltaLaSala(); } catch (e) { console.error('⚠️  Alta de La Sala falló (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');
