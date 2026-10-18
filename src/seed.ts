@@ -1,3 +1,4 @@
+import { sincronizarPuntosCircuito } from './services/puntosCircuito';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -307,6 +308,16 @@ async function main() {
       console.log(`✏️  Tope 60: ${malos.length} sets corregidos en ${matchIds.size} partidos (circuitos ${Array.from(circuitIds).join(',')})`);
     }
   } catch (e) { console.error('⚠️  No se pudo aplicar el tope de 60 (se ignora):', e); }
+
+  // 17/10: nueva regla de puntos del ranking (puntos por espera + resultados). Deja RankingEntry.points calculado
+  // desde los partidos en los circuitos departamentales de torneos activos. Idempotente (no suma, reemplaza).
+  try {
+    const circuitos = await prisma.circuit.findMany({ where: { tournament: { active: true } }, select: { id: true } });
+    for (const c of circuitos) {
+      const r = await sincronizarPuntosCircuito(c.id);
+      if (r.aplicado) console.log(`✏️  Puntos recalculados en circuito ${c.id}: ${r.cambios} jugadores con cambios`);
+    }
+  } catch (e) { console.error('⚠️  No se pudieron recalcular los puntos (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');

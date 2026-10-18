@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
+import { calcularPuntosCircuito, sincronizarPuntosCircuito } from '../services/puntosCircuito';
 
 const router = Router();
 
@@ -401,13 +402,8 @@ router.get('/final', async (req, res: Response) => {
       const p3 = matches.find((m: any) => m.round === roundBase + 2);
       const p4 = matches.find((m: any) => m.round === roundBase + 3);
       const p5 = matches.find((m: any) => m.round === roundBase + 4);
-      if (p3?.result?.winnerId) addPts(p3.result.winnerId, 8);
-      if (p4?.result) { const p4LoserId = p4.playerAId === p4.result.winnerId ? p4.playerBId : p4.playerAId; addPts(p4LoserId, 2); }
-      if (p5?.result?.winnerId) {
-        const p5LoserId = p5.playerAId === p5.result.winnerId ? p5.playerBId : p5.playerAId;
-        addPts(p5.result.winnerId, 6);
-        addPts(p5LoserId, 4);
-      }
+      // (los puntos de las series se calculan en services/puntosCircuito.ts)
+      void p3; void p4; void p5;
       for (const match of matches) {
         addSetsAndTantos(match.playerAId, match, true);
         addSetsAndTantos(match.playerBId, match, false);
@@ -427,10 +423,7 @@ router.get('/final', async (req, res: Response) => {
       if (match.phase.type !== 'primera') continue;
       if (!match.result?.winnerId) continue;
       const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      if (!match.result.isWO) {
-        addPts(match.result.winnerId, 5);
-        addPts(loserId, 1);
-      }
+      void loserId;
       addSetsAndTantos(match.playerAId, match, true);
       addSetsAndTantos(match.playerBId, match, false);
     }
@@ -441,12 +434,15 @@ router.get('/final', async (req, res: Response) => {
       if (!match.result?.winnerId) continue;
       const isFinal = match.serieId === 'master-final';
       const loserId = match.playerAId === match.result.winnerId ? match.playerBId : match.playerAId;
-      if (!match.result.isWO) {
-        addPts(match.result.winnerId, isFinal ? 7 : 5);
-        addPts(loserId, isFinal ? 2 : 1);
-      }
+      void loserId; void isFinal;
       addSetsAndTantos(match.playerAId, match, true);
       addSetsAndTantos(match.playerBId, match, false);
+    }
+
+    // Puntos: calculo unico (resultados + puntos por espera). Ver services/puntosCircuito.ts
+    const puntosCalc = await calcularPuntosCircuito(circuitId);
+    if (puntosCalc) {
+      for (const [pid, v] of puntosCalc) { const st = stats.get(pid); if (st) st.puntos = v.total; }
     }
 
     const ranking = players
@@ -649,6 +645,12 @@ router.post('/guardar-final/:circuitId', authenticate, requireRole('admin'), asy
       }
     }
 
+    // Departamental: puntos = calculo unico (resultados + puntos por espera). Ver services/puntosCircuito.ts
+    if (!esNacional) {
+      const calc = await calcularPuntosCircuito(circuitId);
+      if (calc) { for (const [pid, v] of calc) { const st = stats.get(pid); if (st) st.puntos = v.total; } }
+    }
+
     const ranked = players
       .map((player: any) => {
         const s = stats.get(player.id) ?? { puntos: 0, setsGanados: 0, setsJugados: 0, tantos: 0, tantosContra: 0 };
@@ -720,6 +722,35 @@ router.delete('/limpiar/:circuitId', authenticate, requireRole('admin'), async (
   }
 });
 
+
+// ── Puntos del circuito departamental: detalle (no modifica nada) y recalculo ──────────────
+// GET  /rankings/puntos-detalle/:circuitId  → por jugador: puntos por resultados, por espera y total
+// POST /rankings/recalcular-puntos/:circuitId → deja RankingEntry.points = total (idempotente, sin duplicar)
+router.get('/puntos-detalle/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = Number(req.params.circuitId);
+    const calc = await calcularPuntosCircuito(circuitId);
+    if (!calc) { res.status(400).json({ error: 'Este circuito es Nacional/Panamericano: usa su propio calculo.' }); return; }
+    const entradas = await prisma.rankingEntry.findMany({ where: { circuitId }, include: { player: true } });
+    const filas = entradas
+      .map((e: any) => {
+        const v = calc.get(e.playerId) ?? { resultados: 0, espera: 0, total: 0 };
+        return { jugador: `${e.player.lastName}, ${e.player.firstName}`, playerId: e.playerId, resultados: v.resultados, espera: v.espera, total: v.total, guardado: e.points };
+      })
+      .filter((f: any) => f.total > 0 || f.guardado > 0)
+      .sort((a: any, b: any) => b.total - a.total);
+    res.json({ circuitId, jugadores: filas.length, diferentes: filas.filter((f: any) => f.total !== f.guardado).length, filas });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/recalcular-puntos/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = Number(req.params.circuitId);
+    const r = await sincronizarPuntosCircuito(circuitId);
+    if (!r.aplicado) { res.status(400).json({ error: 'No se pudo aplicar (circuito Nacional/Panamericano o con error).' }); return; }
+    res.json({ ok: true, circuitId, cambios: r.cambios });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
 
 // ── Recalcular stats de ranking desde partidos ya jugados ──────────────
 router.post('/recalcular-stats/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {

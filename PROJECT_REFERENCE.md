@@ -171,7 +171,7 @@ Necesito SIEMPRE:
 ### Etapa de Cruces (Bracket Master)
 - serieIds: `nac-oct-1..8`, `nac-cua-1..4`, `nac-semi-1..2`, `nac-final`
 - Puntuación cruces Nacional/Panamericano: ganador **3** / perdedor **1** · Final: ganador **5** / perdedor **2**
-- Puntuación cruces Departamental (Primera/Master): ganador **5** / perdedor **1** · Final Master: ganador **7** / perdedor **2**
+- Puntuación cruces Departamental (Primera/Master): ganador **5** / perdedor **1** · Final Master: ganador **7** / perdedor **2** (ver REGLA DE PUNTOS DEPARTAMENTAL abajo: incluye puntos por espera)
 - ⚠️ Implementado en `matches.ts` → `asignarPuntosCruce`, condicional por flag `esNacional` de `getCircuitInfo`. NO usar valores planos: el cálculo distingue por tipo de torneo.
 
 ---
@@ -375,3 +375,14 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 
 
 *Actualizado 16/10/2026 (tarde) — Bracket Final violeta: al cargarlo se precargan sala "Feria Franca", fecha 17/10/2026 y horas (octavos 13:00/14:30, cuartos 16:00, semis 17:30, final 19:00), todo editable. Cada ronda muestra hora y fecha corta en una línea; conectores corregidos (faltaba el brazo inferior de cada par y los cuartos/semis no estaban alineados con su par); layout propio para `paleta==='master'`. BUILD_TAG pub-2026-10-16-bracket-master-v2.*
+
+
+## REGLA DE PUNTOS DEPARTAMENTAL (17/10/2026)
+
+- **Resultados:** series de clasificatorio y de Segunda 1°=8 · 2°=6 · 3°=4 · 4°=2 · cruces de reducción/repechaje 0 · cruces de Primera, cruces Master, octavos, cuartos y semis ganador 5 / perdedor 1 · final campeón 7 / subcampeón 2. W.O. no da puntos de resultado.
+- **Espera (jugadores que ingresan directo a una etapa posterior):** al disputarse el clasificatorio +8 a los de Segunda, Primera y Master; al disputarse las series de Segunda +8 a los de Primera y Master; al disputarse los cruces de Primera +5 a los Master. Entran a Segunda con 8, a Primera con 16, a Master con 21.
+- **"Disputada":** una etapa cuenta como disputada cuando hay al menos un partido terminado en ella (los W.O. automáticos del jugador LIBRE no cuentan). **Etapa de ingreso** de un jugador = primera fase (clasificatorio → segunda → primera → master) en la que aparece en un partido.
+- **Dónde vive el cálculo:** `src/services/puntosCircuito.ts` (UNICO lugar; no duplicar reglas). `puntosPorResultados`, `puntosPorEspera`, `calcularPuntosCircuito`, `sincronizarPuntosCircuito`. Los puntos se **recalculan desde cero** desde los partidos (no se suman de a poco), así que no hay duplicaciones al cargar, corregir o recalcular.
+- **Dónde se usa:** `GET /rankings/final` (departamental), `POST /rankings/guardar-final/:circuitId`, y `PUT /matches/:id/result` (al guardar un resultado en un circuito departamental llama a `sincronizarPuntosCircuito`, que deja `RankingEntry.points` = total). El seed lo corre además en todos los circuitos de torneos activos en cada deploy.
+- **Endpoints admin:** `GET /rankings/puntos-detalle/:circuitId` (por jugador: resultados, espera, total, guardado; no modifica nada) y `POST /rankings/recalcular-puntos/:circuitId` (aplica).
+- **Nacional/Panamericano NO cambian:** conservan su cálculo (cruces 3/1, final 5/2, sin espera) con el camino incremental anterior (`asignarPuntosSerie`/`asignarPuntosCruce` en `matches.ts`).

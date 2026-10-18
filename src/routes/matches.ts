@@ -6,6 +6,7 @@ import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 import { generarReporteCruce, generarReporteSerie } from '../services/reportService';
 import { calcularYGuardarAcumulado } from './rankingAcumulado';
 import { calcularRankingSeries, ordenarFilasRanking } from '../services/rankingSerie';
+import { sincronizarPuntosCircuito } from '../services/puntosCircuito';
 
 const router = Router();
 
@@ -1592,9 +1593,16 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   }
   if (phaseType === 'master' && esNacionalBracket) { await avanzarBracketNacional(matchId); }
 
-  if ((esPartidoDeSerie || esPartidoNacionalSerie) && esUltimoPartido) { await asignarPuntosSerie(existingMatch.phaseId, serieId); }
-  if (phaseType === 'primera' || (phaseType === 'master' && !esNacionalBracket) || (phaseType === 'master' && esNacionalBracket) || (phaseType === 'clasificatorio' && serieId.startsWith('clasif-reduccion-')) || (phaseType === 'clasificatorio' && serieId === 'clasif-repechaje')) {
-    await asignarPuntosCruce(matchId, eraFinalizado && resultadoAnterior ? { winnerId: resultadoAnterior.winnerId, isWO: resultadoAnterior.isWO } : undefined);
+  // Puntos del ranking. Departamental: se RECALCULAN desde los partidos (resultados + puntos por espera),
+  // asi no hay duplicaciones al cargar/corregir un resultado. Nacional/Panamericano: calculo propio de siempre.
+  const { esNacional: circuitoEsNacional } = await getCircuitInfo(existingMatch.phaseId);
+  if (!circuitoEsNacional) {
+    await sincronizarPuntosCircuito(circId);
+  } else {
+    if ((esPartidoDeSerie || esPartidoNacionalSerie) && esUltimoPartido) { await asignarPuntosSerie(existingMatch.phaseId, serieId); }
+    if (phaseType === 'primera' || (phaseType === 'master' && !esNacionalBracket) || (phaseType === 'master' && esNacionalBracket) || (phaseType === 'clasificatorio' && serieId.startsWith('clasif-reduccion-')) || (phaseType === 'clasificatorio' && serieId === 'clasif-repechaje')) {
+      await asignarPuntosCruce(matchId, eraFinalizado && resultadoAnterior ? { winnerId: resultadoAnterior.winnerId, isWO: resultadoAnterior.isWO } : undefined);
+    }
   }
 
   if (phaseType === 'master') {
