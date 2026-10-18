@@ -386,3 +386,6 @@ Segunda bordeaux `#6B2737`+dorado `#D4AF37` está en los 4 mapas de paleta de `A
 - **Dónde se usa:** `GET /rankings/final` (departamental), `POST /rankings/guardar-final/:circuitId`, y `PUT /matches/:id/result` (al guardar un resultado en un circuito departamental llama a `sincronizarPuntosCircuito`, que deja `RankingEntry.points` = total). El seed lo corre además en todos los circuitos de torneos activos en cada deploy.
 - **Endpoints admin:** `GET /rankings/puntos-detalle/:circuitId` (por jugador: resultados, espera, total, guardado; no modifica nada) y `POST /rankings/recalcular-puntos/:circuitId` (aplica).
 - **Nacional/Panamericano NO cambian:** conservan su cálculo (cruces 3/1, final 5/2, sin espera) con el camino incremental anterior (`asignarPuntosSerie`/`asignarPuntosCruce` en `matches.ts`).
+
+### Ajuste W.O. en cruces (18/10/2026)
+En cruces de Primera/Master (puntosCircuito.ts) el ganador por W.O. suma los puntos de ganador (5, final 7); el ausente no suma. Antes no sumaba nada y quien avanzaba por W.O. quedaba rezagado (caso Lajuni, Canelones Este). Se recalcula solo al desplegar (seed) y en cada resultado.

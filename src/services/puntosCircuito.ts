@@ -13,7 +13,7 @@
 //
 // IMPORTANTE: los puntos se CALCULAN desde cero a partir de los partidos (no se suman de a poco).
 // Asi nunca se duplican, aunque se cargue, corrija o recalcule un resultado.
-// W.O.: no otorga puntos de resultado (igual que antes).
+// W.O.: el ganador por W.O. suma los puntos de ganador; el ausente no suma (18/10).
 //
 // Nacional / Panamericano NO usan esta regla (conservan su calculo propio).
 
@@ -68,10 +68,11 @@ export function puntosPorResultados(matches: any[]): Map<number, number> {
   for (const m of matches) {
     const tipo = m.phase?.type;
     if (tipo !== 'primera' && tipo !== 'master') continue;
-    if (!m.result?.winnerId || m.result.isWO) continue;
+    if (!m.result?.winnerId) continue;
     const esFinal = tipo === 'master' && m.serieId === 'master-final';
+    // W.O.: quien avanza suma los puntos de ganador (igual que en las series); el que no se presenta no suma.
     add(m.result.winnerId, esFinal ? 7 : 5);
-    add(perdedor(m, m.result.winnerId), esFinal ? 2 : 1);
+    if (!m.result.isWO) add(perdedor(m, m.result.winnerId), esFinal ? 2 : 1);
   }
   return pts;
 }
