@@ -185,8 +185,23 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         return;
       }
 
-      const jugadores = entries.map((e: any) => ({
-        posicion: e.position ?? 0,
+      // Departamental: el orden sale de los puntos actuales (criterio oficial: puntos → dif. de sets → promedio de tantos),
+      // igual que el ranking del circuito. `position` solo se actualiza al guardar el ranking final, asi que quedaba desactualizado.
+      const esDepartamental = !esNacional && !esPanamericano && configTorneoCircuito.tipo !== 'nacional';
+      const ordenEnVivo = esDepartamental && entries.length > 0 && entries[0].circuitId === circuitId;
+      if (ordenEnVivo) {
+        entries = [...entries].sort((a: any, b: any) => {
+          if (b.points !== a.points) return b.points - a.points;
+          const dA = a.setsWon - a.setsLost, dB = b.setsWon - b.setsLost;
+          if (dB !== dA) return dB - dA;
+          const pA = a.pointsAgainst > 0 ? a.pointsFor / a.pointsAgainst : a.pointsFor > 0 ? 99999 : 0;
+          const pB = b.pointsAgainst > 0 ? b.pointsFor / b.pointsAgainst : b.pointsFor > 0 ? 99999 : 0;
+          return pB - pA;
+        });
+      }
+
+      const jugadores = entries.map((e: any, idx: number) => ({
+        posicion: ordenEnVivo ? idx + 1 : (e.position ?? 0),
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
         club: abrev(e.player.club),
         pais: (e.player as any).pais ?? 'Uruguay', // ← NUEVO
@@ -197,7 +212,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         tantos: e.pointsFor,
         tantosContra: e.pointsAgainst,
         promedio: e.pointsAgainst > 0 ? parseFloat((e.pointsFor / e.pointsAgainst).toFixed(2)) : (e.pointsFor > 0 ? 99.99 : 0), // ← NUEVO
-        seccion: getSeccion(e.position)
+        seccion: getSeccion(ordenEnVivo ? idx + 1 : e.position)
       }));
 
       return res.json({
