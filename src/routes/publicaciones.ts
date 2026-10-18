@@ -85,6 +85,8 @@ const getSeccion = (pos: number | null): string => {
   return 'TERCERA';
 };
 
+const SECCION_POR_CATEGORIA: Record<string, string> = { master: 'MÁSTER', primera: 'PRIMERA', segunda: 'SEGUNDA', tercera: 'TERCERA' };
+
 // ← mkBracketMatch ahora incluye pais en playerA / playerB
 const mkBracketMatch = (m: any) => {
   if (!m) return null;
@@ -158,7 +160,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     const esPanamericano = configTorneoCircuito.tipo === 'panamericano';
 
     // ── RANKING / RANKING FINAL ───────────────────────────────────────
-    if (tipoFase === 'ranking' || tipoFase === 'ranking-final') {
+    const parteRanking = tipoFase === 'ranking-parte-1' ? 1 : tipoFase === 'ranking-parte-2' ? 2 : 0;
+    if (tipoFase === 'ranking' || tipoFase === 'ranking-final' || parteRanking) {
       let entries = await prisma.rankingEntry.findMany({
         where: { circuitId, position: { not: null } },
         include: { player: { include: { category: true } } },
@@ -212,8 +215,18 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         tantos: e.pointsFor,
         tantosContra: e.pointsAgainst,
         promedio: e.pointsAgainst > 0 ? parseFloat((e.pointsFor / e.pointsAgainst).toFixed(2)) : (e.pointsFor > 0 ? 99.99 : 0), // ← NUEVO
-        seccion: getSeccion(ordenEnVivo ? idx + 1 : e.position)
+        // Departamental: el color/seccion es el de la categoria INICIAL del jugador (las categorias
+        // se reasignan recien al terminar el 4° circuito). Nacional/Panamericano: por posicion.
+        seccion: esDepartamental
+          ? (SECCION_POR_CATEGORIA[String(e.player.category?.name ?? '').toLowerCase()] ?? getSeccion(ordenEnVivo ? idx + 1 : e.position))
+          : getSeccion(ordenEnVivo ? idx + 1 : e.position)
       }));
+
+      // Partes: la lista larga se parte en dos mitades (por orden de ranking) para publicarla mas facil
+      const mitadRanking = Math.ceil(jugadores.length / 2);
+      const jugadoresSalida = parteRanking === 1 ? jugadores.slice(0, mitadRanking)
+        : parteRanking === 2 ? jugadores.slice(mitadRanking) : jugadores;
+      const sufijoParte = parteRanking ? ` — PARTE ${parteRanking} DE 2` : '';
 
       return res.json({
         ...base,
@@ -221,10 +234,11 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         esPanamericano, // ← NUEVO
         fase: tipoFase === 'ranking-final'
           ? `RANKING FINAL — ${circuit.name.toUpperCase()}`
-          : `RANKING — ${circuit.name.toUpperCase()}`,
+          : `RANKING — ${circuit.name.toUpperCase()}${sufijoParte}`,
         fechaPrincipal: '',
         ...(esNacional || esPanamericano ? { categoriaFederal: categoriaFederal(circuit.tournament.name) } : {}),
-        jugadores
+        ...(parteRanking ? { parte: parteRanking, listaPlana: true } : {}),
+        jugadores: jugadoresSalida
       });
     }
 
