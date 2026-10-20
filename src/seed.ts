@@ -1,4 +1,5 @@
 import { aplicarAltaLaSala } from './migraciones/laSala';
+import { corregirClub25DeMayo } from './migraciones/club25DeMayo';
 import { sincronizarPuntosCircuito } from './services/puntosCircuito';
 import { calcularYGuardarAcumulado } from './routes/rankingAcumulado';
 import { PrismaClient } from '@prisma/client';
@@ -328,6 +329,8 @@ async function main() {
   } catch (e) { console.error('⚠️  No se pudo recalcular el acumulado (se ignora):', e); }
 
   try { await aplicarAltaLaSala(); } catch (e) { console.error('⚠️  Alta de La Sala falló (se ignora):', e); }
+
+  try { await corregirClub25DeMayo(); } catch (e) { console.error('⚠️  Corrección del club 25 de mayo falló (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');
