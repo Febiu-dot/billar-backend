@@ -5,7 +5,7 @@
 import prisma from '../services/prisma';
 
 const CLUB_VIEJO = '25 de agosto';
-const CLUB_NUEVO = '25 de mayo';
+const CLUB_NUEVO = '25 de Mayo'; // igual que el nombre de la sede
 
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -20,7 +20,9 @@ export async function corregirClub25DeMayo(): Promise<void> {
 
   let cambiados = 0;
   for (const p of jugadores) {
-    if (norm(p.club as string) !== norm(CLUB_VIEJO)) continue;
+    const n = norm(p.club as string);
+    // "25 de agosto" (error) o "25 de mayo" mal escrito en minuscula: ambos quedan como "25 de Mayo"
+    if (n !== norm(CLUB_VIEJO) && !(n === norm(CLUB_NUEVO) && p.club !== CLUB_NUEVO)) continue;
     await prisma.player.update({ where: { id: p.id }, data: { club: CLUB_NUEVO } });
     cambiados++;
     console.log(`✏️  Club 25 de mayo: ${p.lastName}, ${p.firstName}: "${p.club}" → "${CLUB_NUEVO}"`);
