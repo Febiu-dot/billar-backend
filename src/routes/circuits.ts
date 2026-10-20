@@ -193,6 +193,25 @@ function generarCuadroFinal(phaseId: number, jugadores: any[], ruleSetId: number
   return matches;
 }
 
+// ── Cuadro final de 8 jugadores SIN cruces de Primera (formato Flores) ─
+// Cuartos -> semifinales -> final, eliminacion directa. Usa las mismas rondas (25..31) y rotulos
+// "Gan. Cuartos N" / "Gan. Semifinal N" que el cuadro grande, asi la propagacion de ganadores
+// (avanzarBracketMaster) y la publicacion del bracket funcionan sin cambios.
+// Espejo: #1 v #8, #2 v #7, #3 v #6, #4 v #5; semifinales 1 = cuartos 1 v 4, 2 = cuartos 2 v 3.
+function generarCuadroFinal8(phaseId: number, jugadores: any[], ruleSetId: number): any[] {
+  const matches: any[] = [];
+  const N = jugadores.length; // 8
+  for (let i = 0; i < N / 2; i++) {
+    const jA = jugadores[i];
+    const jB = jugadores[N - 1 - i];
+    matches.push(mkMatch(phaseId, jA.id ?? null, jB.id ?? null, 25 + i, jA.slot ?? undefined, jB.slot ?? undefined, `master-cuartos-${i + 1}`, ruleSetId));
+  }
+  matches.push(mkMatch(phaseId, null, null, 29, 'Gan. Cuartos 25', 'Gan. Cuartos 28', 'master-semifinal-1', ruleSetId));
+  matches.push(mkMatch(phaseId, null, null, 30, 'Gan. Cuartos 26', 'Gan. Cuartos 27', 'master-semifinal-2', ruleSetId));
+  matches.push(mkMatch(phaseId, null, null, 31, 'Gan. Semifinal 29', 'Gan. Semifinal 30', 'master-final', ruleSetId));
+  return matches;
+}
+
 // ── Series Nacional: 5 partidos por serie ────────────────────────────
 function generarSeriesNacional(
   phaseId: number,
@@ -561,7 +580,11 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
       crucesPrimera.push({ cruce: i + 1, jugadorA: jA.id ? pn(jA) : (jA.slot ?? '—'), jugadorB: jB.id ? pn(jB) : (jB.slot ?? '—'), esSlotA: !jA.id, esSlotB: !jB.id });
     }
 
-    const slotsPrimera = Array.from({ length: numClasifPrimera }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
+    // Misma regla que al generar: sin fase de Primera y con cuadro de 8, los clasificados de Segunda entran directo.
+    const hayPrimera = circuit.phases.some((p: any) => p.type === 'primera');
+    const slotsSegundaDirecto = !hayPrimera ? slotsSegunda : [];
+    const cuadroDe8SinPrimera = !hayPrimera && master.length + slotsSegundaDirecto.length === 8;
+    const slotsPrimera = cuadroDe8SinPrimera ? slotsSegundaDirecto : Array.from({ length: numClasifPrimera }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
     const jugMaster = [...master, ...slotsPrimera] as any[];
     const NM = jugMaster.length;
 
@@ -576,7 +599,9 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
       inscriptos: { total: master.length + primera.length + segunda.length + clasif.length, master: master.length, primera: primera.length, segunda: segunda.length, tercera: clasif.length },
       clasificatorio: { totalJugadores: jugConLibre.length, totalSeries: numSeries, totalClasificados: numClasificados, necesitaReduccion: numClasificados > cuposDesdeClasif, directos: directosClasif, series: seriesClasif, crucesReduccion },
       segundaPreview: { totalJugadores: N2, totalSeries: numSeriesSegunda, totalClasificados: numClasifSegunda, series: seriesSegunda },
-      primeraPreview: { totalJugadores: totalPrimera, totalCruces: crucesPrimera.length, totalClasificados: numClasifPrimera, cruces: crucesPrimera },
+      primeraPreview: hayPrimera
+        ? { totalJugadores: totalPrimera, totalCruces: crucesPrimera.length, totalClasificados: numClasifPrimera, cruces: crucesPrimera }
+        : { totalJugadores: 0, totalCruces: 0, totalClasificados: 0, cruces: [] },
       masterPreview:  { totalJugadores: NM, totalCruces: crucesMaster.length, cruces: crucesMaster },
     });
   } catch (error: any) {
@@ -760,10 +785,19 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     }
 
     if (faseMaster) {
-      const slotsPrimera = Array.from({ length: numClasifPrimera }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
-      const jugConSlots = [...master, ...slotsPrimera] as any[];
-      const cuadroMatches = generarCuadroFinal(faseMaster.id, jugConSlots, RULESET_CRUCES);
-      matchesCreados.push(...cuadroMatches);
+      // Formato sin fase de Primera (ej. Flores): los clasificados de Segunda entran directo al cuadro final.
+      // Solo se usa si el cuadro resulta de exactamente 8 jugadores; en cualquier otro caso queda la logica de siempre.
+      const slotsSegundaDirecto = !fasePrimera
+        ? Array.from({ length: numClasifSegunda }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }))
+        : [];
+      if (!fasePrimera && master.length + slotsSegundaDirecto.length === 8) {
+        matchesCreados.push(...generarCuadroFinal8(faseMaster.id, [...master, ...slotsSegundaDirecto] as any[], RULESET_CRUCES));
+      } else {
+        const slotsPrimera = Array.from({ length: numClasifPrimera }, (_, i) => ({ id: null, slot: `Clasificado Primera #${i + 1}` }));
+        const jugConSlots = [...master, ...slotsPrimera] as any[];
+        const cuadroMatches = generarCuadroFinal(faseMaster.id, jugConSlots, RULESET_CRUCES);
+        matchesCreados.push(...cuadroMatches);
+      }
     }
 
     if (matchesCreados.length > 0) {
