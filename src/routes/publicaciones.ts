@@ -600,10 +600,17 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     }
 
     if (tipoFase === 'reduccion') {
-      const rm = matches.filter((m: any) => m.serieId && (m.serieId.includes('reduccion') || m.serieId.includes('repechaje')));
+      // Los cruces se buscan en TODO el circuito (igual que la pantalla de Cruces), sin depender de en que fase quedaron.
+      const todosCircuito = await prisma.match.findMany({
+        where: { phase: { circuitId } },
+        include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true, sets: true },
+        orderBy: { round: 'asc' }
+      });
+      const rm = todosCircuito.filter((m: any) => m.serieId && (m.serieId.includes('reduccion') || m.serieId.includes('repechaje')));
+      if (rm.length === 0) { res.status(404).json({ error: 'No hay cruces de reducción generados en este circuito (puede que los clasificados no superen los cupos).' }); return; }
       // El numero que se muestra en la reduccion es el PUESTO FINAL EN EL CLASIFICATORIO (no el ranking inicial):
       // cruce n -> A = directos+n, B = N-n+1 (N = 2 x series; directos = N - 2 x cruces).
-      const numSeriesClasif = new Set(matches.filter((x: any) => x.serieId?.startsWith('clasif-serie-')).map((x: any) => x.serieId)).size;
+      const numSeriesClasif = new Set(todosCircuito.filter((x: any) => x.serieId?.startsWith('clasif-serie-')).map((x: any) => x.serieId)).size;
       const numCruces = rm.filter((x: any) => !x.serieId?.includes('repechaje')).length;
       const Nclas = numSeriesClasif * 2; const directosClas = Math.max(0, Nclas - 2 * numCruces);
       const puesto = (m: any, lado: 'A' | 'B') => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return lado === 'A' ? directosClas + n : Nclas - n + 1; };
