@@ -5,7 +5,7 @@ import { io } from '../index';
 import { emitMatchUpdate, emitTableUpdate } from '../services/socketService';
 import { generarReporteCruce, generarReporteSerie } from '../services/reportService';
 import { calcularYGuardarAcumulado } from './rankingAcumulado';
-import { calcularRankingSeries, ordenarFilasRanking } from '../services/rankingSerie';
+import { calcularRankingSeries, ordenarFilasRanking, detallarSeriesIncompletas } from '../services/rankingSerie';
 import { sincronizarPuntosCircuito } from '../services/puntosCircuito';
 
 const router = Router();
@@ -660,23 +660,8 @@ async function rellenarCrucesReduccion(phaseId: number): Promise<string[]> {
     const todasLasSeries = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'clasif-serie-' } }, include: { result: true, sets: true, playerA: true, playerB: true }, orderBy: { round: 'asc' } });
     const seriesMap: Record<string, any[]> = {};
     for (const m of todasLasSeries) { if (!m.serieId) continue; if (!seriesMap[m.serieId]) seriesMap[m.serieId] = []; seriesMap[m.serieId].push(m); }
-    // La reduccion se arma cuando TODAS las series terminaron. Si falta algo, se avisa exactamente que.
-    const nombreJ = (j: any) => !j ? 'por definir' : (j.dni === LIBRE_DNI ? 'LIBRE' : `${j.lastName}${j.lastName ? ', ' : ''}${j.firstName}`);
-    const faltantes: string[] = [];
-    for (const serieId of Object.keys(seriesMap)) {
-      const partidos = seriesMap[serieId];
-      const p5 = partidos.find((p: any) => { const rb = Math.floor(p.round / 10) * 10 + 1; return p.round === rb + 4; });
-      if (p5 && p5.result?.winnerId) continue;
-      const numSerie = serieId.replace('clasif-serie-', '');
-      const roundBase = Math.min(...partidos.map((p: any) => p.round));
-      const sinResultado = partidos.filter((p: any) => !p.result?.winnerId).sort((a: any, b: any) => a.round - b.round);
-      if (sinResultado.length > 0) {
-        const p = sinResultado[0];
-        faltantes.push(`Serie ${numSerie}: falta el resultado del partido P${p.round - roundBase + 1} (${nombreJ(p.playerA)} vs ${nombreJ(p.playerB)})`);
-      } else {
-        faltantes.push(`Serie ${numSerie}: faltan partidos por generarse (hay ${partidos.length} de 5)`);
-      }
-    }
+    // La reduccion se arma cuando TODAS las series terminaron (y cada ganador pertenece a su serie). Si falta algo, se avisa que.
+    const faltantes = detallarSeriesIncompletas(todasLasSeries, 'clasif-serie-');
     if (faltantes.length > 0) return faltantes;
     // 1º = ganador del P3 (final de ganadores); 2º = ganador del P5. Se define por ESTRUCTURA de la serie
     // (antes se ordenaba por victorias y habia empates 2-2 entre ganador P3 y ganador P5 que daban 1º/2º invertidos).

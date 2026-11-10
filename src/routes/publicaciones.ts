@@ -576,7 +576,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         promedio: parseFloat(prom(f) > 9999 ? '99.99' : prom(f).toFixed(2)),
         destino: numCruces === 0 ? '' : (i < directos ? 'SERIES DE SEGUNDA' : 'REDUCCIÓN')
       }));
-      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: pendientes > 0 ? `Parcial: faltan ${pendientes} series — ${detalleFaltan.join(' · ')}` : '', directos, jugadores });
+      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: detalleFaltan.length > 0 ? `Parcial: ${detalleFaltan.length} series con problemas (${filas.length} de ${(Object.keys(porSerie).length) * 2} clasificados) — ${detalleFaltan.join(' · ')}` : '', directos, jugadores });
     }
 
     // ── RANKING DE SEGUNDA (1° y 2° de cada serie, para cruzar contra Primera) ──────

@@ -114,8 +114,17 @@ export function detallarSeriesIncompletas(matches: any[], prefijo: string): stri
     const base = Math.min(...ms.map((m: any) => m.round));
     const p3 = ms.find((m: any) => m.round === base + 2);
     const p5 = ms.find((m: any) => m.round === base + 4);
-    if (p3?.result?.winnerId && p5?.result?.winnerId) continue;
     const num = sid.match(/(\d+)$/)?.[1] ?? sid;
+    if (p3?.result?.winnerId && p5?.result?.winnerId) {
+      // Si el ganador registrado no es ninguno de los jugadores de la serie, el ranking lo descarta en silencio.
+      const jugadoresSerie = new Set<number>();
+      for (const m of ms) { if (m.playerAId) jugadoresSerie.add(m.playerAId); if (m.playerBId) jugadoresSerie.add(m.playerBId); }
+      const malos = ([['P3', p3], ['P5', p5]] as [string, any][]).filter(([, pm]) => !jugadoresSerie.has(pm.result.winnerId));
+      for (const [et, pm] of malos) {
+        out.push(`Serie ${num}: el ganador registrado en el ${et} (${nombre(pm.playerA)} vs ${nombre(pm.playerB)}) no es ninguno de los jugadores de la serie; revisar y volver a cargar ese resultado`);
+      }
+      continue;
+    }
     const sinResultado = ms.filter((m: any) => !m.result?.winnerId).sort((a: any, b: any) => a.round - b.round);
     if (sinResultado.length > 0) {
       const m = sinResultado[0];

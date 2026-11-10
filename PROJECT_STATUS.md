@@ -30,6 +30,8 @@
 
 **Diagnostico en publicaciones (`publicaciones.ts` + `rankingSerie.detallarSeriesIncompletas`):** Ranking del Clasificatorio y Reduccion ahora leen los partidos de TODO el circuito y, si no se pueden formar, dicen que serie y que partido falta (en el error o en la linea de fecha de la publicacion). Util para detectar un resultado sin cargar.
 
+**Ganador que no pertenece a la serie (10/11):** el ranking del clasificatorio descartaba en silencio una serie si el winnerId de su P3/P5 no era jugador de esa serie (ej. se sustituyo un jugador despues de cargar el resultado) y salian 20 de 22 sin aviso. `detallarSeriesIncompletas` ahora lo detecta y lo informa; la reduccion usa la misma verificacion y no se arma hasta corregirlo. Aviso visible en la linea de fecha de la publicacion.
+
 **Cambios (`matches.ts`):**
 - `resolverWOLibre`: W.O. automatico a favor del jugador real (0-2 / 0-120, igual que al generar) y encadena `generarSiguientePartidoSerie`. Se llama solo cuando se crea un P4 con LIBRE.
 - `resolverPartidosLibre(phaseId)`: repara series ya trabadas; corre al inicio de `rellenarCrucesReduccion`.
