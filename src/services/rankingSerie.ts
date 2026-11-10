@@ -97,3 +97,32 @@ export function calcularRankingSeries(
 
   return { filas, totalSeries: ids.length, pendientes };
 }
+
+// Lista, en castellano, que le falta a cada serie para considerarse terminada (P3 y P5 con ganador).
+// Sirve para que las publicaciones expliquen por que un ranking o una reduccion no se pudo formar.
+export function detallarSeriesIncompletas(matches: any[], prefijo: string): string[] {
+  const porSerie: Record<string, any[]> = {};
+  for (const m of matches) {
+    if (typeof m.serieId !== 'string' || !m.serieId.startsWith(prefijo)) continue;
+    (porSerie[m.serieId] ??= []).push(m);
+  }
+  const nombre = (j: any) => !j ? 'por definir' : (j.dni === 'FEBIU000' ? 'LIBRE' : `${j.lastName}${j.lastName ? ', ' : ''}${j.firstName}`);
+  const out: string[] = [];
+  const ids = Object.keys(porSerie).sort((a, b) => (parseInt(a.match(/(\d+)$/)?.[1] ?? '0')) - (parseInt(b.match(/(\d+)$/)?.[1] ?? '0')));
+  for (const sid of ids) {
+    const ms = porSerie[sid];
+    const base = Math.min(...ms.map((m: any) => m.round));
+    const p3 = ms.find((m: any) => m.round === base + 2);
+    const p5 = ms.find((m: any) => m.round === base + 4);
+    if (p3?.result?.winnerId && p5?.result?.winnerId) continue;
+    const num = sid.match(/(\d+)$/)?.[1] ?? sid;
+    const sinResultado = ms.filter((m: any) => !m.result?.winnerId).sort((a: any, b: any) => a.round - b.round);
+    if (sinResultado.length > 0) {
+      const m = sinResultado[0];
+      out.push(`Serie ${num}: falta el resultado del partido P${m.round - base + 1} (${nombre(m.playerA)} vs ${nombre(m.playerB)})`);
+    } else {
+      out.push(`Serie ${num}: faltan partidos por generarse (hay ${ms.length} de 5)`);
+    }
+  }
+  return out;
+}

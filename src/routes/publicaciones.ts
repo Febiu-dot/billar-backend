@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
-import { calcularRankingSeries, ordenarFilasRanking, compararFilas, promedioTantos } from '../services/rankingSerie';
+import { calcularRankingSeries, ordenarFilasRanking, compararFilas, promedioTantos, detallarSeriesIncompletas } from '../services/rankingSerie';
 
 const router = Router();
 
@@ -527,7 +527,13 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     // 1º = ganador del P3, 2º = ganador del P5 de cada serie. Orden oficial: puntos > dif. sets > promedio tantos.
     if (tipoFase === 'ranking-clasificatorio') {
       const porSerie: Record<string, any[]> = {};
-      for (const m of matches) { if (m.serieId?.startsWith('clasif-serie-')) (porSerie[m.serieId] ??= []).push(m); }
+      const matchesCirc = await prisma.match.findMany({
+        where: { phase: { circuitId } },
+        include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, result: true, sets: true },
+        orderBy: { round: 'asc' }
+      });
+      const detalleFaltan = detallarSeriesIncompletas(matchesCirc, 'clasif-serie-');
+      for (const m of matchesCirc) { if (m.serieId?.startsWith('clasif-serie-')) (porSerie[m.serieId] ??= []).push(m); }
       const filas: any[] = [];
       let pendientes = 0;
       for (const [sid, ms] of Object.entries(porSerie)) {
@@ -550,10 +556,13 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
           filas.push({ serie: serieNum, puntos: pts, setsGanados: x.sg, setsPerdidos: x.sp, tantos: x.tf, tantosContra: x.tc, player: x.pl });
         }
       }
-      if (filas.length === 0) { res.status(404).json({ error: 'Todavía no hay series finalizadas en el clasificatorio.' }); return; }
+      if (filas.length === 0) {
+        const msg = Object.keys(porSerie).length === 0 ? 'No se encontraron series del clasificatorio en este circuito.' : 'Todavía no hay series finalizadas en el clasificatorio. ' + detalleFaltan.join(' · ');
+        res.status(404).json({ error: msg }); return;
+      }
       const prom = (f: any) => f.tantosContra > 0 ? f.tantos / f.tantosContra : (f.tantos > 0 ? 99999 : 0);
       filas.sort((a, b) => b.puntos - a.puntos || ((b.setsGanados - b.setsPerdidos) - (a.setsGanados - a.setsPerdidos)) || (prom(b) - prom(a)));
-      const numCruces = matches.filter((m: any) => m.serieId?.startsWith('clasif-reduccion-')).length;
+      const numCruces = matchesCirc.filter((m: any) => m.serieId?.startsWith('clasif-reduccion-')).length;
       const directos = Math.max(0, filas.length - 2 * numCruces);
       const jugadores = filas.map((f, i) => ({
         posicion: i + 1,
@@ -567,7 +576,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         promedio: parseFloat(prom(f) > 9999 ? '99.99' : prom(f).toFixed(2)),
         destino: numCruces === 0 ? '' : (i < directos ? 'SERIES DE SEGUNDA' : 'REDUCCIÓN')
       }));
-      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: pendientes > 0 ? `Parcial: faltan ${pendientes} series` : '', directos, jugadores });
+      return res.json({ ...base, tipo: 'ranking-clasif', fase: 'RANKING DEL CLASIFICATORIO', fechaPrincipal: pendientes > 0 ? `Parcial: faltan ${pendientes} series — ${detalleFaltan.join(' · ')}` : '', directos, jugadores });
     }
 
     // ── RANKING DE SEGUNDA (1° y 2° de cada serie, para cruzar contra Primera) ──────
@@ -616,8 +625,10 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const puesto = (m: any, lado: 'A' | 'B') => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return lado === 'A' ? directosClas + n : Nclas - n + 1; };
       const conPuesto = (info: any, v: number | undefined) => (v !== undefined && info && !info.esSlot ? { ...info, ranking: v } : info);
       const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, jugadorA: conPuesto(jugadorInfo(m.playerA, m.slotA, rankings), puesto(m, 'A')), jugadorB: conPuesto(jugadorInfo(m.playerB, m.slotB, rankings), puesto(m, 'B')), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
-      const pf = rm.find((m: any) => m.scheduledAt)?.scheduledAt;
-      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: '', cruces });
+      const faltanSeries = detallarSeriesIncompletas(todosCircuito, 'clasif-serie-');
+      const sinJugadores = cruces.length > 0 && cruces.every((c: any) => c.jugadorA?.esSlot || c.jugadorB?.esSlot);
+      const aviso = sinJugadores && faltanSeries.length > 0 ? `Cruces sin jugadores: faltan resultados — ${faltanSeries.join(' · ')}` : '';
+      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: aviso, cruces });
     }
 
     const getEtapa = (round: number) => {

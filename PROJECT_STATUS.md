@@ -28,6 +28,8 @@
 
 **Publicacion de reduccion (`publicaciones.ts`):** salia sin cruces porque buscaba los partidos solo en la primera fase de tipo clasificatorio; la pantalla de Cruces los busca en todo el circuito por serieId. Ahora la publicacion tambien busca en todo el circuito y, si no hay ninguno, avisa con un mensaje claro en vez de salir vacia.
 
+**Diagnostico en publicaciones (`publicaciones.ts` + `rankingSerie.detallarSeriesIncompletas`):** Ranking del Clasificatorio y Reduccion ahora leen los partidos de TODO el circuito y, si no se pueden formar, dicen que serie y que partido falta (en el error o en la linea de fecha de la publicacion). Util para detectar un resultado sin cargar.
+
 **Cambios (`matches.ts`):**
 - `resolverWOLibre`: W.O. automatico a favor del jugador real (0-2 / 0-120, igual que al generar) y encadena `generarSiguientePartidoSerie`. Se llama solo cuando se crea un P4 con LIBRE.
 - `resolverPartidosLibre(phaseId)`: repara series ya trabadas; corre al inicio de `rellenarCrucesReduccion`.
