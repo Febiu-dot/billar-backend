@@ -97,7 +97,7 @@ export function esperaPorJugador(fases: any[]): Map<number, EsperaJugador> {
     fases.filter((f: any) => f.type === tipo).flatMap((f: any) => f.matches ?? []);
   const esLibre = (m: any) => m.playerA?.dni === LIBRE_DNI || m.playerB?.dni === LIBRE_DNI;
   const disputada = (tipo: TipoFase) =>
-    matchesDe(tipo).some((m: any) => (m.status === 'finalizado' || m.status === 'wo') && !esLibre(m));
+    matchesDe(tipo).some((m: any) => (m.status === 'finalizado' || m.status === 'wo') && !esLibre(m) && !(m.result?.isWO && !m.result?.woPlayerId));
 
   // Etapa de ingreso de cada jugador (indice en ORDEN_FASES)
   const ingreso = new Map<number, number>();

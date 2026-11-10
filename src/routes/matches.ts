@@ -1520,7 +1520,7 @@ router.put('/:id/set', authenticate, requireRole('admin', 'juez_sede'), async (r
 
 router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
   const matchId = Number(req.params.id);
-  const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets } = req.body;
+  const { setsA, setsB, pointsA, pointsB, isWO, woPlayerId, notes, sets, dobleWO, avanzaId } = req.body;
   const existingMatch = await prisma.match.findUnique({
     where: { id: matchId },
     include: { ruleSet: true, phase: { include: { circuit: { include: { tournament: true } } } } }
@@ -1529,7 +1529,14 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   const ruleSet = existingMatch.ruleSet;
   let finalSetsA = setsA, finalSetsB = setsB, finalPtsA = pointsA, finalPtsB = pointsB;
   let winnerId: number | null = null;
-  if (isWO) {
+  // Doble W.O.: no se presento ninguno de los dos. Se cierra 0-0 sin sets ni tantos y no cuenta como partido jugado.
+  // `avanzaId` (opcional) es quien sigue en la serie/cruce segun el reglamento; si no se indica queda sin ganador.
+  const esDobleWO = !!isWO && !!dobleWO;
+  if (isWO && esDobleWO) {
+    const avanza = Number(avanzaId);
+    winnerId = avanza && (avanza === existingMatch.playerAId || avanza === existingMatch.playerBId) ? avanza : null;
+    finalSetsA = 0; finalSetsB = 0; finalPtsA = 0; finalPtsB = 0;
+  } else if (isWO) {
     const absentId = woPlayerId;
     winnerId = absentId === existingMatch.playerAId ? existingMatch.playerBId : existingMatch.playerAId;
     if (ruleSet) {
@@ -1545,8 +1552,8 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   const ganadorAnterior = resultadoAnterior?.winnerId ?? null;
   const result = await prisma.matchResult.upsert({
     where: { matchId },
-    create: { matchId, setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
-    update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId, notes },
+    create: { matchId, setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId: esDobleWO ? null : woPlayerId, notes },
+    update: { setsA: finalSetsA, setsB: finalSetsB, pointsA: finalPtsA, pointsB: finalPtsB, winnerId, isWO: !!isWO, woPlayerId: esDobleWO ? null : woPlayerId, notes },
   });
   if (!isWO && sets && Array.isArray(sets) && sets.length > 0) {
     const tope = ruleSet?.pointsPerSet ?? 60; // tope de tantos por set (60): 61, 62... se guardan como 60
@@ -1563,7 +1570,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   });
   const { circuitId: circId } = await getCircuitInfo(existingMatch.phaseId);
   const eraFinalizado = existingMatch.status === 'finalizado' || existingMatch.status === 'wo';
-  if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId && !eraFinalizado) {
+  if (circId && winnerId && existingMatch.playerAId && existingMatch.playerBId && !eraFinalizado && !esDobleWO) {
     const setsWonA = finalSetsA; const setsWonB = finalSetsB;
     const setsLostA = finalSetsB; const setsLostB = finalSetsA;
     const ptsForA = finalPtsA; const ptsForB = finalPtsB;
@@ -1597,6 +1604,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     });
     for (const m of allMatches) {
       if (!m.result || !m.playerAId || !m.playerBId) continue;
+      if (m.result.isWO && !m.result.woPlayerId) continue; // doble W.O.: no cuenta como partido jugado
       const { setsA, setsB, pointsA, pointsB, winnerId: wId } = m.result;
       const wA = wId === m.playerAId ? 1 : 0;
       const wB = wId === m.playerBId ? 1 : 0;
