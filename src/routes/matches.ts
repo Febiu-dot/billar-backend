@@ -605,16 +605,79 @@ async function rellenarRepechaje(matchId: number) {
   } catch (error) { console.error('Error rellenando repechaje:', error); }
 }
 
-async function rellenarCrucesReduccion(phaseId: number) {
+const LIBRE_DNI = 'FEBIU000';
+
+async function getLibreId(): Promise<number | null> {
+  const libre = await prisma.player.findFirst({ where: { dni: LIBRE_DNI }, select: { id: true } });
+  return libre?.id ?? null;
+}
+
+// Un partido contra el jugador LIBRE se resuelve solo: W.O. a favor del jugador real (igual que al generar el torneo).
+// Despues se encadena la generacion del siguiente partido de la serie.
+async function resolverWOLibre(match: { id: number; playerAId: number | null; playerBId: number | null; tableId: number | null }, libreId: number): Promise<boolean> {
   try {
-    const todasLasSeries = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'clasif-serie-' } }, include: { result: true, sets: true }, orderBy: { round: 'asc' } });
+    const isA = match.playerAId === libreId;
+    const winnerId = isA ? match.playerBId : match.playerAId;
+    if (!winnerId || winnerId === libreId) return false;
+    await prisma.matchResult.upsert({
+      where: { matchId: match.id },
+      create: { matchId: match.id, setsA: isA ? 0 : 2, setsB: isA ? 2 : 0, pointsA: isA ? 0 : 120, pointsB: isA ? 120 : 0, winnerId, isWO: true, woPlayerId: libreId },
+      update: { setsA: isA ? 0 : 2, setsB: isA ? 2 : 0, pointsA: isA ? 0 : 120, pointsB: isA ? 120 : 0, winnerId, isWO: true, woPlayerId: libreId },
+    });
+    const actualizado = await prisma.match.update({
+      where: { id: match.id }, data: { status: 'wo', finishedAt: new Date(), tableId: null },
+      include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
+    });
+    if (match.tableId) {
+      const mesa = await prisma.table.update({ where: { id: match.tableId }, data: { status: 'libre' }, include: { venue: true } });
+      emitTableUpdate(io, mesa);
+    }
+    emitMatchUpdate(io, actualizado);
+    await generarSiguientePartidoSerie(match.id);
+    return true;
+  } catch (e) { console.error('Error resolviendo W.O. contra LIBRE:', e); return false; }
+}
+
+// Repara series que quedaron trabadas por un partido contra LIBRE sin resolver (ej. el P4 de una serie con LIBRE).
+async function resolverPartidosLibre(phaseId: number) {
+  try {
+    const libreId = await getLibreId();
+    if (!libreId) return;
+    for (let vuelta = 0; vuelta < 5; vuelta++) {
+      const pendientes = await prisma.match.findMany({
+        where: { phaseId, serieId: { startsWith: 'clasif-serie-' }, result: { is: null }, OR: [{ playerAId: libreId }, { playerBId: libreId }] },
+      });
+      let hizo = false;
+      for (const m of pendientes) { if (await resolverWOLibre(m, libreId)) hizo = true; }
+      if (!hizo) break;
+    }
+  } catch (e) { console.error('Error resolviendo partidos LIBRE:', e); }
+}
+
+async function rellenarCrucesReduccion(phaseId: number): Promise<string[]> {
+  try {
+    await resolverPartidosLibre(phaseId);
+    const todasLasSeries = await prisma.match.findMany({ where: { phaseId, serieId: { startsWith: 'clasif-serie-' } }, include: { result: true, sets: true, playerA: true, playerB: true }, orderBy: { round: 'asc' } });
     const seriesMap: Record<string, any[]> = {};
     for (const m of todasLasSeries) { if (!m.serieId) continue; if (!seriesMap[m.serieId]) seriesMap[m.serieId] = []; seriesMap[m.serieId].push(m); }
+    // La reduccion se arma cuando TODAS las series terminaron. Si falta algo, se avisa exactamente que.
+    const nombreJ = (j: any) => !j ? 'por definir' : (j.dni === LIBRE_DNI ? 'LIBRE' : `${j.lastName}${j.lastName ? ', ' : ''}${j.firstName}`);
+    const faltantes: string[] = [];
     for (const serieId of Object.keys(seriesMap)) {
       const partidos = seriesMap[serieId];
       const p5 = partidos.find((p: any) => { const rb = Math.floor(p.round / 10) * 10 + 1; return p.round === rb + 4; });
-      if (!p5 || !p5.result?.winnerId) return;
+      if (p5 && p5.result?.winnerId) continue;
+      const numSerie = serieId.replace('clasif-serie-', '');
+      const roundBase = Math.min(...partidos.map((p: any) => p.round));
+      const sinResultado = partidos.filter((p: any) => !p.result?.winnerId).sort((a: any, b: any) => a.round - b.round);
+      if (sinResultado.length > 0) {
+        const p = sinResultado[0];
+        faltantes.push(`Serie ${numSerie}: falta el resultado del partido P${p.round - roundBase + 1} (${nombreJ(p.playerA)} vs ${nombreJ(p.playerB)})`);
+      } else {
+        faltantes.push(`Serie ${numSerie}: faltan partidos por generarse (hay ${partidos.length} de 5)`);
+      }
     }
+    if (faltantes.length > 0) return faltantes;
     // 1º = ganador del P3 (final de ganadores); 2º = ganador del P5. Se define por ESTRUCTURA de la serie
     // (antes se ordenaba por victorias y habia empates 2-2 entre ganador P3 y ganador P5 que daban 1º/2º invertidos).
     const calcular = (modo: 'estructural' | 'legacy', orden: 'oficial' | 'previo' = 'oficial'): ClasificadoStats[] => {
@@ -714,7 +777,8 @@ async function rellenarCrucesReduccion(phaseId: number) {
         await prisma.match.update({ where: { id: repechaje.id }, data: { slotA: `Ganador Cruce ${pen.round}`, slotB: `Ganador Cruce ${ult.round}` } });
       }
     }
-  } catch (error) { console.error('Error rellenando cruces de reducción:', error); }
+    return [];
+  } catch (error) { console.error('Error rellenando cruces de reducción:', error); return ['Error interno al armar la reducción (revisar logs del servidor)']; }
 }
 
 // ── Repara slots de series nacionales/panamericanas sin depender del orden de carga ──
@@ -781,6 +845,8 @@ async function repararSeriesNacionales(phaseId: number) {
           include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } }
         });
         emitMatchUpdate(io, newP4);
+        const libreId = await getLibreId();
+        if (libreId && (p1LoserId === libreId || p2LoserId === libreId)) { await resolverWOLibre(newP4, libreId); }
       }
       emitMatchUpdate(io, newP3);
     }
@@ -1076,7 +1142,14 @@ router.post('/reparar-serie/:matchId', authenticate, requireRole('admin'), async
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 router.post('/trigger-reduccion/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  try { await rellenarCrucesReduccion(parseInt(req.params.phaseId)); res.json({ message: 'Cruces de reducción rellenados correctamente' }); }
+  try {
+    const phaseId = parseInt(req.params.phaseId);
+    const totalReduccion = await prisma.match.count({ where: { phaseId, serieId: { startsWith: 'clasif-reduccion-' } } });
+    if (totalReduccion === 0) { res.json({ message: 'Este torneo no tiene cruces de reducción (los clasificados no superan los cupos)' }); return; }
+    const faltan = await rellenarCrucesReduccion(phaseId);
+    if (faltan.length > 0) { res.status(409).json({ error: 'Todavía no se puede armar la reducción. ' + faltan.join(' · ') }); return; }
+    res.json({ message: 'Cruces de reducción rellenados correctamente' });
+  }
   catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 router.post('/trigger-segunda/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {

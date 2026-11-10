@@ -18,6 +18,21 @@
 
 ---
 
+## ESTADO AL 10/11/2026
+
+### COMPLETADO (10/11) - Reduccion del clasificatorio trabada por partidos contra LIBRE + aviso de que falta
+
+**Sintoma (Montevideo, segundo circuito):** la reduccion del clasificatorio no se armaba. `rellenarCrucesReduccion` solo corre cuando TODAS las series tienen el P5 con ganador y, si faltaba una, hacia `return` sin avisar nada.
+
+**Causa mas probable (por codigo, no se pudo ver la base en vivo):** en series con jugador LIBRE (inscriptos no multiplo de 4) el P4 (perdedores de P1 y P2) puede quedar LIBRE vs alguien. Al generar el torneo solo se resuelven con W.O. los P1/P2; el P4 se crea despues y nadie lo resolvia, asi que el P5 nunca se creaba y la reduccion quedaba esperando. La otra causa posible es un partido sin resultado cargado por el juez.
+
+**Cambios (`matches.ts`):**
+- `resolverWOLibre`: W.O. automatico a favor del jugador real (0-2 / 0-120, igual que al generar) y encadena `generarSiguientePartidoSerie`. Se llama solo cuando se crea un P4 con LIBRE.
+- `resolverPartidosLibre(phaseId)`: repara series ya trabadas; corre al inicio de `rellenarCrucesReduccion`.
+- `rellenarCrucesReduccion` ahora devuelve la lista de lo que falta (ej. "Serie 3: falta el resultado del partido P4 (X vs Y)").
+- `POST /matches/trigger-reduccion/:phaseId` (boton "Cruces reduccion" en /admin/cruces): si falta algo responde 409 con ese detalle; si el torneo no tiene cruces de reduccion lo dice; si todo esta bien rellena como siempre. Frontend sin cambios (ya muestra el mensaje del backend).
+- Pendiente de verificar en vivo en Montevideo 2do circuito. El typecheck local no valida tipos de Prisma (no se pudo generar el cliente en el entorno).
+
 ## ESTADO AL 10/10/2026
 
 ### COMPLETADO (10/10) — Ranking de Segunda (1° y 2° de serie → cruces de Primera) + corrección de cruces
