@@ -8,7 +8,7 @@ const router = Router();
 router.get('/jugadores', async (_req: Request, res: Response) => {
   try {
     const jugadores = await prisma.player.findMany({
-      where: { active: true },
+      where: { active: true, NOT: { firstName: { startsWith: 'qualy', mode: 'insensitive' } } },
       select: {
         id: true, firstName: true, lastName: true, club: true,
         category: { select: { name: true } },
