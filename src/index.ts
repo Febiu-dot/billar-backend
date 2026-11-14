@@ -18,6 +18,7 @@ import reportsRoutes from './routes/reports';
 import publicacionesRoutes from './routes/publicaciones';
 import publicacionesPublicasRoutes from './routes/publicacionesPublicas';
 import acumuladoRoutes from './routes/rankingAcumulado';
+import portadaRoutes from './routes/portada';
 import transmisionesRoutes from './routes/transmisiones';
 import { setupSocketHandlers } from './services/socketService';
 
@@ -60,6 +61,7 @@ app.use('/api/publicaciones', publicacionesRoutes);
 app.use('/api/publicaciones-publicas', publicacionesPublicasRoutes);
 app.use('/api/acumulado',     acumuladoRoutes);
 app.use('/api/transmisiones', transmisionesRoutes);
+app.use('/api/portada', portadaRoutes);
 
 setupSocketHandlers(io);
 
