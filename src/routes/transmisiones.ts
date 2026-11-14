@@ -33,6 +33,17 @@ function avisar() {
   io.to('public').emit('transmision:updated', { at: Date.now() });
 }
 
+// Apagado automatico: una transmision prendida hace mas de 14 horas se apaga sola (por si se olvidan de apagarla).
+const HORAS_MAXIMAS = 14;
+setInterval(async () => {
+  try {
+    await asegurarTabla();
+    const apagadas = await prisma.$executeRawUnsafe(
+      `UPDATE "Transmision" SET "activa" = false WHERE "activa" = true AND "updatedAt" < NOW() - INTERVAL '${HORAS_MAXIMAS} hours'`);
+    if (apagadas > 0) avisar();
+  } catch { /* se reintenta en el proximo ciclo */ }
+}, 10 * 60 * 1000);
+
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -43,6 +54,7 @@ router.get('/', async (_req: Request, res: Response) => {
       JOIN "Table" t ON t."id" = x."tableId"
       JOIN "Venue" v ON v."id" = t."venueId"
       WHERE x."activa" = true AND x."canal" IS NOT NULL
+        AND x."updatedAt" > NOW() - INTERVAL '${HORAS_MAXIMAS} hours'
       ORDER BY v."name" ASC, t."number" ASC`);
     res.json(filas);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
