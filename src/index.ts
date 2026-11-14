@@ -18,6 +18,7 @@ import reportsRoutes from './routes/reports';
 import publicacionesRoutes from './routes/publicaciones';
 import publicacionesPublicasRoutes from './routes/publicacionesPublicas';
 import acumuladoRoutes from './routes/rankingAcumulado';
+import transmisionesRoutes from './routes/transmisiones';
 import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
@@ -58,6 +59,7 @@ app.use('/api/reports',       reportsRoutes);
 app.use('/api/publicaciones', publicacionesRoutes);
 app.use('/api/publicaciones-publicas', publicacionesPublicasRoutes);
 app.use('/api/acumulado',     acumuladoRoutes);
+app.use('/api/transmisiones', transmisionesRoutes);
 
 setupSocketHandlers(io);
 
