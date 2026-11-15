@@ -1,5 +1,6 @@
 import { aplicarAltaLaSala } from './migraciones/laSala';
 import { corregirClub25DeMayo } from './migraciones/club25DeMayo';
+import { corregirWOTresCero } from './migraciones/woTresCero';
 import { sincronizarPuntosCircuito } from './services/puntosCircuito';
 import { calcularYGuardarAcumulado } from './routes/rankingAcumulado';
 import { PrismaClient } from '@prisma/client';
@@ -192,7 +193,7 @@ async function main() {
   // RuleSets — siempre upsert
   await prisma.ruleSet.upsert({
     where: { id: 1 }, update: {},
-    create: { name: 'Series (mejor de 3)', bestOf: 3, setsToWin: 2, pointsPerSet: 60, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 180, woPtsLoser: 0 },
+    create: { name: 'Series (mejor de 3)', bestOf: 3, setsToWin: 2, pointsPerSet: 60, woSetsWinner: 2, woSetsLoser: 0, woPtsWinner: 120, woPtsLoser: 0 },
   });
   // Jugador LIBRE (bye)
   await prisma.player.upsert({
@@ -208,7 +209,7 @@ async function main() {
   });
   await prisma.ruleSet.upsert({
     where: { id: 2 }, update: {},
-    create: { name: 'Cruces (mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 60, woSetsWinner: 5, woSetsLoser: 0, woPtsWinner: 300, woPtsLoser: 0 },
+    create: { name: 'Cruces (mejor de 5)', bestOf: 5, setsToWin: 3, pointsPerSet: 60, woSetsWinner: 3, woSetsLoser: 0, woPtsWinner: 180, woPtsLoser: 0 },
   });
 
   // Jugadores — solo si no hay ninguno
@@ -311,6 +312,9 @@ async function main() {
       console.log(`✏️  Tope 60: ${malos.length} sets corregidos en ${matchIds.size} partidos (circuitos ${Array.from(circuitIds).join(',')})`);
     }
   } catch (e) { console.error('⚠️  No se pudo aplicar el tope de 60 (se ignora):', e); }
+
+  // 15/11: W.O. = 3-0 / 180 en cruces (2-0 / 120 en series). Corrige reglamentos y el Circuito 2 del torneo 30 antes de recalcular.
+  try { await corregirWOTresCero(); } catch (e) { console.error('⚠️  Correccion de W.O. fallo (se ignora):', e); }
 
   // 17/10: nueva regla de puntos del ranking (puntos por espera + resultados). Deja RankingEntry.points calculado
   // desde los partidos en los circuitos departamentales de torneos activos. Idempotente (no suma, reemplaza).

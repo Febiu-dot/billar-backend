@@ -1540,8 +1540,13 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
     const absentId = woPlayerId;
     winnerId = absentId === existingMatch.playerAId ? existingMatch.playerBId : existingMatch.playerAId;
     if (ruleSet) {
-      if (absentId === existingMatch.playerAId) { finalSetsA = ruleSet.woSetsLoser; finalSetsB = ruleSet.woSetsWinner; finalPtsA = ruleSet.woPtsLoser; finalPtsB = ruleSet.woPtsWinner; }
-      else { finalSetsA = ruleSet.woSetsWinner; finalSetsB = ruleSet.woSetsLoser; finalPtsA = ruleSet.woPtsWinner; finalPtsB = ruleSet.woPtsLoser; }
+      // Regla oficial (15/11/2026): el W.O. vale como ganar todos los sets necesarios sin perder ninguno:
+      // setsToWin sets x pointsPerSet tantos a favor y 0 en contra (series 2-0 / 120, cruces 3-0 / 180).
+      // Se calcula del reglamento y no de woSetsWinner/woPtsWinner para que aplique igual en departamentales, nacionales y panamericanos.
+      const woSets = ruleSet.setsToWin;
+      const woPts = ruleSet.setsToWin * ruleSet.pointsPerSet;
+      if (absentId === existingMatch.playerAId) { finalSetsA = 0; finalSetsB = woSets; finalPtsA = 0; finalPtsB = woPts; }
+      else { finalSetsA = woSets; finalSetsB = 0; finalPtsA = woPts; finalPtsB = 0; }
     }
   } else {
     const setsToWin = ruleSet?.setsToWin ?? 2;
