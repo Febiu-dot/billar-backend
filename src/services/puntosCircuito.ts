@@ -29,14 +29,31 @@ export const PUNTOS_ESPERA: Record<'clasificatorio' | 'segunda' | 'primera', num
   primera: 5,        // lo reciben quienes ingresan en Master
 };
 
-// Sets y tantos A FAVOR que reciben los jugadores que esperan mientras se disputa cada etapa (18/10/2026).
-// Equivale a ganar 2-0 (60-0, 60-0) en clasificatorio y series de Segunda, y 3-0 (60-0 x3) en los cruces de Primera.
+// Sets y tantos A FAVOR que reciben los jugadores que esperan mientras se disputa cada etapa.
 // Son acumulativos, no generan sets ni tantos en contra y NO suman puntos (los puntos ya estan en PUNTOS_ESPERA).
+//
+// Regla vigente desde el Circuito 2 de Montevideo (15/11/2026): quien espera recibe el MAXIMO que podia sumar
+// un jugador de la etapa que se esta jugando: en clasificatorio y en series de Segunda 8 puntos, 4 sets y 240 tantos
+// (equivale a ganar la serie jugando dos partidos 2-0 / 60-0), y en los cruces de Primera 5 puntos, 3 sets y 180 tantos.
 export const BONUS_ESPERA: Record<'clasificatorio' | 'segunda' | 'primera', { sets: number; tantos: number }> = {
+  clasificatorio: { sets: 4, tantos: 240 },
+  segunda:        { sets: 4, tantos: 240 },
+  primera:        { sets: 3, tantos: 180 },
+};
+
+// Regla anterior (18/10/2026): 2 sets y 120 tantos en clasificatorio y en Segunda. Se conserva SOLO para los circuitos
+// que ya estaban cerrados cuando cambio la regla (Circuito 1 de Montevideo, Canelones Este y Flores, ids 37/39/40),
+// para que sus rankings no se muevan.
+export const BONUS_ESPERA_ANTERIOR: Record<'clasificatorio' | 'segunda' | 'primera', { sets: number; tantos: number }> = {
   clasificatorio: { sets: 2, tantos: 120 },
   segunda:        { sets: 2, tantos: 120 },
   primera:        { sets: 3, tantos: 180 },
 };
+
+// Primer circuito (por id) que usa la regla nueva. Todo circuito con id menor conserva la anterior; los que se creen de ahora en adelante usan la nueva.
+export const PRIMER_CIRCUITO_BONUS_NUEVO = 41;
+export const bonusEsperaDe = (circuitId?: number | null) =>
+  circuitId != null && circuitId < PRIMER_CIRCUITO_BONUS_NUEVO ? BONUS_ESPERA_ANTERIOR : BONUS_ESPERA;
 
 export function esConfigNacional(config: any): boolean {
   return config?.tipo === 'nacional' || config?.tipo === 'panamericano';
@@ -91,7 +108,8 @@ export function puntosPorResultados(matches: any[]): Map<number, number> {
 // El jugador ingresa en la primera etapa en la que aparece en un partido.
 export interface EsperaJugador { puntos: number; sets: number; tantos: number; }
 
-export function esperaPorJugador(fases: any[]): Map<number, EsperaJugador> {
+export function esperaPorJugador(fases: any[], circuitId?: number | null): Map<number, EsperaJugador> {
+  const BONUS = bonusEsperaDe(circuitId ?? fases[0]?.circuitId);
   const out = new Map<number, EsperaJugador>();
   const matchesDe = (tipo: TipoFase): any[] =>
     fases.filter((f: any) => f.type === tipo).flatMap((f: any) => f.matches ?? []);
@@ -121,8 +139,8 @@ export function esperaPorJugador(fases: any[]): Map<number, EsperaJugador> {
     for (const e of etapas) {
       if (idx >= e.idxMin && e.disputada) {
         acc.puntos += PUNTOS_ESPERA[e.clave];
-        acc.sets   += BONUS_ESPERA[e.clave].sets;
-        acc.tantos += BONUS_ESPERA[e.clave].tantos;
+        acc.sets   += BONUS[e.clave].sets;
+        acc.tantos += BONUS[e.clave].tantos;
       }
     }
     if (acc.puntos > 0 || acc.sets > 0 || acc.tantos > 0) out.set(pid, acc);
@@ -130,9 +148,9 @@ export function esperaPorJugador(fases: any[]): Map<number, EsperaJugador> {
   return out;
 }
 
-export function puntosPorEspera(fases: any[]): Map<number, number> {
+export function puntosPorEspera(fases: any[], circuitId?: number | null): Map<number, number> {
   const pts = new Map<number, number>();
-  for (const [pid, v] of esperaPorJugador(fases)) if (v.puntos > 0) pts.set(pid, v.puntos);
+  for (const [pid, v] of esperaPorJugador(fases, circuitId)) if (v.puntos > 0) pts.set(pid, v.puntos);
   return pts;
 }
 
@@ -154,7 +172,7 @@ export async function calcularPuntosCircuito(circuitId: number): Promise<Map<num
     .filter((m: any) => (m.status === 'finalizado' || m.status === 'wo') && m.result);
 
   const res = puntosPorResultados(terminados);
-  const esp = esperaPorJugador(fases);
+  const esp = esperaPorJugador(fases, circuitId);
 
   const out = new Map<number, PuntosJugador>();
   const ids = new Set<number>([...res.keys(), ...esp.keys()]);

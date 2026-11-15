@@ -409,3 +409,7 @@ Ver prompt preparado en sesión 27/06.
 
 *15/10 17h — Pendiente de verificar en la jornada de esta noche: (1) panel del juez con varias mesas (sets guardados visibles al volver a una mesa); (2) botón "Publicar en vista pública" probado con una publicación real; (3) resultados por jornada con selector de fecha en /publico. Pendiente aparte: conexión de Vercel (ver nota del 14/10).*
 
+
+## Cambios 15/11/2026 - W.O. y bonus de espera
+- **W.O.** = ganar sin perder sets: `setsToWin` sets x `pointsPerSet` tantos a favor, 0 en contra (series 2-0 / 120, cruces 3-0 / 180). Se calcula en `PUT /matches/:id/result` desde el reglamento (no desde `woSetsWinner`/`woPtsWinner`) y vale para departamentales, nacionales y panamericanos. El reglamento "Cruces (mejor de 5)" tenia 5-0 / 300 por error; corregido en `seed.ts` y por la migracion `migraciones/woTresCero.ts`, que ademas corrigio los W.O. ya cargados del Circuito 2 del torneo 30 (circuito 41). El Circuito 1 no se toco.
+- **Bonus de espera** (`services/puntosCircuito.ts`): desde el circuito 41 en adelante, quien espera recibe 8 puntos, 4 sets y 240 tantos en clasificatorio y en series de Segunda, y 5 puntos, 3 sets y 180 tantos en cruces de Primera. Los circuitos con id menor a 41 (37, 39, 40) conservan la regla anterior (2 sets y 120 tantos) para que sus rankings no se muevan. Constante `PRIMER_CIRCUITO_BONUS_NUEVO`.
