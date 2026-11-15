@@ -34,7 +34,7 @@ const CAMPOS = `"id", "titulo", "club", "tipo", to_char("fechaInicio", 'YYYY-MM-
   to_char("fechaFin", 'YYYY-MM-DD') AS "fechaFin", "lugar", "contacto", "visible",
   CASE WHEN COALESCE("fechaFin","fechaInicio") < ${HOY} THEN 'finalizado'
        WHEN "fechaInicio" <= ${HOY} THEN 'en_curso' ELSE 'proximo' END AS "estado",
-  EXTRACT(EPOCH FROM "updatedAt")::bigint AS "version"`;
+  EXTRACT(EPOCH FROM "updatedAt")::bigint::text AS "version"`;
 
 const esFecha = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const texto = (v: unknown, max: number): string | null => {
