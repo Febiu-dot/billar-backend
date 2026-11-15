@@ -21,11 +21,15 @@ async function asegurarTabla() {
   tablaLista = true;
 }
 
-// Acepta el codigo (UC + 22 caracteres) o un link con /channel/UC...
+// Acepta el codigo del canal (UC + 22 caracteres), un link con /channel/UC..., o el link de un video en vivo
+// (watch?v=, youtu.be/, /live/, /embed/). Un video se guarda como "v:ID" y sirve para varias transmisiones de un mismo canal.
 function extraerCanal(valor: unknown): string | null {
   if (typeof valor !== 'string') return null;
-  const m = valor.trim().match(/UC[\w-]{22}/);
-  return m ? m[0] : null;
+  const s = valor.trim();
+  const m = s.match(/UC[\w-]{22}/);
+  if (m) return m[0];
+  const v = s.match(/(?:[?&]v=|youtu\.be\/|\/live\/|\/embed\/|\/shorts\/)([\w-]{11})(?![\w-])/) || s.match(/^([\w-]{11})$/);
+  return v ? `v:${v[1]}` : null;
 }
 
 function avisar() {
@@ -99,7 +103,7 @@ router.put('/mesa/:tableId', authenticate, requireRole('admin', 'juez_sede'), as
       if (vacio) { canal = null; activa = false; }
       else {
         const c = extraerCanal(req.body.canal);
-        if (!c) { res.status(400).json({ error: 'El canal no es valido. Debe empezar con UC y tener 24 caracteres.' }); return; }
+        if (!c) { res.status(400).json({ error: 'No es valido. Pegá el código del canal (empieza con UC) o el link de la transmisión en vivo.' }); return; }
         canal = c;
       }
     }
