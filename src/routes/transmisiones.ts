@@ -48,19 +48,6 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
-// CARGA UNICA (17/11/2026): reemplazo autorizado de los 3 enlaces de prueba de FrepiBar por sus codigos de canal.
-setTimeout(async () => {
-  try {
-    await asegurarTabla();
-    let n = 0;
-    for (const [tableId, canal] of [[68, 'UC0nmLHNgDnwfWjLXW_dRlRA'], [69, 'UCYdpS04cZVWvjbw87WP7YPw'], [74, 'UCU5ys-rdonJYrmYr_d7BCSA']] as [number, string][]) {
-      n += await prisma.$executeRawUnsafe(
-        `UPDATE "Transmision" SET "canal" = $2, "updatedAt" = CURRENT_TIMESTAMP WHERE "tableId" = $1::int AND "tableId" IN (SELECT "id" FROM "Table" WHERE "venueId" = 32)`, tableId, canal);
-    }
-    console.log(`[transmisiones] FrepiBar actualizadas: ${n} de 3`);
-  } catch (e: any) { console.error('[transmisiones] FrepiBar fallo:', e.message); }
-}, 8000);
-
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
