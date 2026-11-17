@@ -81,6 +81,10 @@ setTimeout(async () => {
          ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "updatedAt" = CURRENT_TIMESTAMP
          WHERE "Transmision"."canal" IS NULL OR "Transmision"."canal" = ''`, tableId, venueId, canal);
     }
+    const previos: any[] = await prisma.$queryRawUnsafe(
+      `SELECT x."tableId", x."canal" FROM "Transmision" x WHERE x."tableId" = ANY($1::int[])`, CODIGOS_INICIALES.map(c => c[1]));
+    const distintos = CODIGOS_INICIALES.filter(([, t, c]) => previos.find(p => p.tableId === t)?.canal !== c).map(([v, t, c]) => `mesa#${t}(sede ${v}) entregado=${c} actual=${previos.find(p => p.tableId === t)?.canal ?? 'vacio'}`);
+    console.log(`[transmisiones] codigos distintos a los entregados: ${distintos.length ? distintos.join(' | ') : 'ninguno'}`);
     console.log(`[transmisiones] codigos iniciales cargados: ${cargados} de ${CODIGOS_INICIALES.length}`);
   } catch (e: any) { console.error('[transmisiones] carga inicial de codigos fallo:', e.message); }
 }, 8000);
