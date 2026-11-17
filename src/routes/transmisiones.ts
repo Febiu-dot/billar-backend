@@ -48,6 +48,43 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
+// CARGA UNICA (17/11/2026): codigos de canal de YouTube entregados por la administradora, por mesa.
+// Solo completa mesas SIN canal y solo si la mesa pertenece a la sede indicada; no pisa lo ya cargado ni toca "activa".
+// Se puede borrar este bloque despues del primer despliegue.
+const CODIGOS_INICIALES: [number, number, string][] = [
+  [18, 55, 'UCH7bVw84EjyU7LoJNUXFMdA'], // SanBautista mesa 2
+  [18, 54, 'UCj9scEdA_j3GtPCffd4lnFQ'], // SanBautista mesa 1
+  [18, 56, 'UCMJ2yxenYO8o8Qk7jOcwjgQ'], // SanBautista mesa 3
+  [18, 57, 'UCqbmxE1v1egjDRgOu8FQb0A'], // SanBautista mesa 4
+  [6, 19, 'UC0Tinke7Jsen8KxEsPHXPZw'], // Feria Franca mesa 1
+  [6, 20, 'UCctr5zjG4kcWs0srLMg17mg'], // Feria Franca mesa 2
+  [25, 60, 'UCnhf87xPU5w2MOmbOHGEs-Q'], // Willy 1
+  [25, 61, 'UCVBNEOLZCFsI47Uqjic6gjg'], // Willy 2
+  [25, 62, 'UCEeysZtTlgvcKZP21tz2ufw'], // Willy 3
+  [25, 63, 'UC9RT3IBgeaq0WvYpCsSnZKg'], // Willy 4
+  [25, 64, 'UCnTqBeB2c8g5lUXnjtNy5tw'], // Willy 5
+  [25, 65, 'UC9X8R237nUoXiIbtIrHkVbQ'], // Willy 6
+  [32, 68, 'UC0nmLHNgDnwfWjLXW_dRlRA'], // FrepiBar 1
+  [32, 69, 'UCYdpS04cZVWvjbw87WP7YPw'], // FrepiBar 2
+  [32, 74, 'UCU5ys-rdonJYrmYr_d7BCSA'], // FrepiBar 3
+  [8, 15, 'UCH5HMc8h4tQDvpZ4a_ad9TA'], // Cabrera 1
+  [8, 16, 'UCKHJB6n9U3shr5kMo5sZkvw'], // Cabrera 2
+  [24, 75, 'UCtJG9oLUK-x9voWzTFDRLfg'], // Libertad mesa 1
+];
+setTimeout(async () => {
+  try {
+    await asegurarTabla();
+    let cargados = 0;
+    for (const [venueId, tableId, canal] of CODIGOS_INICIALES) {
+      cargados += await prisma.$executeRawUnsafe(
+        `INSERT INTO "Transmision" ("tableId","canal") SELECT t."id", $3 FROM "Table" t WHERE t."id" = $1::int AND t."venueId" = $2::int
+         ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "updatedAt" = CURRENT_TIMESTAMP
+         WHERE "Transmision"."canal" IS NULL OR "Transmision"."canal" = ''`, tableId, venueId, canal);
+    }
+    console.log(`[transmisiones] codigos iniciales cargados: ${cargados} de ${CODIGOS_INICIALES.length}`);
+  } catch (e: any) { console.error('[transmisiones] carga inicial de codigos fallo:', e.message); }
+}, 8000);
+
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
