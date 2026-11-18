@@ -137,6 +137,31 @@ router.post('/nacional-2027', authenticate, requireRole('admin'), async (req: Au
   }
 });
 
+// POST restaura las fases que falten (de las 4) en un circuito del formato nuevo 2026-27.
+router.post('/circuits/:circuitId/restaurar-fases-2027', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = Number(req.params.circuitId);
+    const circuit = await prisma.circuit.findUnique({ where: { id: circuitId }, include: { phases: true } });
+    if (!circuit) { res.status(404).json({ error: 'Circuito no encontrado' }); return; }
+    if ((circuit.configTorneo as any)?.esquema !== 'nacional-2027') { res.status(400).json({ error: 'Este circuito no es del formato nuevo 2026-27.' }); return; }
+    const fases: { name: string; type: 'clasificatorio' | 'segunda' | 'primera' | 'master' }[] = [
+      { name: 'Clasificatorio', type: 'clasificatorio' },
+      { name: 'Cruces 64 a 16', type: 'segunda' },
+      { name: 'Cruce con Primera Nacional', type: 'primera' },
+      { name: 'Cuadro final', type: 'master' },
+    ];
+    const creadas: string[] = [];
+    for (let i = 0; i < fases.length; i++) {
+      if (circuit.phases.some((p: any) => p.type === fases[i].type)) continue;
+      await prisma.phase.create({ data: { name: fases[i].name, type: fases[i].type, order: i + 1, circuitId } });
+      creadas.push(fases[i].name);
+    }
+    res.json({ ok: true, creadas });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // PUT update tournament
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
