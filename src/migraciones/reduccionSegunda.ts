@@ -3,7 +3,7 @@
 // publicacion de la reduccion (y el reglamento que usan los delegados) dice lo contrario: el cruce n clasifica como
 // el cupo (cupos - n + 1). Es decir el orden de los cupos de reduccion esta invertido: cruce 1 -> ultimo cupo, ultimo cruce -> primer cupo.
 // Cada par de cupos (n, total + 1 - n) se intercambia. Se hace SOLO si los dos partidos de Segunda siguen sin jugar
-// (pendiente/asignado, sin resultado ni sets); si alguno ya empezo o termino no se toca y se avisa en el log.
+// (sin resultado ni sets cargados; puede figurar en_juego); si alguno ya empezo o termino no se toca y se avisa en el log.
 // Es idempotente: despues de aplicarse, los jugadores ya no estan donde se espera encontrarlos y no hace nada.
 import prisma from '../services/prisma';
 
@@ -55,7 +55,8 @@ export async function reubicarGanadoresReduccion(): Promise<void> {
     return m ? { match: m, lado } : null;
   };
   const jugadorEn = (u: { match: any; lado: 'A' | 'B' }): number | null => (u.lado === 'A' ? u.match.playerAId : u.match.playerBId);
-  const sinJugar = (m: any): boolean => (m.status === 'pendiente' || m.status === 'asignado') && !m.result && (!m.sets || m.sets.length === 0);
+  // Sin resultado ni sets cargados (puede figurar 'en_juego' porque el juez toco Iniciar, pero todavia no se ingreso nada).
+  const sinJugar = (m: any): boolean => (m.status === 'pendiente' || m.status === 'asignado' || m.status === 'en_juego') && !m.result && (!m.sets || m.sets.length === 0);
 
   for (let n = 1; n <= Math.floor(total / 2); n++) {
     const n2 = total + 1 - n;
