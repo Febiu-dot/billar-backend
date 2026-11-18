@@ -90,6 +90,14 @@ export function puntosPorResultados(matches: any[]): Map<number, number> {
     }
   }
 
+  // Formato nacional 2027: cruces espejo 64→32 y 32→16 (fase 'segunda'): ganador 5 · perdedor 1
+  for (const m of matches) {
+    if (!m.result?.winnerId || !m.serieId) continue;
+    if (!/^cruce(64|32)-\d+$/.test(m.serieId)) continue;
+    add(m.result.winnerId, 5);
+    if (!m.result.isWO) add(perdedor(m, m.result.winnerId), 1);
+  }
+
   // Cruces de Primera y de Master (octavos, cuartos, semis): 5 / 1. Final: 7 / 2. Reduccion y repechaje: 0.
   for (const m of matches) {
     const tipo = m.phase?.type;
@@ -107,6 +115,48 @@ export function puntosPorResultados(matches: any[]): Map<number, number> {
 // terminado en ella (sin contar los W.O. automaticos del jugador LIBRE).
 // El jugador ingresa en la primera etapa en la que aparece en un partido.
 export interface EsperaJugador { puntos: number; sets: number; tantos: number; }
+
+// Formato nacional 2027: quienes entran tarde arrancan "como si hubieran llegado con puntaje ideal".
+// Etapas: series+reduccion (8 pts, 4 sets, 240 tantos), cruces 64→32 (5, 2, 120), cruces 32→16 (5, 2, 120)
+// y, solo para Master, el cruce con Primera Nacional a 5 sets (5, 3, 180).
+// => Primera Nacional entra con 18 pts / 8-0 / 480-0 y Master con 23 pts / 11-0 / 660-0.
+export const ESPERA_NAC_2027 = [
+  { idxMin: 2, puntos: 8, sets: 4, tantos: 240, fase: 'clasificatorio', serie: null as RegExp | null },
+  { idxMin: 2, puntos: 5, sets: 2, tantos: 120, fase: 'segunda',        serie: /^cruce64-\d+$/ },
+  { idxMin: 2, puntos: 5, sets: 2, tantos: 120, fase: 'segunda',        serie: /^cruce32-\d+$/ },
+  { idxMin: 3, puntos: 5, sets: 3, tantos: 180, fase: 'primera',        serie: null as RegExp | null },
+];
+
+export function esperaPorJugadorNac2027(fases: any[]): Map<number, EsperaJugador> {
+  const out = new Map<number, EsperaJugador>();
+  const esLibre = (m: any) => m.playerA?.dni === LIBRE_DNI || m.playerB?.dni === LIBRE_DNI;
+  const todos = (tipo: string): any[] => fases.filter((f: any) => f.type === tipo).flatMap((f: any) => f.matches ?? []);
+
+  const ingreso = new Map<number, number>();
+  ORDEN_FASES.forEach((tipo, idx) => {
+    for (const m of todos(tipo)) {
+      const lados: [number | null, any][] = [[m.playerAId, m.playerA], [m.playerBId, m.playerB]];
+      for (const [pid, jugador] of lados) {
+        if (!pid || jugador?.dni === LIBRE_DNI) continue;
+        if (!ingreso.has(pid)) ingreso.set(pid, idx);
+      }
+    }
+  });
+
+  const etapas = ESPERA_NAC_2027.map(e => {
+    const ms = todos(e.fase).filter((m: any) => !e.serie || (m.serieId && e.serie.test(m.serieId)));
+    const disputada = ms.some((m: any) => (m.status === 'finalizado' || m.status === 'wo') && !esLibre(m) && !(m.result?.isWO && !m.result?.woPlayerId));
+    return { ...e, disputada };
+  });
+  for (const [pid, idx] of ingreso) {
+    const acc: EsperaJugador = { puntos: 0, sets: 0, tantos: 0 };
+    for (const e of etapas) {
+      if (idx >= e.idxMin && e.disputada) { acc.puntos += e.puntos; acc.sets += e.sets; acc.tantos += e.tantos; }
+    }
+    if (acc.puntos > 0 || acc.sets > 0 || acc.tantos > 0) out.set(pid, acc);
+  }
+  return out;
+}
 
 export function esperaPorJugador(fases: any[], circuitId?: number | null): Map<number, EsperaJugador> {
   const BONUS = bonusEsperaDe(circuitId ?? fases[0]?.circuitId);
@@ -172,7 +222,7 @@ export async function calcularPuntosCircuito(circuitId: number): Promise<Map<num
     .filter((m: any) => (m.status === 'finalizado' || m.status === 'wo') && m.result);
 
   const res = puntosPorResultados(terminados);
-  const esp = esperaPorJugador(fases, circuitId);
+  const esp = (circuit.configTorneo as any)?.esquema === 'nacional-2027' ? esperaPorJugadorNac2027(fases) : esperaPorJugador(fases, circuitId);
 
   const out = new Map<number, PuntosJugador>();
   const ids = new Set<number>([...res.keys(), ...esp.keys()]);
@@ -212,7 +262,7 @@ export function estadisticasPorJugador(matches: any[]): Map<number, StatsJugador
     const sid: string = m.serieId ?? '';
     const tipo = m.phase?.type;
     const cuenta =
-      sid.startsWith('clasif-serie-') || sid.startsWith('segunda-serie-') ||
+      sid.startsWith('clasif-serie-') || sid.startsWith('segunda-serie-') || /^cruce(64|32)-\d+$/.test(sid) ||
       (sid && (sid.includes('reduccion') || sid.includes('repechaje'))) ||
       ((tipo === 'primera' || tipo === 'master') && !!m.result?.winnerId);
     if (!cuenta) continue;

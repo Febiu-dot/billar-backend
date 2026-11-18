@@ -25,6 +25,9 @@ interface ConfigTorneo {
   ruleSetSeries?:   number;
   ruleSetCruces?:   number;
   formato?:         '32' | '16';
+  // Formato nuevo de los circuitos nacionales (2026-27): series de 4 con espejo, reducción 68→64,
+  // cruces espejo 64→32→16, cruce con Primera Nacional y cuadro final de 32 con Máster Nacional.
+  esquema?:         'nacional-2027';
 }
 
 function getConfigTorneo(circuit: any): ConfigTorneo {
@@ -39,7 +42,43 @@ function getConfigTorneo(circuit: any): ConfigTorneo {
     ruleSetSeries:    c.ruleSetSeries    ?? RULESET_SERIES,
     ruleSetCruces:    c.ruleSetCruces    ?? RULESET_CRUCES,
     formato:          c.formato          ?? '32',
+    esquema:          c.esquema === 'nacional-2027' ? 'nacional-2027' : undefined,
   };
+}
+
+const CUPOS_NACIONAL_2027 = 64;   // clasificados a los cruces espejo
+const MASTER_NACIONAL_2027 = 16;  // posiciones 1-16 (esperan en el cuadro final)
+const PRIMERA_NACIONAL_2027 = 16; // posiciones 17-32 (esperan en el cruce con los 16 sobrevivientes)
+
+// Cruces espejo del formato nacional 2027, en la fase 'segunda':
+//  - 64→32: cruce n = clasificado n vs clasificado 65-n (1v64 … 32v33)
+//  - 32→16: cruce k = ganador del cruce k vs ganador del cruce 33-k (k = 1..16); su ganador es el "casillero" k
+function generarCrucesNacional2027(phaseId: number, ruleSetId: number): any[] {
+  const matches: any[] = [];
+  for (let n = 1; n <= 32; n++) {
+    matches.push(mkMatch(phaseId, null, null, n,
+      `Clasificado Clasif. #${n}`, `Clasificado Clasif. #${CUPOS_NACIONAL_2027 + 1 - n}`,
+      `cruce64-${n}`, ruleSetId));
+  }
+  for (let k = 1; k <= 16; k++) {
+    matches.push(mkMatch(phaseId, null, null, 32 + k,
+      `Gan. Cruce64 ${k}`, `Gan. Cruce64 ${33 - k}`,
+      `cruce32-${k}`, ruleSetId));
+  }
+  return matches;
+}
+
+// Cruce de los 16 sobrevivientes (casillero k) contra Primera Nacional (puesto 33-k del ranking):
+// casillero 1 vs PN 32, … , casillero 16 vs PN 17. `pn` viene ordenado por ranking (17 a 32).
+function generarCrucesPrimeraNacional2027(phaseId: number, pn: any[], ruleSetId: number): any[] {
+  const matches: any[] = [];
+  for (let k = 1; k <= 16; k++) {
+    const rival = pn[16 - k];
+    matches.push(mkMatch(phaseId, null, rival?.id ?? null, k,
+      `Clasificado Segunda #${k}`, rival?.id ? undefined : `PN #${33 - k}`,
+      `primera-cruce-${k}`, ruleSetId));
+  }
+  return matches;
 }
 
 // Nacional y Panamericano comparten 100% la lógica deportiva
@@ -337,7 +376,18 @@ router.get('/:id/config-torneo', async (req: Request, res: Response) => {
 router.put('/:id/config-torneo', async (req: Request, res: Response) => {
   try {
     const circuitId = parseInt(req.params.id);
-    const { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif, tipo, categoriaFederal, formato } = req.body;
+    const { cantMaster, cantPrimera, cantSegunda, cuposDesdeClasif, tipo, categoriaFederal, formato, esquema } = req.body;
+
+    if (esquema === 'nacional-2027') {
+      const configData = {
+        tipo: 'departamental', esquema: 'nacional-2027',
+        cantMaster: MASTER_NACIONAL_2027, cantPrimera: PRIMERA_NACIONAL_2027, cantSegunda: 0,
+        cuposDesdeClasif: CUPOS_NACIONAL_2027,
+      };
+      const circuit = await prisma.circuit.update({ where: { id: circuitId }, data: { configTorneo: configData as any } });
+      res.json({ ok: true, configTorneo: getConfigTorneo(circuit) });
+      return;
+    }
 
     if (tipo === 'nacional' || tipo === 'panamericano') {
       const ruleSetSeries = getRuleSetNacional(categoriaFederal, 'series');
@@ -529,6 +579,38 @@ router.get('/:id/preview', async (req: Request, res: Response) => {
       });
     }
 
+    // ── Preview formato nacional 2027 ─────────────────────────────────
+    if (config.esquema === 'nacional-2027') {
+      const jugLibre = completarConLibre(clasif, libreObj);
+      const nSeries = jugLibre.length / 4;
+      const nClasif = nSeries * 2;
+      const nReduccion = Math.max(0, nClasif - CUPOS_NACIONAL_2027);
+      const directos = CUPOS_NACIONAL_2027 - nReduccion;
+      const series = armarSeriesEspejo(jugLibre).map((serie, i) => ({
+        serie: i + 1,
+        jugadores: serie.map((p: any) => ({ id: p.id, nombre: pn(p), esLibre: p.dni === LIBRE_DNI }))
+      }));
+      const reduccion = Array.from({ length: nReduccion }, (_, i) => ({ cruce: i + 1, slotA: `Clasificado #${directos + i + 1}`, slotB: `Clasificado #${nClasif - i}` }));
+      const cruces64 = Array.from({ length: 32 }, (_, i) => ({ cruce: i + 1, a: `#${i + 1}`, b: `#${CUPOS_NACIONAL_2027 - i}` }));
+      const cruces32 = Array.from({ length: 16 }, (_, i) => ({ cruce: i + 1, a: `Gan. cruce ${i + 1}`, b: `Gan. cruce ${32 - i}` }));
+      const crucesPN = Array.from({ length: 16 }, (_, i) => {
+        const rival = primera[15 - i];
+        return { cruce: i + 1, a: `Sobreviviente ${i + 1}`, b: rival ? pn(rival) : `Primera Nacional #${32 - i}` };
+      });
+      const crucesMaster = Array.from({ length: 16 }, (_, i) => {
+        const m = master[i];
+        return { cruce: i + 1, a: m ? pn(m) : `Máster #${i + 1}`, b: `Gan. cruce PN ${16 - i}` };
+      });
+      return res.json({
+        config,
+        esquema: 'nacional-2027',
+        inscriptos: { total: master.length + primera.length + clasif.length, master: master.length, primeraNacional: primera.length, series: clasif.length },
+        clasificatorio: { totalJugadores: jugLibre.length, totalSeries: nSeries, totalClasificados: nClasif, directos, series, crucesReduccion: reduccion },
+        cruces64, cruces32, crucesPrimeraNacional: crucesPN, crucesMaster,
+        totalPartidosIniciales: nSeries * 2 + nReduccion + 32 + 16 + 16 + 31, // los P3, P4 y P5 de cada serie se generan al jugarse los anteriores
+      });
+    }
+
     // ── Preview Departamental ─────────────────────────────────────────
     const { cuposDesdeClasif } = config;
 
@@ -717,6 +799,20 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
     let numClasifSegunda = 0;
     let numClasifPrimera = 0;
 
+    const esNac2027 = config.esquema === 'nacional-2027';
+    if (esNac2027) {
+      if (!phaseClasif || !phaseSegunda || !fasePrimera || !faseMaster) {
+        res.status(400).json({ error: 'El formato nacional necesita las cuatro fases: Clasificatorio, Segunda (cruces 64→16), Primera (cruce con Primera Nacional) y Master (cuadro final).' }); return;
+      }
+      if (master.length !== MASTER_NACIONAL_2027 || primera.length !== PRIMERA_NACIONAL_2027) {
+        res.status(400).json({ error: `Falta el ranking inicial: se necesitan los puestos 1 al 16 (Máster Nacional) y 17 al 32 (Primera Nacional) entre los inscriptos. Hay ${master.length} y ${primera.length}.` }); return;
+      }
+      const numClasif = Math.ceil(clasif.length / 4) * 2;
+      if (numClasif < CUPOS_NACIONAL_2027 || numClasif > 2 * CUPOS_NACIONAL_2027) {
+        res.status(400).json({ error: `Con ${clasif.length} jugadores en series salen ${numClasif} clasificados; el formato necesita entre ${CUPOS_NACIONAL_2027} y ${2 * CUPOS_NACIONAL_2027}.` }); return;
+      }
+    }
+
     if (phaseClasif && clasif.length > 0) {
       const jugConLibre = completarConLibre(clasif, libreObj);
       const series = armarSeriesEspejo(jugConLibre);
@@ -753,7 +849,11 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       }
     }
 
-    if (phaseSegunda) {
+    if (phaseSegunda && esNac2027) {
+      // 64 clasificados: cruces espejo 64→32 y 32→16 (a 3 sets, igual que las series)
+      matchesCreados.push(...generarCrucesNacional2027(phaseSegunda.id, RULESET_SERIES));
+      numClasifSegunda = 16;
+    } else if (phaseSegunda) {
       const slotsClasif = Array.from({ length: cuposDesdeClasif }, (_, i) => ({ id: null, slot: `Clasificado Clasif. #${i + 1}` }));
       let jugConSlots = [...segunda, ...slotsClasif] as any[];
       while (jugConSlots.length % 4 !== 0) jugConSlots.push({ id: null, slot: 'LIBRE' });
@@ -772,7 +872,11 @@ router.post('/:id/generate', async (req: Request, res: Response) => {
       }
     }
 
-    if (fasePrimera) {
+    if (fasePrimera && esNac2027) {
+      // Los 16 sobrevivientes juegan contra Primera Nacional (a 5 sets desde acá hasta la final)
+      matchesCreados.push(...generarCrucesPrimeraNacional2027(fasePrimera.id, primera, RULESET_CRUCES));
+      numClasifPrimera = 16;
+    } else if (fasePrimera) {
       const slotsSegunda = Array.from({ length: numClasifSegunda }, (_, i) => ({ id: null, slot: `Clasificado Segunda #${i + 1}` }));
       const jugConSlots = [...primera, ...slotsSegunda] as any[];
       const total = jugConSlots.length;

@@ -26,11 +26,11 @@ interface ClasificadoStats {
   tantosEnContra: number;
 }
 
-async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cuposDesdeClasif: number; esNacional: boolean; formato: string }> {
+async function getCircuitInfo(phaseId: number): Promise<{ circuitId: number; cuposDesdeClasif: number; esNacional: boolean; formato: string; esNac2027?: boolean }> {
   try {
     const phase = await prisma.phase.findUnique({ where: { id: phaseId }, include: { circuit: true } });
     const config = (phase?.circuit as any)?.configTorneo as any;
-    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional' || config?.tipo === 'panamericano', formato: config?.formato ?? '32' };
+    return { circuitId: phase?.circuitId ?? 0, cuposDesdeClasif: config?.cuposDesdeClasif ?? 16, esNacional: config?.tipo === 'nacional' || config?.tipo === 'panamericano', formato: config?.formato ?? '32', esNac2027: config?.esquema === 'nacional-2027' };
   } catch { return { circuitId: 0, cuposDesdeClasif: 16, esNacional: false, formato: '32' }; }
 }
 
@@ -531,6 +531,31 @@ async function rellenarSlotsPrimera(phaseId: number) {
   } catch (error) { console.error('Error rellenando slots de Primera:', error); }
 }
 
+// Formato nacional 2027: el ganador de un cruce 64→32 pasa al cruce 32→16 que lo espera, y el ganador
+// de un cruce 32→16 (casillero k) pasa al cruce contra Primera Nacional.
+async function propagarCruceNacional2027(matchId: number) {
+  try {
+    const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
+    if (!match || !match.result?.winnerId || !match.serieId) return;
+    const winnerId = match.result.winnerId;
+    let slotLabel: string | null = null;
+    const m64 = match.serieId.match(/^cruce64-(\d+)$/);
+    const m32 = match.serieId.match(/^cruce32-(\d+)$/);
+    if (m64) slotLabel = `Gan. Cruce64 ${m64[1]}`;
+    else if (m32) slotLabel = `Clasificado Segunda #${m32[1]}`;
+    if (!slotLabel) return;
+    const destino = await buscarPorSlot(match.phaseId, slotLabel);
+    if (!destino) return;
+    const esSlotA = destino.slotA === slotLabel;
+    await prisma.match.update({ where: { id: destino.id }, data: esSlotA ? { playerAId: winnerId, slotA: null } : { playerBId: winnerId, slotB: null } });
+    const actualizado = await prisma.match.findUnique({ where: { id: destino.id } });
+    if (actualizado?.playerAId && actualizado?.playerBId) {
+      await prisma.match.update({ where: { id: destino.id }, data: { status: actualizado.tableId ? 'asignado' : 'pendiente' } });
+      await checkAndEmitMatch(destino.id);
+    }
+  } catch (error) { console.error('Error avanzando cruce nacional 2027:', error); }
+}
+
 async function rellenarSlotSegunda(matchId: number) {
   try {
     const match = await prisma.match.findUnique({ where: { id: matchId }, include: { result: true } });
@@ -543,7 +568,12 @@ async function rellenarSlotSegunda(matchId: number) {
     const directos = Math.max(0, cuposDesdeClasif - totalReduccion);
 
     let slotLabel: string;
-    if (directos > 0) {
+    const { esNac2027 } = await getCircuitInfo(match.phaseId);
+    if (esNac2027) {
+      // Formato nacional 2027: orden DIRECTO. El ganador del cruce n ocupa el lugar directos+n
+      // (61v68 → 61, 62v67 → 62, 63v66 → 63, 64v65 → 64).
+      slotLabel = `Clasificado Clasif. #${directos + cruceNum}`;
+    } else if (directos > 0) {
       // Esquema hibrido (top N clasifica directo + reduccion para el resto):
       // cada cruce de reduccion completa un cupo propio, sin repechaje.
       // Orden INVERSO, igual que la publicacion de la reduccion ("CRUCE n (CLASIFICADO cupos-n+1)"):
@@ -1633,8 +1663,10 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
 
   const esNacionalSerie   = serieId.startsWith('nac-serie-') || /^[A-Z]+-G\d+$/.test(serieId);
   const esNacionalBracket = serieId.startsWith('nac-') && !esNacionalSerie;
+  const esCruceNac2027 = phaseType === 'segunda' && /^cruce(64|32)-\d+$/.test(serieId); // formato nacional 2027
   const esPartidoDeSerie = serieId !== '' &&
     !serieId.includes('reduccion') && !serieId.includes('repechaje') &&
+    !esCruceNac2027 &&
     !esNacionalBracket && !esNacionalSerie &&
     (phaseType === 'clasificatorio' || phaseType === 'segunda');
   const esPartidoNacionalSerie = esNacionalSerie && phaseType === 'clasificatorio';
@@ -1655,6 +1687,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   if (esNacionalSerie)  { await propagarSerieNacional(matchId); }
   if (phaseType === 'clasificatorio' && serieId.startsWith('clasif-serie-') && posEnSerie === 4) { await rellenarCrucesReduccion(existingMatch.phaseId); }
   if (phaseType === 'segunda' && serieId.startsWith('segunda-serie-') && posEnSerie === 4) { await rellenarSlotsPrimera(existingMatch.phaseId); }
+  if (esCruceNac2027) { await propagarCruceNacional2027(matchId); }
   if (phaseType === 'primera') { await rellenarSlotMasterConGanadorPrimera(matchId); }
   if (phaseType === 'master' && !esNacionalBracket) { await avanzarBracketMaster(matchId); }
   if (phaseType === 'clasificatorio' && serieId) {
@@ -1695,7 +1728,7 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   try {
     if ((phaseType === 'clasificatorio' || phaseType === 'segunda') && (esPartidoDeSerie || esPartidoNacionalSerie) && posEnSerie === 4 && serieId) {
       await generarReporteSerie(existingMatch.phaseId, serieId);
-    } else if (phaseType === 'primera' || phaseType === 'master' || (phaseType === 'clasificatorio' && !esPartidoDeSerie && !esPartidoNacionalSerie)) {
+    } else if (phaseType === 'primera' || phaseType === 'master' || esCruceNac2027 || (phaseType === 'clasificatorio' && !esPartidoDeSerie && !esPartidoNacionalSerie)) {
       await generarReporteCruce(matchId);
     }
   } catch (reportError) { console.error('Error generando reporte (no crítico):', reportError); }
