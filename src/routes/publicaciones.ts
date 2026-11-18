@@ -497,7 +497,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, orderBy: { position: 'asc' } });
     }
 
-    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', 'cruces-64': 'segunda', 'cruces-32': 'segunda', primera: 'primera', master: 'master', 'master-final': 'master' };
+    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', 'clasificatorio-parte-1': 'clasificatorio', 'clasificatorio-parte-2': 'clasificatorio', 'clasificatorio-parte-3': 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', 'cruces-64': 'segunda', 'cruces-32': 'segunda', primera: 'primera', master: 'master', 'master-final': 'master' };
     const phase = circuit.phases.find((p: any) => p.type === phaseTypeMap[tipoFase]);
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
@@ -510,15 +510,24 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
 
     const formato = ['primera', 'master'].includes(phaseTypeMap[tipoFase]) ? '5 sets de 60 tantos' : '3 sets de 60 tantos';
 
-    if (tipoFase === 'clasificatorio' || tipoFase === 'segunda') {
+    const parteSeries = /^clasificatorio-parte-([123])$/.exec(tipoFase)?.[1];
+    if (tipoFase === 'clasificatorio' || tipoFase === 'segunda' || parteSeries) {
       const sm = matches.filter((m: any) => m.serieId && !m.serieId.includes('reduccion') && !m.serieId.includes('repechaje'));
       const map: Record<string, any[]> = {};
       for (const m of sm) { if (!map[m.serieId!]) map[m.serieId!] = []; map[m.serieId!].push(m); }
       const mkP = (p: any) => ({ jugadorA: jugadorInfo(p.playerA, p.slotA, rankings), jugadorB: jugadorInfo(p.playerB, p.slotB, rankings), sede: p.table?.venue?.name ?? '', mesa: p.table?.number ?? null, hora: hora(p.scheduledAt), fecha: fecha(p.scheduledAt), status: p.status, resultado: p.result ? `${p.result.setsA}-${p.result.setsB}` : null });
-      const series = Object.entries(map).map(([serieId, pts]) => {
+      let series = Object.entries(map).map(([serieId, pts]) => {
         const rb = Math.min(...pts.map(p => p.round));
         return { serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'), p1: pts.find(p => p.round === rb) ? mkP(pts.find(p => p.round === rb)!) : null, p2: pts.find(p => p.round === rb + 1) ? mkP(pts.find(p => p.round === rb + 1)!) : null };
       }).sort((a, b) => a.numero - b.numero);
+      // Con muchas series (ej. 34 en el circuito nacional) se publican en 3 partes de tamaño parejo.
+      if (parteSeries) {
+        const parte = parseInt(parteSeries); const total = series.length;
+        const desde = Math.round((total * (parte - 1)) / 3); const hasta = Math.round((total * parte) / 3);
+        series = series.slice(desde, hasta);
+        if (series.length === 0) { res.status(404).json({ error: 'Esta parte no tiene series (el circuito tiene muy pocas).' }); return; }
+        return res.json({ ...base, tipo: 'series', fase: `SERIES DEL CLASIFICATORIO — PARTE ${parte} DE 3`, formato, fechaPrincipal: '', series });
+      }
       const pf = sm.find((m: any) => m.scheduledAt)?.scheduledAt;
       return res.json({ ...base, tipo: 'series', fase: tipoFase === 'clasificatorio' ? 'SERIES DEL CLASIFICATORIO' : 'SERIES DE SEGUNDA', formato, fechaPrincipal: '', series });
     }
