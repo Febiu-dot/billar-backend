@@ -497,7 +497,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       if (prev) rankings = await prisma.rankingEntry.findMany({ where: { circuitId: prev.id, position: { not: null } }, orderBy: { position: 'asc' } });
     }
 
-    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', primera: 'primera', master: 'master', 'master-final': 'master' };
+    const phaseTypeMap: Record<string, string> = { clasificatorio: 'clasificatorio', reduccion: 'clasificatorio', 'ranking-clasificatorio': 'clasificatorio', 'ranking-segunda': 'segunda', segunda: 'segunda', 'cruces-64': 'segunda', 'cruces-32': 'segunda', primera: 'primera', master: 'master', 'master-final': 'master' };
     const phase = circuit.phases.find((p: any) => p.type === phaseTypeMap[tipoFase]);
     if (!phase) { res.status(404).json({ error: `Fase '${tipoFase}' no encontrada en este circuito` }); return; }
 
@@ -624,7 +624,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const Nclas = numSeriesClasif * 2; const directosClas = Math.max(0, Nclas - 2 * numCruces);
       const puesto = (m: any, lado: 'A' | 'B') => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return lado === 'A' ? directosClas + n : Nclas - n + 1; };
       // El ganador del cruce n ocupa el clasificado (cupos - n + 1) en las series de segunda; cupos = N - cruces
-      const clasificaComo = (m: any): number | undefined => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return Nclas - numCruces - n + 1; };
+      const clasificaComo = (m: any): number | undefined => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return configTorneoCircuito.esquema === 'nacional-2027' ? directosClas + n : Nclas - numCruces - n + 1; };
       const conPuesto = (info: any, v: number | undefined) => (v !== undefined && info && !info.esSlot ? { ...info, ranking: v } : info);
       const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, clasificaComo: clasificaComo(m), jugadorA: conPuesto(jugadorInfo(m.playerA, m.slotA, rankings), puesto(m, 'A')), jugadorB: conPuesto(jugadorInfo(m.playerB, m.slotB, rankings), puesto(m, 'B')), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
       const faltanSeries = detallarSeriesIncompletas(todosCircuito, 'clasif-serie-');
@@ -633,7 +633,12 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: aviso, cruces });
     }
 
+    const esNac2027 = configTorneoCircuito.esquema === 'nacional-2027';
     const getEtapa = (round: number) => {
+      if (tipoFase === 'cruces-64') return 'CRUCES DE 64 A 32';
+      if (tipoFase === 'cruces-32') return 'CRUCES DE 32 A 16';
+      if (tipoFase === 'primera' && esNac2027) return 'CRUCES CON PRIMERA NACIONAL';
+      if (tipoFase === 'master' && esNac2027) return 'DIECISEISAVOS DE FINAL';
       if (tipoFase === 'primera') return 'CRUCES DE PRIMERA';
       if (round <= 16) return 'CRUCES'; if (round <= 24) return 'OCTAVOS DE FINAL';
       if (round <= 28) return 'CUARTOS DE FINAL'; if (round <= 30) return 'SEMIFINAL';
@@ -643,13 +648,18 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
     // 'master-final' = octavos, cuartos, semifinal y final (desde la ronda 17).
     let partidosPub = matches;
     if (tipoFase === 'master') partidosPub = matches.filter((m: any) => m.round <= 16);
+    if (tipoFase === 'cruces-64' || tipoFase === 'cruces-32') {
+      const rx = tipoFase === 'cruces-64' ? /^cruce64-\d+$/ : /^cruce32-\d+$/;
+      partidosPub = matches.filter((m: any) => m.serieId && rx.test(m.serieId));
+      if (partidosPub.length === 0) { res.status(404).json({ error: 'Este circuito no tiene cruces de 64 a 16 (solo existen en el formato Circuito Nacional 2026-27).' }); return; }
+    }
     if (tipoFase === 'master-final') {
       partidosPub = matches.filter((m: any) => m.round > 16);
       if (partidosPub.length === 0) { res.status(404).json({ error: 'Todavía no hay octavos, cuartos, semifinal ni final generados en la Fase Máster.' }); return; }
     }
-    const cruces = partidosPub.map((m: any) => ({ round: m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
+    const cruces = partidosPub.map((m: any) => ({ round: tipoFase === 'cruces-32' ? m.round - 32 : m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, m.slotA, rankings), jugadorB: jugadorInfo(m.playerB, m.slotB, rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
     const pf = matches.find((m: any) => m.scheduledAt)?.scheduledAt;
-    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'primera' ? 'CRUCES DE PRIMERA CATEGORÍA' : tipoFase === 'master-final' ? 'FASE FINAL — OCTAVOS A LA FINAL' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
+    res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'cruces-64' ? 'CRUCES DE 64 A 32' : tipoFase === 'cruces-32' ? 'CRUCES DE 32 A 16' : tipoFase === 'primera' ? (esNac2027 ? 'CRUCES CON PRIMERA NACIONAL' : 'CRUCES DE PRIMERA CATEGORÍA') : tipoFase === 'master-final' ? 'FASE FINAL — OCTAVOS A LA FINAL' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
