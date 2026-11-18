@@ -100,6 +100,43 @@ router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, re
   }
 });
 
+// POST crear un circuito del formato nuevo (Circuito Nacional 2026-27) con sus 4 fases y la configuracion ya guardada.
+// Sin tournamentId crea el torneo "CIRCUITOS FEBIU 2026-27" con el Circuito 1; con tournamentId agrega el siguiente circuito.
+// OJO: el nombre del torneo NO debe llevar la palabra "nacional" (el sistema la usa para tratarlo con las reglas viejas).
+router.post('/nacional-2027', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { tournamentId } = req.body ?? {};
+    let torneo: any;
+    if (tournamentId) {
+      torneo = await prisma.tournament.findUnique({ where: { id: Number(tournamentId) }, include: { circuits: true } });
+      if (!torneo) { res.status(404).json({ error: 'Torneo no encontrado' }); return; }
+    } else {
+      torneo = await prisma.tournament.create({ data: { name: 'CIRCUITOS FEBIU 2026-27', year: 2026, description: 'Circuitos del formato nuevo 2026-27 y torneo final', active: true } });
+      torneo.circuits = [];
+    }
+    const orden = (torneo.circuits ?? []).reduce((mx: number, c: any) => Math.max(mx, c.order ?? 0), 0) + 1;
+    if (orden > 4) { res.status(400).json({ error: 'El torneo ya tiene los 4 circuitos.' }); return; }
+    const circuit = await prisma.circuit.create({
+      data: {
+        name: `Circuito ${orden}`, order: orden, tournamentId: torneo.id,
+        configTorneo: { tipo: 'departamental', esquema: 'nacional-2027', cantMaster: 16, cantPrimera: 16, cantSegunda: 0, cuposDesdeClasif: 64 } as any,
+      },
+    });
+    const fases: { name: string; type: 'clasificatorio' | 'segunda' | 'primera' | 'master' }[] = [
+      { name: 'Clasificatorio', type: 'clasificatorio' },
+      { name: 'Cruces 64 a 16', type: 'segunda' },
+      { name: 'Cruce con Primera Nacional', type: 'primera' },
+      { name: 'Cuadro final', type: 'master' },
+    ];
+    for (let i = 0; i < fases.length; i++) {
+      await prisma.phase.create({ data: { name: fases[i].name, type: fases[i].type, order: i + 1, circuitId: circuit.id } });
+    }
+    res.status(201).json({ ok: true, tournamentId: torneo.id, circuitId: circuit.id, circuito: circuit.name, torneo: torneo.name });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // PUT update tournament
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
