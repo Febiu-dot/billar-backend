@@ -1,6 +1,7 @@
 import { aplicarAltaLaSala } from './migraciones/laSala';
 import { corregirClub25DeMayo } from './migraciones/club25DeMayo';
 import { corregirWOTresCero } from './migraciones/woTresCero';
+import { reubicarGanadoresReduccion } from './migraciones/reduccionSegunda';
 import { sincronizarPuntosCircuito } from './services/puntosCircuito';
 import { calcularYGuardarAcumulado } from './routes/rankingAcumulado';
 import { PrismaClient } from '@prisma/client';
@@ -335,6 +336,7 @@ async function main() {
   try { await aplicarAltaLaSala(); } catch (e) { console.error('⚠️  Alta de La Sala falló (se ignora):', e); }
 
   try { await corregirClub25DeMayo(); } catch (e) { console.error('⚠️  Corrección del club 25 de mayo falló (se ignora):', e); }
+  try { await reubicarGanadoresReduccion(); } catch (e) { console.error('⚠️  Reubicación de ganadores de la reducción falló (se ignora):', e); }
 
   console.log('');
   console.log('🎱 Seed completado!');

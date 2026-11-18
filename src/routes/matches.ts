@@ -546,7 +546,10 @@ async function rellenarSlotSegunda(matchId: number) {
     if (directos > 0) {
       // Esquema hibrido (top N clasifica directo + reduccion para el resto):
       // cada cruce de reduccion completa un cupo propio, sin repechaje.
-      slotLabel = `Clasificado Clasif. #${directos + cruceNum}`;
+      // Orden INVERSO, igual que la publicacion de la reduccion ("CRUCE n (CLASIFICADO cupos-n+1)"):
+      // el cruce 1 (el de mejor y peor ubicado) clasifica como el ULTIMO cupo y el ultimo cruce como el primero
+      // de los cupos de reduccion. Con directos + totalReduccion = cuposDesdeClasif.
+      slotLabel = `Clasificado Clasif. #${directos + totalReduccion - cruceNum + 1}`;
     } else {
       // Esquema original: cruces 1..(cuposDesdeClasif-1) clasifican directo;
       // el ultimo cruce va a repechaje (lo maneja rellenarRepechaje aparte).
