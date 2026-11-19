@@ -48,6 +48,17 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
+// CARGA UNICA (19/11/2026): codigo de canal de Feria Franca mesa 3, entregado por la administradora. No toca "activa".
+setTimeout(async () => {
+  try {
+    await asegurarTabla();
+    const n = await prisma.$executeRawUnsafe(
+      `INSERT INTO "Transmision" ("tableId","canal") SELECT t."id", $1 FROM "Table" t WHERE t."id" = 21 AND t."venueId" = 6 AND t."number" = 3
+       ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "updatedAt" = CURRENT_TIMESTAMP`, 'UCrX3YG5fRt9qfflkpBIxYvA');
+    console.log(`[transmisiones] Feria Franca mesa 3 cargada: ${n}`);
+  } catch (e: any) { console.error('[transmisiones] Feria Franca mesa 3 fallo:', e.message); }
+}, 8000);
+
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
