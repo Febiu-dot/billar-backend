@@ -48,17 +48,6 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
-// CARGA UNICA (19/11/2026): codigo de canal de Capolavoro mesa 1, entregado por la administradora. Queda prendida.
-setTimeout(async () => {
-  try {
-    await asegurarTabla();
-    const n = await prisma.$executeRawUnsafe(
-      `INSERT INTO "Transmision" ("tableId","canal","activa") SELECT t."id", $1, true FROM "Table" t WHERE t."id" = 66 AND t."venueId" = 4 AND t."number" = 1
-       ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "activa" = true, "updatedAt" = CURRENT_TIMESTAMP`, 'UCcwqpq500pvilJonx6Ke5aQ');
-    console.log(`[transmisiones] Capolavoro mesa 1 cargada: ${n}`);
-  } catch (e: any) { console.error('[transmisiones] Capolavoro mesa 1 fallo:', e.message); }
-}, 8000);
-
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
