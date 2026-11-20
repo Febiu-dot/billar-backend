@@ -37,8 +37,8 @@ function avisar() {
   io.to('public').emit('transmision:updated', { at: Date.now() });
 }
 
-// Apagado automatico: una transmision prendida hace mas de 14 horas se apaga sola (por si se olvidan de apagarla).
-const HORAS_MAXIMAS = 14;
+// Apagado automatico: una transmision prendida hace mas de 8 horas se apaga sola (por si se olvidan de apagarla).
+const HORAS_MAXIMAS = 8;
 setInterval(async () => {
   try {
     await asegurarTabla();
