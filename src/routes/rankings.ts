@@ -126,11 +126,22 @@ const TRAMOS_NACIONALES: { clave: string; cantidad: number }[] = [
   { clave: 'tercera',          cantidad: 49 },
 ];
 async function categoriasNacionalesDe(circuitId: number): Promise<Map<number, string>> {
-  const c = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
-  const mapa = ((c?.configTorneo as any)?.categoriasNacionales ?? {}) as Record<string, string>;
-  const out: Map<number, string> = new Map();
-  for (const k of Object.keys(mapa)) out.set(Number(k), mapa[k]);
-  return out;
+  // La categoria nacional se mantiene durante los 4 circuitos: si el circuito no tiene la suya propia,
+  // hereda la del circuito anterior del mismo torneo (aunque el jugador cambie de puesto).
+  let actualId: number | null = circuitId;
+  for (let vuelta = 0; actualId && vuelta < 5; vuelta++) {
+    const c: any = await prisma.circuit.findUnique({ where: { id: actualId }, select: { configTorneo: true, tournamentId: true, order: true } });
+    if (!c) break;
+    const mapa = ((c.configTorneo as any)?.categoriasNacionales ?? null) as Record<string, string> | null;
+    if (mapa && Object.keys(mapa).length > 0) {
+      const out: Map<number, string> = new Map();
+      for (const k of Object.keys(mapa)) out.set(Number(k), mapa[k]);
+      return out;
+    }
+    const previo: any = await prisma.circuit.findFirst({ where: { tournamentId: c.tournamentId, order: { lt: c.order } }, orderBy: { order: 'desc' }, select: { id: true } });
+    actualId = previo?.id ?? null;
+  }
+  return new Map();
 }
 async function planCategoriasNacionales(circuitId: number) {
   const entradas = await prisma.rankingEntry.findMany({
