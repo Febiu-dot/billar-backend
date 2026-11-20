@@ -115,6 +115,77 @@ router.get('/circuit/:circuitId', async (req, res: Response) => {
   res.json(withAverage);
 });
 
+// ── Categorias NACIONALES del ranking inicial (independientes de la categoria departamental del jugador) ──
+// Se guardan en configTorneo.categoriasNacionales = { "<playerId>": "master-nacional" | ... } del circuito.
+// No tocan la categoria del jugador (Player.categoryId): solo cambian lo que muestra el ranking de ese circuito.
+const TRAMOS_NACIONALES: { clave: string; cantidad: number }[] = [
+  { clave: 'master-nacional',  cantidad: 15 },
+  { clave: 'primera-nacional', cantidad: 10 },
+  { clave: 'primera',          cantidad: 45 },
+  { clave: 'segunda',          cantidad: 47 },
+  { clave: 'tercera',          cantidad: 49 },
+];
+async function categoriasNacionalesDe(circuitId: number): Promise<Map<number, string>> {
+  const c = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+  const mapa = ((c?.configTorneo as any)?.categoriasNacionales ?? {}) as Record<string, string>;
+  const out: Map<number, string> = new Map();
+  for (const k of Object.keys(mapa)) out.set(Number(k), mapa[k]);
+  return out;
+}
+async function planCategoriasNacionales(circuitId: number) {
+  const entradas = await prisma.rankingEntry.findMany({
+    where: { circuitId, position: { not: null } },
+    include: { player: true },
+    orderBy: { position: 'asc' },
+  });
+  const lista = entradas.filter((e: any) => e.player.dni !== 'FEBIU000' && e.player.active);
+  const asignacion: { playerId: number; puesto: number; categoria: string }[] = [];
+  let desde = 0;
+  for (const t of TRAMOS_NACIONALES) {
+    lista.slice(desde, desde + t.cantidad).forEach((e: any, k: number) => asignacion.push({ playerId: e.playerId, puesto: desde + k + 1, categoria: t.clave }));
+    desde += t.cantidad;
+  }
+  lista.slice(desde).forEach((e: any, k: number) => asignacion.push({ playerId: e.playerId, puesto: desde + k + 1, categoria: 'tercera' }));
+  const cuadro = TRAMOS_NACIONALES.map(t => ({ categoria: t.clave, esperados: t.cantidad, asignados: asignacion.filter(a => a.categoria === t.clave).length }));
+  return { total: lista.length, asignacion, cuadro };
+}
+
+router.get('/categorias-nacionales/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const plan = await planCategoriasNacionales(circuitId);
+    const actual = await categoriasNacionalesDe(circuitId);
+    res.json({ aplicadas: actual.size, total: plan.total, cuadro: plan.cuadro });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/categorias-nacionales/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const jugados = await prisma.match.count({ where: { phase: { circuitId }, status: { in: ['en_juego', 'finalizado', 'wo'] } } });
+    if (jugados > 0) { res.status(409).json({ error: 'El circuito ya tiene partidos jugados: el ranking inicial ya no se puede tomar de las posiciones actuales.' }); return; }
+    const plan = await planCategoriasNacionales(circuitId);
+    const c = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+    const cfg: any = { ...((c?.configTorneo as any) ?? {}) };
+    const mapa: Record<string, string> = {};
+    for (const a of plan.asignacion) mapa[String(a.playerId)] = a.categoria;
+    cfg.categoriasNacionales = mapa;
+    await prisma.circuit.update({ where: { id: circuitId }, data: { configTorneo: cfg } });
+    res.json({ aplicado: true, total: plan.total, cuadro: plan.cuadro });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.delete('/categorias-nacionales/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const c = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+    const cfg: any = { ...((c?.configTorneo as any) ?? {}) };
+    delete cfg.categoriasNacionales;
+    await prisma.circuit.update({ where: { id: circuitId }, data: { configTorneo: cfg } });
+    res.json({ quitado: true });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
 // -------------------------------------------------------
 // GET /api/rankings/torneo?circuitId=X
 // -------------------------------------------------------
@@ -280,6 +351,7 @@ router.put('/torneo/:phaseId/publicar', authenticate, requireRole('admin'), asyn
 router.get('/final', async (req, res: Response) => {
   try {
     const circuitId = req.query.circuitId ? Number(req.query.circuitId) : null;
+    const catNacional = await categoriasNacionalesDe(circuitId ?? 0);
     if (!circuitId) {
       res.status(400).json({ error: 'circuitId es requerido' });
       return;
@@ -312,7 +384,7 @@ router.get('/final', async (req, res: Response) => {
             lastName:    e.player.lastName,
             club:        e.player.club ?? '',
             pais:        e.player.pais ?? 'Uruguay',
-            categoria:   e.player.category.name,
+            categoria:   catNacional.get(e.playerId) ?? e.player.category.name,
             puntos:      e.points,
             setsGanados: e.setsWon,
             setsJugados,
@@ -456,7 +528,7 @@ router.get('/final', async (req, res: Response) => {
           firstName: player.firstName,
           lastName: player.lastName,
           club: player.club ?? '',
-          categoria: player.category.name,
+          categoria: catNacional.get(player.id) ?? player.category.name,
           puntos: s.puntos,
           setsGanados: s.setsGanados,
           setsJugados: s.setsJugados,
