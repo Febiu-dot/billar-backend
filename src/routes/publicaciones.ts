@@ -5,6 +5,17 @@ import { calcularRankingSeries, ordenarFilasRanking, compararFilas, promedioTant
 
 const router = Router();
 
+// Sedes por id: un partido en "mesa libre" no tiene mesa, solo la sede donde va a jugar.
+let NOMBRES_SEDES: Map<number, string> = new Map();
+router.use(async (_req, _res, next) => {
+  try { const vs = await prisma.venue.findMany({ select: { id: true, name: true } }); NOMBRES_SEDES = new Map(vs.map((v: any) => [v.id, String(v.name).trim()])); } catch {}
+  next();
+});
+const sedeDe = (m: any): string | null =>
+  m?.table?.venue?.name ?? (m?.mesaLibreSedeId ? (NOMBRES_SEDES.get(m.mesaLibreSedeId) ?? null) : null);
+const mesaDe = (m: any): number | string | null =>
+  m?.table?.number ?? (m?.mesaLibreSedeId ? 'libre' : null);
+
 const CLUB_ABREV: Record<string, string> = {
   'CAPOLAVORO': 'CAP', 'FERIA FRANCA': 'FER', 'YATAY': 'YAT',
   'CABRERA': 'CAB', 'MODEL CENTER': 'MOD', 'NUEVO MALVIN': 'NM',
@@ -100,8 +111,8 @@ const mkBracketMatch = (m: any) => {
     winnerId: m.result?.winnerId ?? null,
     hora: hora(m.scheduledAt),
     fecha: fecha(m.scheduledAt),
-    sede: m.table?.venue?.name ?? null,
-    mesa: m.table?.number ?? null,
+    sede: sedeDe(m),
+    mesa: mesaDe(m),
     resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null,
     status: m.status,
   };
@@ -279,7 +290,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
           jugadorA: jugadorInfo(p.playerA, p.slotA, rankings),
           jugadorB: jugadorInfo(p.playerB, p.slotB, rankings),
           hora: hora(p.scheduledAt), fecha: fecha(p.scheduledAt),
-          sede: p.table?.venue?.name ?? '', mesa: p.table?.number ?? null,
+          sede: (sedeDe(p) ?? ''), mesa: mesaDe(p),
           resultado: p.result ? `${p.result.setsA}-${p.result.setsB}` : null,
           status: p.status,
         } : null;
@@ -449,7 +460,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
           jugadorB: m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev((m.playerB as any).club), pais: (m.playerB as any).pais ?? 'Uruguay' } : null,
           slotA: m.slotA, slotB: m.slotB,
           hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt),
-          sede: m.table?.venue?.name ?? null, mesa: m.table?.number ?? null,
+          sede: sedeDe(m), mesa: mesaDe(m),
           resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null,
           winnerId: m.result?.winnerId ?? null,
           playerAId: m.playerAId, playerBId: m.playerBId,
@@ -515,7 +526,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const sm = matches.filter((m: any) => m.serieId && !m.serieId.includes('reduccion') && !m.serieId.includes('repechaje'));
       const map: Record<string, any[]> = {};
       for (const m of sm) { if (!map[m.serieId!]) map[m.serieId!] = []; map[m.serieId!].push(m); }
-      const mkP = (p: any) => ({ jugadorA: jugadorInfo(p.playerA, p.slotA, rankings), jugadorB: jugadorInfo(p.playerB, p.slotB, rankings), sede: p.table?.venue?.name ?? '', mesa: p.table?.number ?? null, hora: hora(p.scheduledAt), fecha: fecha(p.scheduledAt), status: p.status, resultado: p.result ? `${p.result.setsA}-${p.result.setsB}` : null });
+      const mkP = (p: any) => ({ jugadorA: jugadorInfo(p.playerA, p.slotA, rankings), jugadorB: jugadorInfo(p.playerB, p.slotB, rankings), sede: (sedeDe(p) ?? ''), mesa: mesaDe(p), hora: hora(p.scheduledAt), fecha: fecha(p.scheduledAt), status: p.status, resultado: p.result ? `${p.result.setsA}-${p.result.setsB}` : null });
       let series = Object.entries(map).map(([serieId, pts]) => {
         const rb = Math.min(...pts.map(p => p.round));
         return { serieId, numero: parseInt(serieId.match(/(\d+)$/)?.[1] ?? '0'), p1: pts.find(p => p.round === rb) ? mkP(pts.find(p => p.round === rb)!) : null, p2: pts.find(p => p.round === rb + 1) ? mkP(pts.find(p => p.round === rb + 1)!) : null };
@@ -635,7 +646,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       // El ganador del cruce n ocupa el clasificado (cupos - n + 1) en las series de segunda; cupos = N - cruces
       const clasificaComo = (m: any): number | undefined => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return configTorneoCircuito.esquema === 'nacional-2027' ? directosClas + n : Nclas - numCruces - n + 1; };
       const conPuesto = (info: any, v: number | undefined) => (v !== undefined && info && !info.esSlot ? { ...info, ranking: v } : info);
-      const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, clasificaComo: clasificaComo(m), jugadorA: conPuesto(jugadorInfo(m.playerA, m.slotA, rankings), puesto(m, 'A')), jugadorB: conPuesto(jugadorInfo(m.playerB, m.slotB, rankings), puesto(m, 'B')), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
+      const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, clasificaComo: clasificaComo(m), jugadorA: conPuesto(jugadorInfo(m.playerA, m.slotA, rankings), puesto(m, 'A')), jugadorB: conPuesto(jugadorInfo(m.playerB, m.slotB, rankings), puesto(m, 'B')), sede: (sedeDe(m) ?? ''), mesa: mesaDe(m), hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
       const faltanSeries = detallarSeriesIncompletas(todosCircuito, 'clasif-serie-');
       const sinJugadores = cruces.length > 0 && cruces.every((c: any) => c.jugadorA?.esSlot || c.jugadorB?.esSlot);
       const aviso = sinJugadores && faltanSeries.length > 0 ? `Cruces sin jugadores: faltan resultados — ${faltanSeries.join(' · ')}` : '';
@@ -668,7 +679,7 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       partidosPub = matches.filter((m: any) => m.round > 16);
       if (partidosPub.length === 0) { res.status(404).json({ error: 'Todavía no hay octavos, cuartos, semifinal ni final generados en la Fase Máster.' }); return; }
     }
-    const cruces = partidosPub.map((m: any) => ({ round: tipoFase === 'cruces-32' ? m.round - 32 : m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, slotVisible(m.slotA), rankings), jugadorB: jugadorInfo(m.playerB, slotVisible(m.slotB), rankings), sede: m.table?.venue?.name ?? '', mesa: m.table?.number ?? null, hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
+    const cruces = partidosPub.map((m: any) => ({ round: tipoFase === 'cruces-32' ? m.round - 32 : m.round, etapa: getEtapa(m.round), jugadorA: jugadorInfo(m.playerA, slotVisible(m.slotA), rankings), jugadorB: jugadorInfo(m.playerB, slotVisible(m.slotB), rankings), sede: (sedeDe(m) ?? ''), mesa: mesaDe(m), hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null }));
     const pf = matches.find((m: any) => m.scheduledAt)?.scheduledAt;
     res.json({ ...base, tipo: 'cruces', fase: tipoFase === 'cruces-64' ? 'CRUCES DE 64 A 32' : tipoFase === 'cruces-32' ? 'CRUCES DE 32 A 16' : tipoFase === 'primera' ? (esNac2027 ? 'CRUCES CON PRIMERA NACIONAL' : 'CRUCES DE PRIMERA CATEGORÍA') : tipoFase === 'master-final' ? 'FASE FINAL — OCTAVOS A LA FINAL' : 'FASE MÁSTER', formato, fechaPrincipal: '', cruces });
 
