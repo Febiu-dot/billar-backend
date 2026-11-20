@@ -8,6 +8,7 @@ import { calcularYGuardarAcumulado } from './rankingAcumulado';
 import { calcularRankingSeries, ordenarFilasRanking, detallarSeriesIncompletas } from '../services/rankingSerie';
 import { sincronizarPuntosCircuito } from '../services/puntosCircuito';
 import { asignarMesaLibreSiguiente } from '../services/mesaLibre';
+import { PROGRAMACION, SALAS, TANDAS } from '../services/programacionNacional2027';
 
 const router = Router();
 
@@ -1244,6 +1245,100 @@ router.post('/reordenar-primera/:circuitId', authenticate, requireRole('admin'),
     res.json({ aplicado: true, cambios: cambios.length, plan: cambios });
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
+// ── Programacion del 1er circuito nacional 2026-27 (sabado 28 y domingo 29/11) ─────────────────
+// Asigna sede, mesa, fecha y hora a los cruces siguiendo las "cadenas" (cada cadena juega siempre en la misma sala).
+// NO toca jugadores, resultados ni puntos: solo mesa, fecha/hora y el estado pendiente<->asignado.
+// Se puede aplicar y quitar cuantas veces haga falta; los partidos en juego o terminados nunca se tocan.
+const sinTildesProg = (t: string): string => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+async function armarPlanProgramacion(circuitId: number) {
+  const circuit = await prisma.circuit.findUnique({ where: { id: circuitId } });
+  if (!circuit) return { error: 'Circuito no encontrado.' };
+  if (((circuit as any).configTorneo as any)?.esquema !== 'nacional-2027') return { error: 'Este circuito no es del formato nacional 2026-27.' };
+  const matches = await prisma.match.findMany({ where: { phase: { circuitId } }, include: { table: true } });
+  const porSerie: Map<string, any> = new Map();
+  for (const m of matches) { if (m.serieId) porSerie.set(m.serieId, m); }
+  const sedes = await prisma.venue.findMany({ include: { tables: true } });
+  const sedePorSala: Record<string, any> = {};
+  for (const clave of Object.keys(SALAS)) {
+    const patron = (SALAS as any)[clave].patron as RegExp;
+    const candidatas = sedes.filter((v: any) => patron.test(sinTildesProg(v.name)));
+    candidatas.sort((a: any, b: any) => b.tables.length - a.tables.length);
+    sedePorSala[clave] = candidatas[0] ?? null;
+  }
+  const filas = PROGRAMACION.map((f: any) => {
+    const m = porSerie.get(f.serieId);
+    const sede = sedePorSala[f.sala];
+    const mesa = sede?.tables.find((t: any) => t.number === f.mesa);
+    const tanda = (TANDAS as any)[f.tanda];
+    let estado = 'ok';
+    if (!m) estado = 'sin_cruce';
+    else if (!sede) estado = 'sin_sala';
+    else if (!mesa) estado = 'sin_mesa';
+    else if (['en_juego', 'finalizado', 'wo'].includes(m.status) || (m as any).result) estado = 'ya_jugado';
+    return {
+      matchId: m?.id ?? null, serieId: f.serieId, codigo: f.codigo, cadena: f.cadena,
+      sala: (SALAS as any)[f.sala].nombre, sede: sede?.name ?? null, mesa: f.mesa, tableId: mesa?.id ?? null,
+      fecha: tanda.fecha, hora: tanda.hora, scheduledAt: `${tanda.fecha}T${tanda.hora}:00-03:00`,
+      estado, actualTableId: m?.tableId ?? null, actualScheduledAt: m?.scheduledAt ?? null,
+    };
+  });
+  const problemas = filas.filter((f: any) => f.estado === 'sin_sala' || f.estado === 'sin_mesa');
+  const sedesEncontradas = Object.keys(SALAS).map((clave: string) => ({ sala: (SALAS as any)[clave].nombre, sede: sedePorSala[clave]?.name ?? null, mesas: sedePorSala[clave]?.tables.map((t: any) => t.number).sort((a: number, b: number) => a - b) ?? [] }));
+  return { filas, problemas, sedesEncontradas };
+}
+
+router.get('/programacion-nacional/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const plan: any = await armarPlanProgramacion(parseInt(req.params.circuitId));
+    if (plan.error) { res.status(409).json({ error: plan.error }); return; }
+    const cuenta = (e: string) => plan.filas.filter((f: any) => f.estado === e).length;
+    res.json({ resumen: { total: plan.filas.length, aplicables: cuenta('ok'), sinCruce: cuenta('sin_cruce'), yaJugados: cuenta('ya_jugado'), problemas: plan.problemas.length }, sedesEncontradas: plan.sedesEncontradas, filas: plan.filas });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/programacion-nacional/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const plan: any = await armarPlanProgramacion(parseInt(req.params.circuitId));
+    if (plan.error) { res.status(409).json({ error: plan.error }); return; }
+    if (plan.problemas.length > 0) { res.status(409).json({ error: 'No se encontro alguna sede o mesa. No se toco nada.', sedesEncontradas: plan.sedesEncontradas, problemas: plan.problemas }); return; }
+    const aplicables = plan.filas.filter((f: any) => f.estado === 'ok');
+    const mesasUsadas: Set<number> = new Set();
+    for (const f of aplicables) {
+      await prisma.match.update({ where: { id: f.matchId }, data: { tableId: f.tableId, status: 'asignado', mesaLibreSedeId: null, scheduledAt: new Date(f.scheduledAt) } });
+      mesasUsadas.add(f.tableId);
+    }
+    for (const id of Array.from(mesasUsadas)) { await prisma.table.update({ where: { id }, data: { status: 'ocupada' } }); }
+    for (const f of aplicables) {
+      const completo = await prisma.match.findUnique({ where: { id: f.matchId }, include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } } });
+      if (completo) emitMatchUpdate(io, completo);
+    }
+    res.json({ aplicado: true, asignados: aplicables.length, omitidos: plan.filas.length - aplicables.length });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.delete('/programacion-nacional/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const plan: any = await armarPlanProgramacion(parseInt(req.params.circuitId));
+    if (plan.error) { res.status(409).json({ error: plan.error }); return; }
+    const quitables = plan.filas.filter((f: any) => f.matchId && f.estado !== 'ya_jugado' && (f.actualTableId || f.actualScheduledAt));
+    const mesasPrevias: Set<number> = new Set();
+    for (const f of quitables) {
+      if (f.actualTableId) mesasPrevias.add(f.actualTableId);
+      await prisma.match.update({ where: { id: f.matchId }, data: { tableId: null, scheduledAt: null, status: 'pendiente', mesaLibreSedeId: null } });
+    }
+    for (const tid of Array.from(mesasPrevias)) {
+      const otro = await prisma.match.findFirst({ where: { tableId: tid, status: { in: ['asignado', 'en_juego'] } } });
+      if (!otro) { const libre = await prisma.table.update({ where: { id: tid }, data: { status: 'libre' } }); emitTableUpdate(io, libre); }
+    }
+    for (const f of quitables) {
+      const completo = await prisma.match.findUnique({ where: { id: f.matchId }, include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } } });
+      if (completo) emitMatchUpdate(io, completo);
+    }
+    res.json({ quitado: true, cruces: quitables.length });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
 router.post('/trigger-primera/:phaseId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try { await rellenarSlotsMaster(parseInt(req.params.phaseId)); res.json({ message: 'Slots de Master rellenados correctamente' }); }
   catch (error: any) { res.status(500).json({ error: error.message }); }
