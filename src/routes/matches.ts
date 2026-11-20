@@ -7,6 +7,7 @@ import { generarReporteCruce, generarReporteSerie } from '../services/reportServ
 import { calcularYGuardarAcumulado } from './rankingAcumulado';
 import { calcularRankingSeries, ordenarFilasRanking, detallarSeriesIncompletas } from '../services/rankingSerie';
 import { sincronizarPuntosCircuito } from '../services/puntosCircuito';
+import { asignarMesaLibreSiguiente } from '../services/mesaLibre';
 
 const router = Router();
 
@@ -664,6 +665,7 @@ async function resolverWOLibre(match: { id: number; playerAId: number | null; pl
     if (match.tableId) {
       const mesa = await prisma.table.update({ where: { id: match.tableId }, data: { status: 'libre' }, include: { venue: true } });
       emitTableUpdate(io, mesa);
+      await asignarMesaLibreSiguiente(match.tableId);
     }
     emitMatchUpdate(io, actualizado);
     await generarSiguientePartidoSerie(match.id);
@@ -1393,7 +1395,7 @@ router.get('/', async (req, res: Response) => {
       ...(phaseId      ? { phaseId: Number(phaseId) }   : {}),
       ...(status       ? { status: status as any }       : {}),
       ...(tableId      ? { tableId: Number(tableId) }    : {}),
-      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, ...seriesDeLaSede] } : {}),
+      ...(venueId      ? { OR: [{ table: { venueId: Number(venueId) } }, { mesaLibreSedeId: Number(venueId) }, ...seriesDeLaSede] } : {}),
       ...(circuitId    ? { phase: { circuitId: Number(circuitId) } } : {}),
       ...(tournamentId ? { phase: { circuit: { tournamentId: Number(tournamentId) } } } : {}),
     },
@@ -1481,7 +1483,7 @@ router.put('/:id/assign', authenticate, requireRole('admin', 'juez_sede'), async
   // series de varias sedes a la vez).
 
   const match = await prisma.match.update({
-    where: { id: matchId }, data: { tableId: table.id, status: 'asignado' },
+    where: { id: matchId }, data: { tableId: table.id, status: 'asignado', mesaLibreSedeId: null },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
   emitMatchUpdate(io, match);
@@ -1505,7 +1507,7 @@ router.put('/:id/desasignar', authenticate, requireRole('admin', 'juez_sede'), a
   const tableIdPrev = actual.tableId;
 
   const match = await prisma.match.update({
-    where: { id: matchId }, data: { tableId: null, status: 'pendiente' },
+    where: { id: matchId }, data: { tableId: null, status: 'pendiente', mesaLibreSedeId: null },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
 
@@ -1514,6 +1516,45 @@ router.put('/:id/desasignar', authenticate, requireRole('admin', 'juez_sede'), a
     const otro = await prisma.match.findFirst({
       where: { tableId: tableIdPrev, status: { in: ['asignado', 'en_juego'] } },
     });
+    if (!otro) {
+      const libre = await prisma.table.update({ where: { id: tableIdPrev }, data: { status: 'libre' } });
+      emitTableUpdate(io, libre);
+      await asignarMesaLibreSiguiente(tableIdPrev);
+    }
+  }
+
+  emitMatchUpdate(io, match);
+  res.json(match);
+});
+
+// "Mesa libre": el partido queda pendiente, sin mesa fija, esperando la primera mesa que se
+// desocupe en la sede elegida. Al liberarse una mesa de esa sede, el sistema se la da solo
+// al partido que sigue en la cola (ver services/mesaLibre.ts).
+router.put('/:id/mesa-libre', authenticate, requireRole('admin', 'juez_sede'), async (req: AuthRequest, res: Response) => {
+  const matchId = Number(req.params.id);
+  const venueId = Number(req.body?.venueId);
+  if (!venueId) return res.status(400).json({ error: 'Falta la sede' }) as any;
+  const venue = await prisma.venue.findUnique({ where: { id: venueId } });
+  if (!venue) return res.status(404).json({ error: 'Sede no encontrada' }) as any;
+  // un juez_sede solo puede dejar partidos en mesa libre de SU sede
+  if (req.user?.role === 'juez_sede' && req.user.venueId && venueId !== req.user.venueId) {
+    return res.status(403).json({ error: 'Esa sede no es la tuya' }) as any;
+  }
+  const actual = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!actual) return res.status(404).json({ error: 'Partido no encontrado' }) as any;
+  if (actual.status === 'en_juego' || actual.status === 'finalizado' || actual.status === 'wo') {
+    return res.status(409).json({ error: 'No se puede pasar a mesa libre un partido en juego o finalizado' }) as any;
+  }
+  const tableIdPrev = actual.tableId;
+
+  const match = await prisma.match.update({
+    where: { id: matchId }, data: { tableId: null, status: 'pendiente', mesaLibreSedeId: venueId },
+    include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
+  });
+
+  // si tenia una mesa asignada, se libera (solo si no quedo otro partido en ella)
+  if (tableIdPrev) {
+    const otro = await prisma.match.findFirst({ where: { tableId: tableIdPrev, status: { in: ['asignado', 'en_juego'] } } });
     if (!otro) {
       const libre = await prisma.table.update({ where: { id: tableIdPrev }, data: { status: 'libre' } });
       emitTableUpdate(io, libre);
@@ -1677,6 +1718,8 @@ router.put('/:id/result', authenticate, requireRole('admin', 'juez_sede'), async
   if (updatedMatch.tableId) {
     const freedTable = await prisma.table.update({ where: { id: updatedMatch.tableId }, data: { status: 'libre' }, include: { venue: true } });
     emitTableUpdate(io, freedTable);
+    // la mesa que queda libre pasa al partido que sigue en "mesa libre" de esa sede
+    await asignarMesaLibreSiguiente(updatedMatch.tableId);
   }
   emitMatchUpdate(io, updatedMatch);
 
@@ -1742,7 +1785,7 @@ router.post('/auto-assign', authenticate, requireRole('admin'), async (req: Auth
   if (!freeTable) return res.status(409).json({ error: 'No hay mesas libres disponibles' }) as any;
   await prisma.table.update({ where: { id: freeTable.id }, data: { status: 'ocupada' } });
   const match = await prisma.match.update({
-    where: { id: matchId }, data: { tableId: freeTable.id, status: 'asignado' },
+    where: { id: matchId }, data: { tableId: freeTable.id, status: 'asignado', mesaLibreSedeId: null },
     include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
   });
   emitMatchUpdate(io, match);

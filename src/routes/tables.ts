@@ -3,6 +3,7 @@ import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { io } from '../index';
 import { emitTableUpdate } from '../services/socketService';
+import { asignarMesaLibreSiguiente } from '../services/mesaLibre';
 
 const router = Router();
 
@@ -67,6 +68,7 @@ router.put('/:id/status', authenticate, requireRole('admin', 'juez_sede'), async
     include: { venue: true },
   });
   emitTableUpdate(io, table);
+  if (status === 'libre') await asignarMesaLibreSiguiente(table.id);
   res.json(table);
 });
 router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {

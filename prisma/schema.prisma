@@ -216,6 +216,8 @@ model Match {
   scheduledAt DateTime?
   startedAt   DateTime?
   finishedAt  DateTime?
+  // Sede donde el partido espera "mesa libre": toma la primera mesa que se desocupe en esa sede
+  mesaLibreSedeId Int?
   result      MatchResult?
   sets        SetResult[]
   createdAt   DateTime     @default(now())
