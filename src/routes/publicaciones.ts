@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../services/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
+import { categoriasNacionalesDe } from './rankings';
 import { calcularRankingSeries, ordenarFilasRanking, compararFilas, promedioTantos, detallarSeriesIncompletas } from '../services/rankingSerie';
 
 const router = Router();
@@ -215,7 +216,9 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
         });
       }
 
+      const catNac = esNacional ? await categoriasNacionalesDe(circuitId) : new Map<number, string>();
       const jugadores = entries.map((e: any, idx: number) => ({
+        categoriaNacional: catNac.get(e.playerId) ?? null,
         posicion: ordenEnVivo ? idx + 1 : (e.position ?? 0),
         nombre: `${e.player.lastName}, ${e.player.firstName}`,
         club: abrev(e.player.club),

@@ -125,7 +125,7 @@ const TRAMOS_NACIONALES: { clave: string; cantidad: number }[] = [
   { clave: 'segunda',          cantidad: 47 },
   { clave: 'tercera',          cantidad: 49 },
 ];
-async function categoriasNacionalesDe(circuitId: number): Promise<Map<number, string>> {
+export async function categoriasNacionalesDe(circuitId: number): Promise<Map<number, string>> {
   // La categoria nacional se mantiene durante los 4 circuitos: si el circuito no tiene la suya propia,
   // hereda la del circuito anterior del mismo torneo (aunque el jugador cambie de puesto).
   let actualId: number | null = circuitId;
