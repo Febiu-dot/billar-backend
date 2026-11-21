@@ -650,10 +650,8 @@ router.get('/:circuitId/:tipoFase', async (req, res: Response) => {
       const clasificaComo = (m: any): number | undefined => { const n = parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'); if (!n || m.serieId?.includes('repechaje') || directosClas === 0) return undefined; return configTorneoCircuito.esquema === 'nacional-2027' ? directosClas + n : Nclas - numCruces - n + 1; };
       const conPuesto = (info: any, v: number | undefined) => (v !== undefined && info && !info.esSlot ? { ...info, ranking: v } : info);
       const cruces = rm.map((m: any) => ({ numero: parseInt(m.serieId?.match(/reduccion-(\d+)$/)?.[1] ?? '0'), esRepechaje: m.serieId?.includes('repechaje') ?? false, clasificaComo: clasificaComo(m), jugadorA: conPuesto(jugadorInfo(m.playerA, m.slotA, rankings), puesto(m, 'A')), jugadorB: conPuesto(jugadorInfo(m.playerB, m.slotB, rankings), puesto(m, 'B')), sede: (sedeDe(m) ?? ''), mesa: mesaDe(m), hora: hora(m.scheduledAt), fecha: fecha(m.scheduledAt), status: m.status, resultado: m.result ? `${m.result.setsA}-${m.result.setsB}` : null })).sort((a: any, b: any) => a.numero - b.numero);
-      const faltanSeries = detallarSeriesIncompletas(todosCircuito, 'clasif-serie-');
-      const sinJugadores = cruces.length > 0 && cruces.every((c: any) => c.jugadorA?.esSlot || c.jugadorB?.esSlot);
-      const aviso = sinJugadores && faltanSeries.length > 0 ? `Cruces sin jugadores: faltan resultados — ${faltanSeries.join(' · ')}` : '';
-      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: aviso, cruces });
+      // Antes de jugarse las series la publicación sale con los lugares vacíos ("Clasificado #61", etc.), sin texto de aviso.
+      return res.json({ ...base, tipo: 'reduccion', fase: 'REDUCCIÓN DEL CLASIFICATORIO', formato, fechaPrincipal: '', cruces });
     }
 
     const esNac2027 = configTorneoCircuito.esquema === 'nacional-2027';
