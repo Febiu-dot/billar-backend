@@ -186,6 +186,23 @@ router.post('/categorias-nacionales/:circuitId', authenticate, requireRole('admi
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
+// Corrige la categoría nacional de UN jugador (por equivocación en el ranking inicial). No toca a los demás ni la categoría departamental.
+router.put('/categorias-nacionales/:circuitId/jugador/:playerId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const circuitId = parseInt(req.params.circuitId);
+    const playerId = parseInt(req.params.playerId);
+    const categoria = String(req.body?.categoria ?? '');
+    if (!TRAMOS_NACIONALES.some(t => t.clave === categoria) && categoria !== 'tercera') { res.status(400).json({ error: 'Categoría nacional inválida' }); return; }
+    const c = await prisma.circuit.findUnique({ where: { id: circuitId }, select: { configTorneo: true } });
+    const cfg: any = { ...((c?.configTorneo as any) ?? {}) };
+    if (!cfg.categoriasNacionales || !(String(playerId) in cfg.categoriasNacionales)) { res.status(404).json({ error: 'El jugador no tiene categoría nacional en este circuito' }); return; }
+    const antes = cfg.categoriasNacionales[String(playerId)];
+    cfg.categoriasNacionales = { ...cfg.categoriasNacionales, [String(playerId)]: categoria };
+    await prisma.circuit.update({ where: { id: circuitId }, data: { configTorneo: cfg } });
+    res.json({ playerId, antes, ahora: categoria });
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
 router.delete('/categorias-nacionales/:circuitId', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
   try {
     const circuitId = parseInt(req.params.circuitId);
