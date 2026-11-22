@@ -26,19 +26,19 @@ router.get('/:id', async (req, res: Response) => {
 });
 
 router.post('/', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, address, city, departamentoId } = req.body;
+  const { name, address, city, phone, departamentoId } = req.body;
   const venue = await prisma.venue.create({
-    data: { name, address, city, departamentoId: departamentoId ? Number(departamentoId) : undefined },
+    data: { name, address, city, phone: phone ? String(phone).trim() : null, departamentoId: departamentoId ? Number(departamentoId) : undefined },
     include: { departamento: true }
   });
   res.status(201).json(venue);
 });
 
 router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res: Response) => {
-  const { name, address, city, departamentoId } = req.body;
+  const { name, address, city, phone, departamentoId } = req.body;
   const venue = await prisma.venue.update({
     where: { id: Number(req.params.id) },
-    data: { name, address, city, departamentoId: departamentoId ? Number(departamentoId) : null },
+    data: { name, address, city, phone: phone ? String(phone).trim() : null, departamentoId: departamentoId ? Number(departamentoId) : null },
     include: { departamento: true }
   });
   res.json(venue);

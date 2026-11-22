@@ -69,6 +69,7 @@ model Venue {
   name           String
   address        String?
   city           String?
+  phone          String?
   departamentoId Int?
   departamento   Departamento? @relation(fields: [departamentoId], references: [id])
   users          User[]
