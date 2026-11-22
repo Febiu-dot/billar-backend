@@ -1,4 +1,4 @@
-// Datos publicos para la portada web. Solo nombre, categoria, club y departamento: nunca documento ni datos de contacto.
+// Datos publicos para la portada web. Jugadores: solo nombre, categoria, club y departamento (nunca documento ni contacto del jugador). Contactos: solo de las sedes/clubes.
 import { Router, Request, Response } from 'express';
 import prisma from '../services/prisma';
 
@@ -27,6 +27,15 @@ router.get('/jugadores', async (_req: Request, res: Response) => {
       club: (p.club ?? '').trim(),
       departamento: p.departamento?.nombre ?? '',
     })));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/portada/contactos
+// Datos de contacto de las sedes/clubes (nombre, direccion, ciudad, telefono) para la seccion Clubes de la web.
+router.get('/contactos', async (_req: Request, res: Response) => {
+  try {
+    const v = await prisma.venue.findMany({ select: { name: true, address: true, city: true, phone: true }, orderBy: { name: 'asc' } });
+    res.json(v.map((x: any) => ({ nombre: x.name, direccion: x.address ?? '', ciudad: x.city ?? '', telefono: x.phone ?? '' })));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
