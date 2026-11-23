@@ -86,7 +86,7 @@ const categoriaFederal = (nombreTorneo?: string | null): 'primera' | 'segunda' |
 // jugadorInfo incluye pais
 const jugadorInfo = (player: any, slot: any, rankings: any[]) =>
   player
-    ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), pais: player.pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
+    ? { nombre: `${player.lastName}, ${player.firstName}`, club: abrev(player.club), clubNombre: player.club ?? '', pais: player.pais ?? 'Uruguay', ranking: rankings.find((r: any) => r.playerId === player.id)?.position ?? null, categoria: player.category?.name ?? null, esSlot: false }
     : { nombre: slot ?? '—', club: '', pais: 'Uruguay', ranking: null, categoria: null, esSlot: true };
 
 const getSeccion = (pos: number | null): string => {
@@ -102,8 +102,8 @@ const SECCION_POR_CATEGORIA: Record<string, string> = { master: 'MÁSTER', prime
 // ← mkBracketMatch ahora incluye pais en playerA / playerB
 const mkBracketMatch = (m: any) => {
   if (!m) return null;
-  const pA = m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev(m.playerA.club), pais: m.playerA.pais ?? 'Uruguay' } : null;
-  const pB = m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev(m.playerB.club), pais: m.playerB.pais ?? 'Uruguay' } : null;
+  const pA = m.playerA ? { nombre: `${m.playerA.lastName}, ${m.playerA.firstName}`, club: abrev(m.playerA.club), clubNombre: m.playerA.club ?? '', pais: m.playerA.pais ?? 'Uruguay' } : null;
+  const pB = m.playerB ? { nombre: `${m.playerB.lastName}, ${m.playerB.firstName}`, club: abrev(m.playerB.club), clubNombre: m.playerB.club ?? '', pais: m.playerB.pais ?? 'Uruguay' } : null;
   return {
     serieId: m.serieId,
     playerA: pA, playerB: pB,
