@@ -48,21 +48,6 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
-// CARGA UNICA (25/11/2026): San Bautista. Compara los codigos de las mesas 1 a 4 con los entregados y carga la mesa 5. No toca "activa".
-setTimeout(async () => {
-  try {
-    await asegurarTabla();
-    const entregados: [number, string][] = [[54, 'UCj9scEdA_j3GtPCffd4lnFQ'], [55, 'UCH7bVw84EjyU7LoJNUXFMdA'], [56, 'UCMJ2yxenYO8o8Qk7jOcwjgQ'], [57, 'UCqbmxE1v1egjDRgOu8FQb0A']];
-    const previos: any[] = await prisma.$queryRawUnsafe(`SELECT "tableId", "canal" FROM "Transmision" WHERE "tableId" IN (54,55,56,57)`);
-    const dist = entregados.filter(([t, c]) => previos.find(p => p.tableId === t)?.canal !== c).map(([t, c]) => `mesa#${t} entregado=${c} actual=${previos.find(p => p.tableId === t)?.canal ?? 'vacio'}`);
-    console.log(`[transmisiones] San Bautista mesas 1-4, codigos distintos a los entregados: ${dist.length ? dist.join(' | ') : 'ninguno (son los mismos)'}`);
-    const n = await prisma.$executeRawUnsafe(
-      `INSERT INTO "Transmision" ("tableId","canal") SELECT t."id", $1 FROM "Table" t WHERE t."id" = 58 AND t."venueId" = 18 AND t."number" = 5
-       ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "updatedAt" = CURRENT_TIMESTAMP`, 'UCjmpjQGe6782sVKyFdN59aA');
-    console.log(`[transmisiones] San Bautista mesa 5 cargada: ${n}`);
-  } catch (e: any) { console.error('[transmisiones] San Bautista mesa 5 fallo:', e.message); }
-}, 8000);
-
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
