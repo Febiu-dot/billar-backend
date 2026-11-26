@@ -1894,15 +1894,22 @@ setTimeout(async () => {
   try {
     const like = (campo: string, v: string) => ({ [campo]: { contains: v, mode: 'insensitive' } });
     const trucido = await prisma.player.findMany({ where: { AND: [like('lastName', 'trucido'), like('firstName', 'fabi')] } });
-    const payas = await prisma.player.findMany({ where: { AND: [like('lastName', 'payas'), like('firstName', 'gustavo')] } });
     const guerra = await prisma.player.findMany({ where: { AND: [like('lastName', 'guerra'), like('firstName', 'jonathan')] } });
-    console.log(`[correccion-payas] jugadores: trucido=${trucido.length} payas=${payas.length} guerra=${guerra.length}`);
-    if (trucido.length !== 1 || payas.length !== 1 || guerra.length !== 1) return;
-    const [T, P, G] = [trucido[0].id, payas[0].id, guerra[0].id];
-    const previo = await prisma.match.findMany({
-      where: { OR: [{ playerAId: T, playerBId: P }, { playerAId: P, playerBId: T }], status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: P } } },
-      select: { id: true }
+    console.log(`[correccion-payas] jugadores: trucido=${trucido.length} guerra=${guerra.length}`);
+    if (trucido.length !== 1 || guerra.length !== 1) return;
+    const [T, G] = [trucido[0].id, guerra[0].id];
+    // Payas se toma del partido finalizado mas reciente de Trucido que gano el rival (el que se corrigio)
+    const perdidos = await prisma.match.findMany({
+      where: { OR: [{ playerAId: T }, { playerBId: T }], status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: { not: T } } } },
+      include: { playerA: true, playerB: true, result: true }, orderBy: { finishedAt: 'desc' }, take: 3
     });
+    console.log(`[correccion-payas] partidos de Trucido perdidos: ${perdidos.map((m: any) => `#${m.id} ${m.playerA?.firstName} ${m.playerA?.lastName} vs ${m.playerB?.firstName} ${m.playerB?.lastName} (gano ${m.result?.winnerId}) ${m.finishedAt?.toISOString?.()}`).join(' | ') || 'ninguno'}`);
+    const pm: any = perdidos[0];
+    if (!pm || !pm.result?.winnerId) return;
+    const rival = pm.playerAId === T ? pm.playerB : pm.playerA;
+    if (!rival || !/payas/i.test(`${rival.lastName}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '')) || !/gustavo/i.test(`${rival.firstName}`)) { console.log(`[correccion-payas] el rival no es Gustavo Payas (${rival?.firstName} ${rival?.lastName}), no se toca`); return; }
+    const P = rival.id;
+    const previo = [pm];
     const siguientes = await prisma.match.findMany({
       where: { OR: [{ playerAId: T, playerBId: G }, { playerAId: G, playerBId: T }], status: { in: ['en_juego', 'asignado', 'pendiente'] } },
       include: { sets: true, result: true }
