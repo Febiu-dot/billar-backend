@@ -1888,44 +1888,4 @@ router.post('/auto-assign', authenticate, requireRole('admin'), async (req: Auth
   res.json(match);
 });
 
-// CORRECCION UNICA (26/11/2026): el juez dio ganador a Fabian Trucido contra Gustavo Payas; el resultado ya se corrigio a favor de Payas,
-// pero el partido siguiente (Jonathan Guerra) quedo con Trucido. Se cambia Trucido por Payas solo si todo coincide (un unico partido, partido anterior ganado por Payas).
-setTimeout(async () => {
-  try {
-    const like = (campo: string, v: string) => ({ [campo]: { contains: v, mode: 'insensitive' } });
-    const trucido = await prisma.player.findMany({ where: { AND: [like('lastName', 'trucido'), like('firstName', 'fabi')] } });
-    const guerra = await prisma.player.findMany({ where: { AND: [like('lastName', 'guerra'), like('firstName', 'jonathan')] } });
-    console.log(`[correccion-payas] jugadores: trucido=${trucido.length} guerra=${guerra.length}`);
-    if (trucido.length !== 1 || guerra.length !== 1) return;
-    const [T, G] = [trucido[0].id, guerra[0].id];
-    // Payas se toma del partido finalizado mas reciente de Trucido que gano el rival (el que se corrigio)
-    const perdidos = await prisma.match.findMany({
-      where: { OR: [{ playerAId: T }, { playerBId: T }], status: { in: ['finalizado', 'wo'] }, result: { is: { winnerId: { not: T } } } },
-      include: { playerA: true, playerB: true, result: true }, orderBy: { finishedAt: 'desc' }, take: 3
-    });
-    console.log(`[correccion-payas] partidos de Trucido perdidos: ${perdidos.map((m: any) => `#${m.id} ${m.playerA?.firstName} ${m.playerA?.lastName} vs ${m.playerB?.firstName} ${m.playerB?.lastName} (gano ${m.result?.winnerId}) ${m.finishedAt?.toISOString?.()}`).join(' | ') || 'ninguno'}`);
-    const pm: any = perdidos[0];
-    if (!pm || !pm.result?.winnerId) return;
-    const rival = pm.playerAId === T ? pm.playerB : pm.playerA;
-    if (!rival || !/pallas/i.test(`${rival.lastName}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '')) || !/gustavo/i.test(`${rival.firstName}`)) { console.log(`[correccion-payas] el rival no es Gustavo Pallas (${rival?.firstName} ${rival?.lastName}), no se toca`); return; }
-    const P = rival.id;
-    const previo = [pm];
-    const siguientes = await prisma.match.findMany({
-      where: { OR: [{ playerAId: T, playerBId: G }, { playerAId: G, playerBId: T }], status: { in: ['en_juego', 'asignado', 'pendiente'] } },
-      include: { sets: true, result: true }
-    });
-    console.log(`[correccion-payas] partido previo ganado por Payas: ${previo.length} | partidos Guerra-Trucido sin terminar: ${siguientes.map((m: any) => `#${m.id} ${m.status} sets=${m.sets.length}`).join(', ') || 'ninguno'}`);
-    if (previo.length < 1 || siguientes.length !== 1) return;
-    const m: any = siguientes[0];
-    if (m.result) { console.log('[correccion-payas] el partido ya tiene resultado, no se toca'); return; }
-    const data = m.playerAId === T ? { playerAId: P } : { playerBId: P };
-    const upd = await prisma.match.update({
-      where: { id: m.id }, data,
-      include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, sets: { orderBy: { setNumber: 'asc' } } },
-    });
-    emitMatchUpdate(io, upd);
-    console.log(`[correccion-payas] partido #${m.id} corregido: ahora ${upd.playerA?.lastName} vs ${upd.playerB?.lastName}`);
-  } catch (e: any) { console.error('[correccion-payas] fallo:', e.message); }
-}, 12000);
-
 export default router;
