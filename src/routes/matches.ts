@@ -1907,7 +1907,7 @@ setTimeout(async () => {
     const pm: any = perdidos[0];
     if (!pm || !pm.result?.winnerId) return;
     const rival = pm.playerAId === T ? pm.playerB : pm.playerA;
-    if (!rival || !/payas/i.test(`${rival.lastName}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '')) || !/gustavo/i.test(`${rival.firstName}`)) { console.log(`[correccion-payas] el rival no es Gustavo Payas (${rival?.firstName} ${rival?.lastName}), no se toca`); return; }
+    if (!rival || !/pallas/i.test(`${rival.lastName}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '')) || !/gustavo/i.test(`${rival.firstName}`)) { console.log(`[correccion-payas] el rival no es Gustavo Pallas (${rival?.firstName} ${rival?.lastName}), no se toca`); return; }
     const P = rival.id;
     const previo = [pm];
     const siguientes = await prisma.match.findMany({
