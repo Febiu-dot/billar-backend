@@ -48,19 +48,6 @@ setInterval(async () => {
   } catch { /* se reintenta en el proximo ciclo */ }
 }, 10 * 60 * 1000);
 
-// CARGA UNICA (26/11/2026): Capolavoro, enlaces de los dos directos de hoy (mesa 1 = celular, mesa 2 = OBS). Deja las mesas prendidas.
-setTimeout(async () => {
-  try {
-    await asegurarTabla();
-    for (const [mesaId, num, canal] of [[66, 1, 'v:mH40vkgc-gc'], [67, 2, 'v:fcRlNvtPRUg']] as [number, number, string][]) {
-      const n = await prisma.$executeRawUnsafe(
-        `INSERT INTO "Transmision" ("tableId","canal","activa","updatedAt") SELECT t."id", $1, true, NOW() FROM "Table" t WHERE t."id" = $2::int AND t."venueId" = 4 AND t."number" = $3::int
-         ON CONFLICT ("tableId") DO UPDATE SET "canal" = EXCLUDED."canal", "activa" = true, "updatedAt" = NOW()`, canal, mesaId, num);
-      console.log(`[transmisiones] Capolavoro mesa ${num} cargada y prendida: ${n}`);
-    }
-  } catch (e: any) { console.error('[transmisiones] Capolavoro enlaces fallo:', e.message); }
-}, 8000);
-
 // Publico: solo las transmisiones prendidas, con sede y mesa.
 router.get('/', async (_req: Request, res: Response) => {
   try {
