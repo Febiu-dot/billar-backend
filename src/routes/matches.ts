@@ -1888,4 +1888,37 @@ router.post('/auto-assign', authenticate, requireRole('admin'), async (req: Auth
   res.json(match);
 });
 
+// CORRECCION UNICA (27/11/2026): Feria Franca mesa 3, Dutruel vs Miguez, set cargado al reves (58-60 en vez de 60-58). Solo se toca si es exactamente ese caso.
+setTimeout(async () => {
+  try {
+    const like = (campo: string, v: string) => ({ [campo]: { contains: v, mode: 'insensitive' } });
+    const ds = await prisma.player.findMany({ where: like('lastName', 'dutruel') });
+    const ms = await prisma.player.findMany({ where: like('lastName', 'miguez') });
+    console.log(`[correccion-dutruel] jugadores: dutruel=${ds.length} miguez=${ms.length}`);
+    if (ds.length !== 1 || ms.length !== 1) return;
+    const [D, M] = [ds[0].id, ms[0].id];
+    const partidos: any[] = await prisma.match.findMany({
+      where: { OR: [{ playerAId: D, playerBId: M }, { playerAId: M, playerBId: D }], status: 'en_juego' },
+      include: { sets: { orderBy: { setNumber: 'asc' } }, result: true }
+    });
+    console.log(`[correccion-dutruel] partidos en juego: ${partidos.map(m => `#${m.id} A=${m.playerAId} B=${m.playerBId} sets=[${m.sets.map((x: any) => `${x.setNumber}:${x.pointsA}-${x.pointsB}`).join(' ')}]`).join(' | ') || 'ninguno'}`);
+    if (partidos.length !== 1) return;
+    const m = partidos[0];
+    const pD = (x: any) => (m.playerAId === D ? x.pointsA : x.pointsB);
+    const pM = (x: any) => (m.playerAId === D ? x.pointsB : x.pointsA);
+    const malos = m.sets.filter((x: any) => pD(x) === 58 && pM(x) === 60);
+    if (malos.length !== 1) { console.log(`[correccion-dutruel] sets 58-60 de Dutruel: ${malos.length}, no se toca`); return; }
+    const st = malos[0];
+    const nuevoA = st.pointsB, nuevoB = st.pointsA;
+    await prisma.setResult.update({ where: { id: st.id }, data: { pointsA: nuevoA, pointsB: nuevoB, winnerId: nuevoA > nuevoB ? m.playerAId : m.playerBId } });
+    const allSets = await prisma.setResult.findMany({ where: { matchId: m.id }, orderBy: { setNumber: 'asc' } });
+    const setsA = allSets.filter((x: any) => x.pointsA > x.pointsB).length; const setsB = allSets.filter((x: any) => x.pointsB > x.pointsA).length;
+    const totA = allSets.reduce((a: number, x: any) => a + x.pointsA, 0); const totB = allSets.reduce((a: number, x: any) => a + x.pointsB, 0);
+    if (m.result) await prisma.matchResult.update({ where: { matchId: m.id }, data: { setsA, setsB, pointsA: totA, pointsB: totB } });
+    const full = await prisma.match.findUnique({ where: { id: m.id }, include: { playerA: { include: { category: true } }, playerB: { include: { category: true } }, table: { include: { venue: true } }, phase: { include: { circuit: { include: { tournament: true } } } }, result: true, ruleSet: true, sets: { orderBy: { setNumber: 'asc' } } } });
+    emitMatchUpdate(io, full);
+    console.log(`[correccion-dutruel] set ${st.setNumber} corregido a ${nuevoA}-${nuevoB}; sets ahora A=${setsA} B=${setsB}, puntos A=${totA} B=${totB}`);
+  } catch (e: any) { console.error('[correccion-dutruel] fallo:', e.message); }
+}, 12000);
+
 export default router;
