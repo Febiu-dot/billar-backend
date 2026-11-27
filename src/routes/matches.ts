@@ -1893,15 +1893,18 @@ setTimeout(async () => {
   try {
     const like = (campo: string, v: string) => ({ [campo]: { contains: v, mode: 'insensitive' } });
     const ds = await prisma.player.findMany({ where: like('lastName', 'dutruel') });
-    const ms = await prisma.player.findMany({ where: like('lastName', 'miguez') });
-    console.log(`[correccion-dutruel] jugadores: dutruel=${ds.length} miguez=${ms.length}`);
-    if (ds.length !== 1 || ms.length !== 1) return;
-    const [D, M] = [ds[0].id, ms[0].id];
-    const partidos: any[] = await prisma.match.findMany({
-      where: { OR: [{ playerAId: D, playerBId: M }, { playerAId: M, playerBId: D }], status: 'en_juego' },
-      include: { sets: { orderBy: { setNumber: 'asc' } }, result: true }
-    });
-    console.log(`[correccion-dutruel] partidos en juego: ${partidos.map(m => `#${m.id} A=${m.playerAId} B=${m.playerBId} sets=[${m.sets.map((x: any) => `${x.setNumber}:${x.pointsA}-${x.pointsB}`).join(' ')}]`).join(' | ') || 'ninguno'}`);
+    console.log(`[correccion-dutruel] jugadores: dutruel=${ds.length}`);
+    if (ds.length !== 1) return;
+    const D = ds[0].id;
+    const partidos: any[] = (await prisma.match.findMany({
+      where: { OR: [{ playerAId: D }, { playerBId: D }], status: 'en_juego' },
+      include: { sets: { orderBy: { setNumber: 'asc' } }, result: true, playerA: true, playerB: true }
+    }));
+    console.log(`[correccion-dutruel] partidos en juego de Dutruel: ${partidos.map(m => `#${m.id} ${m.playerA?.firstName} ${m.playerA?.lastName} (A) vs ${m.playerB?.firstName} ${m.playerB?.lastName} (B) sets=[${m.sets.map((x: any) => `${x.setNumber}:${x.pointsA}-${x.pointsB}`).join(' ')}]`).join(' | ') || 'ninguno'}`);
+    const sin = (t: string) => `${t}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const M = partidos.length === 1 ? (partidos[0].playerAId === D ? partidos[0].playerBId : partidos[0].playerAId) : null;
+    const rival = partidos.length === 1 ? (partidos[0].playerAId === D ? partidos[0].playerB : partidos[0].playerA) : null;
+    if (!rival || !sin(rival.lastName).includes('migu') || !sin(rival.firstName).includes('sergio')) { console.log('[correccion-dutruel] el rival no es Sergio Miguez, no se toca'); return; }
     if (partidos.length !== 1) return;
     const m = partidos[0];
     const pD = (x: any) => (m.playerAId === D ? x.pointsA : x.pointsB);
